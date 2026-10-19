@@ -49,16 +49,28 @@ pub fn spawn_sampler(state: AppState, cfg: Config) {
             })
             .await;
 
-            let Ok((restored, snapshot)) = collected else {
-                tracing::error!("sampler task panicked, telemetry loop stopped");
-                break;
-            };
-            sampler = restored;
-
-            // `latest` feeds the REST endpoint; `telemetry` feeds the sockets.
-            latest.send_replace(Some(snapshot.clone()));
-            // Err just means nobody is connected right now.
-            let _ = telemetry.send(snapshot);
+            match collected {
+                Ok((restored, snapshot)) => {
+                    sampler = restored;
+                    // `latest` feeds the REST endpoint; `telemetry` feeds the sockets.
+                    latest.send_replace(Some(snapshot.clone()));
+                    // Err just means nobody is connected right now.
+                    let _ = telemetry.send(snapshot);
+                }
+                // The runtime is going away, so there is nothing left to serve.
+                Err(err) if err.is_cancelled() => {
+                    tracing::debug!("sampler task cancelled, stopping telemetry loop");
+                    break;
+                }
+                // A panic in one collection must not permanently kill telemetry
+                // (the process is only abort-on-panic in release; in debug this
+                // would otherwise silently stop every future frame). `sampler`
+                // was already taken, so a fresh one starts cleanly next tick.
+                Err(err) => {
+                    tracing::error!(%err, "sampler panicked, restarting with a fresh sampler");
+                    sampler = Sampler::new();
+                }
+            }
         }
     });
 }
@@ -136,7 +148,14 @@ async fn send_snapshot(
     snapshot: &Snapshot,
 ) -> Result<(), axum::Error> {
     // A snapshot that cannot serialise is a bug, not a transport error: send an
-    // empty frame rather than killing the client's stream.
-    let payload = serde_json::to_string(snapshot).unwrap_or_else(|_| "{}".to_string());
+    // empty frame rather than killing the client's stream, but never silently —
+    // a masked serialisation failure would make the UI degrade with no trace.
+    let payload = match serde_json::to_string(snapshot) {
+        Ok(payload) => payload,
+        Err(err) => {
+            tracing::warn!(%err, "failed to serialize snapshot; sending empty frame");
+            "{}".to_string()
+        }
+    };
     sink.send(Message::Text(payload.into())).await
 }

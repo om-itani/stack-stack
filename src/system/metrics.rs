@@ -190,15 +190,12 @@ fn sample_cpu(prev: Option<CpuTimes>, prev_cores: &[CpuTimes]) -> (CpuSample, Ve
     };
 
     if let Some(prev) = prev {
-        let d = total.delta(prev);
-        if d.total > 0 {
-            let t = d.total as f32;
-            report.usage_pct = round2(100.0 * (t - d.idle as f32 - d.iowait as f32) / t);
-            report.user_pct = round2(100.0 * d.user as f32 / t);
-            report.system_pct = round2(100.0 * d.system as f32 / t);
-            report.iowait_pct = round2(100.0 * d.iowait as f32 / t);
-            report.idle_pct = round2(100.0 * (d.idle + d.iowait) as f32 / t);
-        }
+        let pct = cpu_percentages(total.delta(prev));
+        report.usage_pct = pct.usage;
+        report.user_pct = pct.user;
+        report.system_pct = pct.system;
+        report.iowait_pct = pct.iowait;
+        report.idle_pct = pct.idle;
     }
 
     for (idx, core) in cores.iter().enumerate() {
@@ -206,7 +203,9 @@ fn sample_cpu(prev: Option<CpuTimes>, prev_cores: &[CpuTimes]) -> (CpuSample, Ve
             Some(p) => {
                 let d = core.delta(*p);
                 if d.total > 0 {
-                    let busy = d.total.saturating_sub(d.idle).saturating_sub(d.iowait);
+                    // Matches the aggregate convention: iowait counts as busy, so
+                    // per-core busy is `100 - idle` and lines up with `usage_pct`.
+                    let busy = d.total.saturating_sub(d.idle);
                     round2(100.0 * busy as f32 / d.total as f32)
                 } else {
                     0.0
@@ -229,6 +228,37 @@ impl CpuTimes {
             user: self.user.saturating_sub(prev.user),
             system: self.system.saturating_sub(prev.system),
         }
+    }
+}
+
+/// Percentage split of one CPU-delta sample. All five values are 0..100 and are
+/// mutually consistent: `idle` is *pure* idle, usage is everything else, so
+/// `usage + idle == 100` and `user + system + iowait + idle == 100`. iowait is a
+/// component of usage, never double counted.
+#[derive(Debug, Default, Clone, Copy)]
+struct CpuPct {
+    usage: f32,
+    user: f32,
+    system: f32,
+    iowait: f32,
+    idle: f32,
+}
+
+fn cpu_percentages(d: CpuTimes) -> CpuPct {
+    if d.total == 0 {
+        return CpuPct::default();
+    }
+    let t = d.total as f32;
+    // Clamp defends the derived `usage` against a counter reset that moved a
+    // subset of the fields (which can make an individual delta exceed `total`).
+    let idle = round2((100.0 * d.idle as f32 / t).clamp(0.0, 100.0));
+    CpuPct {
+        idle,
+        // Derived from idle so the pair is exactly complementary despite rounding.
+        usage: round2(100.0 - idle),
+        user: round2(100.0 * d.user as f32 / t),
+        system: round2(100.0 * d.system as f32 / t),
+        iowait: round2(100.0 * d.iowait as f32 / t),
     }
 }
 
@@ -384,25 +414,37 @@ fn sample_disks(cfg: &Config) -> Vec<Disk> {
 }
 
 fn unescape_mount(raw: &str) -> String {
-    if !raw.contains('\\') {
+    let bytes = raw.as_bytes();
+    if !bytes.contains(&b'\\') {
         return raw.to_string();
     }
-    let mut out = String::with_capacity(raw.len());
-    let bytes = raw.as_bytes();
+
+    // Work in bytes, never `char`: `/proc/mounts` emits `\NNN` for *each* byte of
+    // a non-ASCII path, so one UTF-8 character can be several escapes. Decoding
+    // per byte and re-interpreting the whole buffer as UTF-8 keeps multi-byte
+    // paths intact instead of turning them into Latin-1 mojibake.
+    let mut out: Vec<u8> = Vec::with_capacity(bytes.len());
     let mut i = 0;
     while i < bytes.len() {
         if bytes[i] == b'\\' && i + 3 < bytes.len() {
-            let oct = &raw[i + 1..i + 4];
-            if let Ok(n) = u8::from_str_radix(oct, 8) {
-                out.push(n as char);
+            let (a, b, c) = (bytes[i + 1], bytes[i + 2], bytes[i + 3]);
+            if let (Some(hi), Some(mid), Some(lo)) = (octal(a), octal(b), octal(c)) {
+                out.push((hi << 6) | (mid << 3) | lo);
                 i += 4;
                 continue;
             }
         }
-        out.push(bytes[i] as char);
+        out.push(bytes[i]);
         i += 1;
     }
-    out
+    String::from_utf8_lossy(&out).into_owned()
+}
+
+fn octal(byte: u8) -> Option<u8> {
+    match byte {
+        b'0'..=b'7' => Some(byte - b'0'),
+        _ => None,
+    }
 }
 
 #[cfg(unix)]
@@ -422,9 +464,12 @@ fn statvfs(path: &str) -> Option<(u64, u64, u64)> {
     } else {
         st.f_bsize as u64
     };
-    let total = st.f_blocks as u64 * block;
-    let free = st.f_bfree as u64 * block;
-    let available = st.f_bavail as u64 * block;
+    // Saturating: on a pathologically large filesystem the product of a 64-bit
+    // block count and block size can overflow, and a wrong-but-clamped size is
+    // preferable to a release-mode wrap (or a debug-mode panic).
+    let total = (st.f_blocks as u64).saturating_mul(block);
+    let free = (st.f_bfree as u64).saturating_mul(block);
+    let available = (st.f_bavail as u64).saturating_mul(block);
     Some((total, total.saturating_sub(free), available))
 }
 
@@ -676,6 +721,38 @@ mod tests {
     fn unescapes_octal_mount_paths() {
         assert_eq!(unescape_mount("/mnt/media\\040drive"), "/mnt/media drive");
         assert_eq!(unescape_mount("/plain"), "/plain");
+    }
+
+    #[test]
+    fn unescapes_multibyte_mount_paths() {
+        // "é" is UTF-8 C3 A9, which the kernel writes as two escapes.
+        assert_eq!(unescape_mount("/mnt/caf\\303\\251"), "/mnt/café");
+        // A lone trailing backslash is literal, not a truncated escape.
+        assert_eq!(unescape_mount("/weird\\"), "/weird\\");
+    }
+
+    #[test]
+    fn cpu_percentages_are_mutually_consistent() {
+        let d = CpuTimes {
+            total: 1000,
+            idle: 600,
+            iowait: 50,
+            user: 300,
+            system: 50,
+        };
+        let p = cpu_percentages(d);
+        assert!((p.usage + p.idle - 100.0).abs() < 0.01);
+        let sum = p.user + p.system + p.iowait + p.idle;
+        assert!((sum - 100.0).abs() < 0.01, "components sum to {sum}");
+        assert_eq!(p.idle, 60.0);
+        assert_eq!(p.usage, 40.0);
+    }
+
+    #[test]
+    fn cpu_percentages_handle_zero_delta() {
+        let p = cpu_percentages(CpuTimes::default());
+        assert_eq!(p.usage, 0.0);
+        assert_eq!(p.idle, 0.0);
     }
 
     #[test]

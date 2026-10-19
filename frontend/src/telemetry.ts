@@ -69,6 +69,48 @@ export interface Snapshot {
 export type LinkState = "connecting" | "live" | "down";
 export type SnapshotHandler = (snapshot: Snapshot) => void;
 
+/** A hung backend must not wedge the first paint or the version tag forever. */
+const FETCH_TIMEOUT_MS = 5000;
+
+/**
+ * Shallow shape check. `JSON.parse` only proves the frame is valid JSON, not that
+ * it is a `Snapshot`; without this a wrong-shape frame renders `undefined`/`NaN`
+ * silently. Checking the top-level skeleton is enough to reject anything that
+ * would break the renderers.
+ */
+function isSnapshot(value: unknown): value is Snapshot {
+  if (typeof value !== "object" || value === null) {
+    return false;
+  }
+  const s = value as Record<string, unknown>;
+  return (
+    typeof s.ts_ms === "number" &&
+    typeof s.hostname === "string" &&
+    typeof s.uptime_s === "number" &&
+    Array.isArray(s.load) &&
+    typeof s.cpu === "object" &&
+    s.cpu !== null &&
+    typeof s.memory === "object" &&
+    s.memory !== null &&
+    Array.isArray(s.disks) &&
+    Array.isArray(s.networks) &&
+    Array.isArray(s.smart)
+  );
+}
+
+/** `fetch` with a hard timeout, returning `null` on any failure or timeout. */
+async function fetchWithTimeout(path: string): Promise<Response | null> {
+  const controller = new AbortController();
+  const timer = window.setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+  try {
+    return await fetch(path, { signal: controller.signal });
+  } catch {
+    return null;
+  } finally {
+    window.clearTimeout(timer);
+  }
+}
+
 export class Telemetry {
   private readonly handlers = new Set<SnapshotHandler>();
   private socket: WebSocket | null = null;
@@ -92,12 +134,13 @@ export class Telemetry {
 
   /** One-shot fetch so the first paint does not wait for a socket round trip. */
   async currentSnapshot(): Promise<Snapshot | null> {
+    const response = await fetchWithTimeout("/api/system/snapshot");
+    if (!response?.ok) {
+      return null;
+    }
     try {
-      const response = await fetch("/api/system/snapshot");
-      if (!response.ok) {
-        return null;
-      }
-      return (await response.json()) as Snapshot | null;
+      const body: unknown = await response.json();
+      return isSnapshot(body) ? body : null;
     } catch {
       return null;
     }
@@ -119,14 +162,20 @@ export class Telemetry {
     };
 
     socket.onmessage = (event: MessageEvent<string>) => {
-      let snapshot: Snapshot;
+      if (typeof event.data !== "string") {
+        return;
+      }
+      let parsed: unknown = null;
       try {
-        snapshot = JSON.parse(event.data) as Snapshot;
+        parsed = JSON.parse(event.data);
       } catch {
         return;
       }
+      if (!isSnapshot(parsed)) {
+        return;
+      }
       for (const handler of this.handlers) {
-        handler(snapshot);
+        handler(parsed);
       }
     };
 
@@ -150,13 +199,13 @@ export class Telemetry {
 }
 
 export async function fetchVersion(): Promise<string> {
+  const response = await fetchWithTimeout("/api/health");
+  if (!response?.ok) {
+    return "";
+  }
   try {
-    const response = await fetch("/api/health");
-    if (!response.ok) {
-      return "";
-    }
-    const body = (await response.json()) as { version?: string };
-    return body.version ? `v${body.version}` : "";
+    const body = (await response.json()) as { version?: unknown };
+    return typeof body.version === "string" && body.version ? `v${body.version}` : "";
   } catch {
     return "";
   }

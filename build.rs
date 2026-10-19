@@ -28,10 +28,12 @@ fn main() {
     let profile = std::env::var("PROFILE").unwrap_or_else(|_| "debug".to_string());
     println!("cargo:rustc-env=STACK_STACK_BUILD_PROFILE={profile}");
 
+    // Guard on index.html, not just the directory: a `dist/` that exists but is
+    // empty would otherwise embed nothing and 404 every non-asset route.
     let dist = Path::new("frontend/dist");
-    if !dist.is_dir() {
+    let index = dist.join("index.html");
+    if !index.is_file() {
         std::fs::create_dir_all(dist).expect("create frontend/dist");
-        std::fs::write(dist.join("index.html"), PLACEHOLDER)
-            .expect("write frontend/dist placeholder");
+        std::fs::write(&index, PLACEHOLDER).expect("write frontend/dist placeholder");
     }
 }

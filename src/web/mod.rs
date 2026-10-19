@@ -4,6 +4,8 @@
 pub mod assets;
 pub mod ws;
 
+use std::sync::Arc;
+
 use axum::extract::State;
 use axum::routing::get;
 use axum::{Json, Router};
@@ -44,7 +46,8 @@ async fn health(State(state): State<AppState>) -> Json<Health> {
 }
 
 /// Latest sample as plain JSON, for the frontend's first paint and for curl.
-/// Null until the first tick has completed.
-async fn system_snapshot(State(state): State<AppState>) -> Json<Option<Snapshot>> {
-    Json(state.latest_snapshot().map(|snapshot| (*snapshot).clone()))
+/// Null until the first tick has completed. Returns the shared `Arc` rather than
+/// deep-cloning the snapshot: `Arc<Snapshot>` serialises transparently.
+async fn system_snapshot(State(state): State<AppState>) -> Json<Option<Arc<Snapshot>>> {
+    Json(state.latest_snapshot())
 }

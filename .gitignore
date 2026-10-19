@@ -1,0 +1,10 @@
+.kilo/1776645540-aetherstack-deployment-plan.md
+
+# Added by cargo
+
+/target
+
+# Frontend: node_modules is rebuilt on Windows, dist/ is committed on purpose
+# so the Fujitsu can `cargo build` with no Node toolchain installed.
+/frontend/node_modules
+npm-debug.log*
