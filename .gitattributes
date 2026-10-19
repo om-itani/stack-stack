@@ -1,0 +1,14 @@
+# The working tree lives on Windows and the deploy target is Debian, so pin
+# line endings to LF in the repository *and* on checkout. Without this, a shell
+# script authored here would land on the Fujitsu with CRLF and fail with
+# "bad interpreter: /bin/bash^M".
+* text=auto eol=lf
+
+# Prebuilt frontend assets are embedded verbatim by rust-embed; never rewrite bytes.
+frontend/dist/** -text
+
+# Future binary assets.
+*.ico binary
+*.png binary
+*.jpg binary
+*.woff2 binary

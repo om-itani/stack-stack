@@ -1,0 +1,36 @@
+@import "tailwindcss";
+
+:root {
+  color-scheme: dark;
+}
+
+html,
+body {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: #0b0f14;
+  color: #c9d1d9;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 13px;
+  line-height: 1.35;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Dense readouts should never reflow while numbers tick. */
+.tabular {
+  font-variant-numeric: tabular-nums;
+}
+
+.panel {
+  background: #111721;
+  border: 1px solid #1e2733;
+}
+
+.panel-title {
+  color: #7d8da1;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
