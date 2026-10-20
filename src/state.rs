@@ -7,6 +7,7 @@ use tokio::sync::{broadcast, watch};
 
 use crate::config::Config;
 use crate::containers::docker::DockerClient;
+use crate::networking::NetworkContext;
 use crate::system::metrics::Snapshot;
 
 /// Fan-out capacity for the telemetry socket. A slow client that falls more
@@ -30,6 +31,8 @@ pub struct AppState {
     pub config: Config,
     /// Lazily-connected Docker daemon client.
     pub docker: DockerClient,
+    /// Router state: config document, apply manager and command runner.
+    pub network: NetworkContext,
 }
 
 impl AppState {
@@ -37,12 +40,14 @@ impl AppState {
         let (telemetry, _) = broadcast::channel(TELEMETRY_BACKLOG);
         let (latest, _) = watch::channel(None);
         let docker = DockerClient::new(config.docker_socket.clone(), DOCKER_TIMEOUT_S);
+        let network = NetworkContext::new(std::path::PathBuf::from(&config.network_path));
         Self {
             started_at: Instant::now(),
             telemetry,
             latest,
             config,
             docker,
+            network,
         }
     }
 

@@ -1,4 +1,4 @@
-//! One error type for the whole container / app-store API.
+//! One error type for every JSON API surface.
 //!
 //! Handlers return `Result<_, ApiError>` and never have to know about HTTP
 //! status codes; the `IntoResponse` impl maps each variant to exactly one
@@ -7,20 +7,25 @@
 use axum::Json;
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
-
-use crate::containers::model::ErrorResponse;
+use serde::Serialize;
 
 #[derive(Debug)]
 pub enum ApiError {
-    /// Caller sent something malformed (bad id, unknown field, …).
+    /// Caller sent something malformed (bad id, unknown field, invalid config).
     BadRequest(String),
     /// The object exists but we were asked for something it does not have.
     NotFound(String),
-    /// A dependency we need is not present: no Docker socket, no compose CLI.
+    /// A dependency we need is not present: no Docker socket, no `nft` binary.
     Unavailable(String),
     /// Anything else; the message is safe to show but not something the caller
     /// can act on beyond retrying.
     Internal(String),
+}
+
+/// Wire shape of every error response; mirrored in the frontend client.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct ErrorResponse {
+    pub error: String,
 }
 
 impl ApiError {
@@ -91,5 +96,27 @@ impl From<bollard::errors::Error> for ApiError {
             | Error::IOError { .. } => Self::Unavailable(format!("docker unavailable: {rendered}")),
             _ => Self::Internal(rendered),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn status_mapping_is_stable() {
+        assert_eq!(
+            ApiError::bad_request("x").parts().0,
+            StatusCode::BAD_REQUEST
+        );
+        assert_eq!(ApiError::not_found("x").parts().0, StatusCode::NOT_FOUND);
+        assert_eq!(
+            ApiError::unavailable("x").parts().0,
+            StatusCode::SERVICE_UNAVAILABLE
+        );
+        assert_eq!(
+            ApiError::internal("x").parts().0,
+            StatusCode::INTERNAL_SERVER_ERROR
+        );
     }
 }

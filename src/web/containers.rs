@@ -17,9 +17,9 @@ use serde::{Deserialize, Serialize};
 use tokio::io::AsyncWriteExt;
 
 use crate::containers::docker::{ContainerAction, ExecSession};
-use crate::containers::error::ApiError;
 use crate::containers::model::{Container, ExecClientMessage, ExecServerMessage};
 use crate::containers::{host, store};
+use crate::error::ApiError;
 use crate::state::AppState;
 
 /// Server-side keepalive, matching the telemetry socket.

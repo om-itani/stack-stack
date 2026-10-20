@@ -7,9 +7,9 @@ use axum::Json;
 use axum::extract::{Path, State};
 use serde::Serialize;
 
-use crate::containers::error::ApiError;
 use crate::containers::model::App;
 use crate::containers::store;
+use crate::error::ApiError;
 use crate::state::AppState;
 
 /// How much compose output is echoed back to the browser.

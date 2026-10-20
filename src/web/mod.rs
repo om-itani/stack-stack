@@ -4,6 +4,7 @@
 pub mod apps;
 pub mod assets;
 pub mod containers;
+pub mod network;
 pub mod ws;
 
 use std::sync::Arc;
@@ -34,6 +35,25 @@ pub fn router(state: AppState) -> Router {
         .route("/api/apps/catalog", get(apps::catalog))
         .route("/api/apps/{app}/install", post(apps::install))
         .route("/api/apps/{app}", delete(apps::remove))
+        .route(
+            "/api/network",
+            get(network::state).put(network::update_config),
+        )
+        .route("/api/network/preview", post(network::preview))
+        .route("/api/network/apply", post(network::apply))
+        .route("/api/network/confirm", post(network::confirm))
+        .route(
+            "/api/network/certificates",
+            get(network::certificate_list).post(network::certificate_import),
+        )
+        .route(
+            "/api/network/certificates/self-signed",
+            post(network::certificate_generate),
+        )
+        .route(
+            "/api/network/certificates/{name}",
+            delete(network::certificate_remove),
+        )
         .fallback(assets::serve)
         .with_state(state)
 }

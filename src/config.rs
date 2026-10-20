@@ -17,6 +17,7 @@ pub const DEFAULT_DOCKER_SOCKET: &str = "/var/run/docker.sock";
 pub const DEFAULT_APPS_DIR: &str = "/etc/stack-stack/apps";
 pub const DEFAULT_CATALOG_PATH: &str = "/etc/stack-stack/catalog.json";
 pub const DEFAULT_COMPOSE_TIMEOUT_S: u64 = 300;
+pub const DEFAULT_NETWORK_PATH: &str = "/etc/stack-stack/network.json";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
@@ -50,6 +51,8 @@ pub struct Config {
     pub catalog_path: String,
     /// Hard limit on a single `docker compose` invocation (pull + up can be slow).
     pub compose_timeout_s: u64,
+    /// Router/network configuration document (interfaces, firewall, DNS, …).
+    pub network_path: String,
 }
 
 impl Default for Config {
@@ -92,6 +95,7 @@ impl Default for Config {
             apps_dir: DEFAULT_APPS_DIR.to_string(),
             catalog_path: DEFAULT_CATALOG_PATH.to_string(),
             compose_timeout_s: DEFAULT_COMPOSE_TIMEOUT_S,
+            network_path: DEFAULT_NETWORK_PATH.to_string(),
         }
     }
 }

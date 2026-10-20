@@ -9,12 +9,11 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::OnceLock;
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use crate::config::Config;
-use crate::containers::error::ApiError;
 use crate::containers::model::App;
+use crate::error::ApiError;
 
 /// Baked into the binary so a fleet node never needs the catalog on disk.
 const SEED_CATALOG: &str = include_str!("catalog.json");
@@ -291,84 +290,32 @@ async fn run_compose(dir: &Path, args: &[&str], timeout_s: u64) -> Result<String
     .map_err(|err| ApiError::internal(format!("compose task failed: {err}")))?
 }
 
-/// Spawn, drain output to a temp file (so a full pipe buffer can never deadlock
-/// the child), and enforce a wall-clock timeout by killing the process tree
-/// root. Output is read back for the error body.
+/// Run a compose subcommand through the shared process helper: separate pipe
+/// drains (so a full buffer can never deadlock) plus a wall-clock deadline.
 fn run_blocking(
     program: &str,
     args: &[String],
     cwd: &Path,
     timeout: Duration,
 ) -> Result<String, ApiError> {
-    static COUNTER: AtomicU64 = AtomicU64::new(0);
-    let unique = format!(
-        "{}-{}",
-        std::process::id(),
-        COUNTER.fetch_add(1, Ordering::Relaxed)
-    );
-    let log_path = std::env::temp_dir().join(format!("stack-stack-compose-{unique}.log"));
-
-    let log = std::fs::File::create(&log_path)
-        .map_err(|err| ApiError::internal(format!("cannot open compose log: {err}")))?;
-    let log_err = log
-        .try_clone()
-        .map_err(|err| ApiError::internal(format!("cannot dup compose log: {err}")))?;
-
-    let spawned = Command::new(program)
-        .args(args)
-        .current_dir(cwd)
-        .stdin(Stdio::null())
-        .stdout(Stdio::from(log))
-        .stderr(Stdio::from(log_err))
-        .spawn();
-
-    let mut child = match spawned {
-        Ok(child) => child,
-        Err(err) => {
-            let _ = std::fs::remove_file(&log_path);
-            return Err(ApiError::unavailable(format!(
-                "cannot run `{program}`: {err}"
-            )));
-        }
-    };
-
-    let deadline = Instant::now() + timeout;
-    let status = loop {
-        match child.try_wait() {
-            Ok(Some(status)) => break Some(status),
-            Ok(None) => {
-                if Instant::now() >= deadline {
-                    let _ = child.kill();
-                    let _ = child.wait();
-                    break None;
-                }
-                std::thread::sleep(Duration::from_millis(50));
-            }
-            Err(err) => {
-                let _ = child.kill();
-                let _ = child.wait();
-                let _ = std::fs::remove_file(&log_path);
-                return Err(ApiError::internal(format!("compose wait failed: {err}")));
-            }
-        }
-    };
-
-    let output = std::fs::read_to_string(&log_path).unwrap_or_default();
-    let _ = std::fs::remove_file(&log_path);
+    let output = crate::proc::run(program, args, Some(cwd), timeout)
+        .map_err(|err| ApiError::unavailable(format!("cannot run `{program}`: {err}")))?;
 
     let rendered_args = args.join(" ");
-    match status {
-        None => Err(ApiError::internal(format!(
+    if output.timed_out {
+        return Err(ApiError::internal(format!(
             "`{program} {rendered_args}` timed out after {}s: {}",
             timeout.as_secs(),
-            tail(&output)
-        ))),
-        Some(status) if !status.success() => Err(ApiError::internal(format!(
-            "`{program} {rendered_args}` failed: {}",
-            tail(&output)
-        ))),
-        Some(_) => Ok(output),
+            tail(&output.combined())
+        )));
     }
+    if !output.success() {
+        return Err(ApiError::internal(format!(
+            "`{program} {rendered_args}` failed: {}",
+            tail(&output.combined())
+        )));
+    }
+    Ok(output.combined())
 }
 
 /// Last `MAX_ERROR_TAIL` bytes of compose output, trimmed for a JSON body.

@@ -10,6 +10,7 @@ import "./style.css";
 
 import { createAppsPage } from "./pages/apps";
 import { createContainersPage } from "./pages/containers";
+import { createNetworkPage } from "./pages/network";
 import { createSystemPage } from "./pages/system";
 import { Telemetry, fetchVersion } from "./telemetry";
 import type { LinkState, Snapshot } from "./telemetry";
@@ -67,6 +68,7 @@ const viewEl = ref<HTMLElement>("view");
 
 const pages: PageDef[] = [
   { id: "system", label: "System", create: () => createSystemPage(telemetry) },
+  { id: "network", label: "Network", create: () => createNetworkPage() },
   { id: "containers", label: "Containers", create: () => createContainersPage() },
   { id: "apps", label: "App Store", create: () => createAppsPage() },
 ];

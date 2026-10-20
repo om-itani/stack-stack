@@ -5,7 +5,6 @@
 //! answers "what address does this box serve on" so the UI can build links.
 
 pub mod docker;
-pub mod error;
 pub mod host;
 pub mod model;
 pub mod store;

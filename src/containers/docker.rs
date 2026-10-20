@@ -25,9 +25,9 @@ use futures_util::Stream;
 use tokio::io::AsyncWrite;
 use tokio::sync::RwLock;
 
-use crate::containers::error::ApiError;
 use crate::containers::model::{App, Container, ContainerPort, ContainerSource};
 use crate::containers::store;
+use crate::error::ApiError;
 
 /// Docker label that marks a container as belonging to an app-store template.
 pub const APP_LABEL: &str = "stack-stack.app";

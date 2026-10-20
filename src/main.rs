@@ -5,6 +5,9 @@
 
 mod config;
 mod containers;
+mod error;
+mod networking;
+mod proc;
 mod state;
 mod system;
 mod web;

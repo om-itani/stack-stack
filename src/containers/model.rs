@@ -91,11 +91,6 @@ pub struct HostIp {
     pub ip: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ErrorResponse {
-    pub error: String,
-}
-
 // ---------------------------------------------------------------------------
 // Terminal (exec) WebSocket protocol
 // ---------------------------------------------------------------------------
