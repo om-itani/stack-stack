@@ -1,0 +1,88 @@
+[
+  {
+    "id": "jellyfin",
+    "name": "Jellyfin",
+    "description": "Free software media server for films, series, music and photos.",
+    "category": "media",
+    "tags": ["media", "streaming", "video", "music"],
+    "icon": "🎬",
+    "web_port": 8096,
+    "ports": [{ "container": 8096, "host": 8096, "protocol": "tcp" }],
+    "compose": "services:\n  jellyfin:\n    image: jellyfin/jellyfin:latest\n    container_name: jellyfin\n    restart: unless-stopped\n    labels:\n      - stack-stack.app=jellyfin\n    ports:\n      - \"8096:8096\"\n    volumes:\n      - jellyfin-config:/config\n      - jellyfin-cache:/cache\n      - /srv/media:/media:ro\nvolumes:\n  jellyfin-config:\n  jellyfin-cache:\n"
+  },
+  {
+    "id": "qbittorrent",
+    "name": "qBittorrent",
+    "description": "BitTorrent client with a full web UI and no ads.",
+    "category": "media",
+    "tags": ["media", "torrent", "download"],
+    "icon": "🌊",
+    "web_port": 8080,
+    "ports": [
+      { "container": 8080, "host": 8080, "protocol": "tcp" },
+      { "container": 6881, "host": 6881, "protocol": "tcp" },
+      { "container": 6881, "host": 6881, "protocol": "udp" }
+    ],
+    "compose": "services:\n  qbittorrent:\n    image: lscr.io/linuxserver/qbittorrent:latest\n    container_name: qbittorrent\n    restart: unless-stopped\n    labels:\n      - stack-stack.app=qbittorrent\n    environment:\n      - PUID=1000\n      - PGID=1000\n      - TZ=UTC\n      - WEBUI_PORT=8080\n    ports:\n      - \"8080:8080\"\n      - \"6881:6881\"\n      - \"6881:6881/udp\"\n    volumes:\n      - qbittorrent-config:/config\n      - /srv/downloads:/downloads\nvolumes:\n  qbittorrent-config:\n"
+  },
+  {
+    "id": "sonarr",
+    "name": "Sonarr",
+    "description": "PVR for TV series: monitors, grabs and organises episodes.",
+    "category": "media",
+    "tags": ["media", "tv", "pvr", "automation"],
+    "icon": "📺",
+    "web_port": 8989,
+    "ports": [{ "container": 8989, "host": 8989, "protocol": "tcp" }],
+    "compose": "services:\n  sonarr:\n    image: lscr.io/linuxserver/sonarr:latest\n    container_name: sonarr\n    restart: unless-stopped\n    labels:\n      - stack-stack.app=sonarr\n    environment:\n      - PUID=1000\n      - PGID=1000\n      - TZ=UTC\n    ports:\n      - \"8989:8989\"\n    volumes:\n      - sonarr-config:/config\n      - /srv/media:/media\n      - /srv/downloads:/downloads\nvolumes:\n  sonarr-config:\n"
+  },
+  {
+    "id": "radarr",
+    "name": "Radarr",
+    "description": "Movie collection manager: monitors, grabs and organises films.",
+    "category": "media",
+    "tags": ["media", "movies", "pvr", "automation"],
+    "icon": "🎥",
+    "web_port": 7878,
+    "ports": [{ "container": 7878, "host": 7878, "protocol": "tcp" }],
+    "compose": "services:\n  radarr:\n    image: lscr.io/linuxserver/radarr:latest\n    container_name: radarr\n    restart: unless-stopped\n    labels:\n      - stack-stack.app=radarr\n    environment:\n      - PUID=1000\n      - PGID=1000\n      - TZ=UTC\n    ports:\n      - \"7878:7878\"\n    volumes:\n      - radarr-config:/config\n      - /srv/media:/media\n      - /srv/downloads:/downloads\nvolumes:\n  radarr-config:\n"
+  },
+  {
+    "id": "adguard",
+    "name": "AdGuard Home",
+    "description": "Network-wide DNS sinkhole for ads and trackers, with a web dashboard.",
+    "category": "networking",
+    "tags": ["networking", "dns", "ads", "privacy"],
+    "icon": "🛡️",
+    "web_port": 3000,
+    "ports": [
+      { "container": 53, "host": 53, "protocol": "tcp" },
+      { "container": 53, "host": 53, "protocol": "udp" },
+      { "container": 3000, "host": 3000, "protocol": "tcp" },
+      { "container": 80, "host": 8081, "protocol": "tcp" }
+    ],
+    "compose": "services:\n  adguardhome:\n    image: adguard/adguardhome:latest\n    container_name: adguardhome\n    restart: unless-stopped\n    labels:\n      - stack-stack.app=adguard\n    ports:\n      - \"53:53/tcp\"\n      - \"53:53/udp\"\n      - \"3000:3000\"\n      - \"8081:80\"\n    volumes:\n      - adguard-work:/opt/adguardhome/work\n      - adguard-conf:/opt/adguardhome/conf\nvolumes:\n  adguard-work:\n  adguard-conf:\n"
+  },
+  {
+    "id": "home-assistant",
+    "name": "Home Assistant",
+    "description": "Local home-automation hub that integrates thousands of devices.",
+    "category": "home-automation",
+    "tags": ["home-automation", "iot", "dashboard"],
+    "icon": "🏠",
+    "web_port": 8123,
+    "ports": [{ "container": 8123, "host": 8123, "protocol": "tcp" }],
+    "compose": "services:\n  homeassistant:\n    image: ghcr.io/home-assistant/home-assistant:stable\n    container_name: homeassistant\n    restart: unless-stopped\n    labels:\n      - stack-stack.app=home-assistant\n    environment:\n      - TZ=UTC\n    ports:\n      - \"8123:8123\"\n    volumes:\n      - homeassistant-config:/config\nvolumes:\n  homeassistant-config:\n"
+  },
+  {
+    "id": "paperless-ngx",
+    "name": "Paperless-ngx",
+    "description": "Scan, index and search your paper documents with OCR.",
+    "category": "utilities",
+    "tags": ["utilities", "documents", "ocr", "archive"],
+    "icon": "📄",
+    "web_port": 8000,
+    "ports": [{ "container": 8000, "host": 8000, "protocol": "tcp" }],
+    "compose": "services:\n  paperless:\n    image: ghcr.io/paperless-ngx/paperless-ngx:latest\n    container_name: paperless\n    restart: unless-stopped\n    labels:\n      - stack-stack.app=paperless-ngx\n    depends_on:\n      - db\n      - broker\n    ports:\n      - \"8000:8000\"\n    environment:\n      - PAPERLESS_REDIS=redis://broker:6379\n      - PAPERLESS_DBHOST=db\n      - PAPERLESS_DBNAME=paperless\n      - PAPERLESS_DBUSER=paperless\n      - PAPERLESS_DBPASS=paperless\n      - PAPERLESS_URL=http://localhost:8000\n      - PAPERLESS_SECRET_KEY=change-me-before-exposing-this-app\n    volumes:\n      - paperless-data:/usr/src/paperless/data\n      - paperless-media:/usr/src/paperless/media\n      - paperless-consume:/usr/src/paperless/consume\n  db:\n    image: postgres:16-alpine\n    container_name: paperless-db\n    restart: unless-stopped\n    environment:\n      - POSTGRES_DB=paperless\n      - POSTGRES_USER=paperless\n      - POSTGRES_PASSWORD=paperless\n    volumes:\n      - paperless-db:/var/lib/postgresql/data\n  broker:\n    image: redis:7-alpine\n    container_name: paperless-broker\n    restart: unless-stopped\n    volumes:\n      - paperless-redis:/data\nvolumes:\n  paperless-data:\n  paperless-media:\n  paperless-consume:\n  paperless-db:\n  paperless-redis:\n"
+  }
+]

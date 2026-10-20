@@ -4,6 +4,7 @@
 //! over a WebSocket, plus the embedded frontend shell.
 
 mod config;
+mod containers;
 mod state;
 mod system;
 mod web;
@@ -18,7 +19,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cfg = Config::load();
     let addr = cfg.addr();
 
-    let app_state = AppState::new();
+    let app_state = AppState::new(cfg.clone());
     web::ws::spawn_sampler(app_state.clone(), cfg.clone());
 
     let app = web::router(app_state);
@@ -28,6 +29,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         %addr,
         version = env!("CARGO_PKG_VERSION"),
         profile = env!("STACK_STACK_BUILD_PROFILE"),
+        assets = web::assets::FINGERPRINT,
         sample_ms = cfg.sample_interval_ms,
         "stack-stack listening"
     );

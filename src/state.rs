@@ -5,12 +5,17 @@ use std::time::Instant;
 
 use tokio::sync::{broadcast, watch};
 
+use crate::config::Config;
+use crate::containers::docker::DockerClient;
 use crate::system::metrics::Snapshot;
 
 /// Fan-out capacity for the telemetry socket. A slow client that falls more
 /// than this many frames behind is told it lagged and resynchronises on the
 /// next frame instead of ever blocking the sampler.
 pub const TELEMETRY_BACKLOG: usize = 16;
+
+/// Per-request Docker API timeout, in seconds.
+pub const DOCKER_TIMEOUT_S: u64 = 60;
 
 #[derive(Clone)]
 pub struct AppState {
@@ -21,16 +26,23 @@ pub struct AppState {
     /// Most recent sample, so REST callers get an instant answer without
     /// waiting up to one full tick.
     pub latest: watch::Sender<Option<Arc<Snapshot>>>,
+    /// Runtime configuration, shared with the container/app-store handlers.
+    pub config: Config,
+    /// Lazily-connected Docker daemon client.
+    pub docker: DockerClient,
 }
 
 impl AppState {
-    pub fn new() -> Self {
+    pub fn new(config: Config) -> Self {
         let (telemetry, _) = broadcast::channel(TELEMETRY_BACKLOG);
         let (latest, _) = watch::channel(None);
+        let docker = DockerClient::new(config.docker_socket.clone(), DOCKER_TIMEOUT_S);
         Self {
             started_at: Instant::now(),
             telemetry,
             latest,
+            config,
+            docker,
         }
     }
 
@@ -40,11 +52,5 @@ impl AppState {
 
     pub fn uptime_s(&self) -> u64 {
         self.started_at.elapsed().as_secs()
-    }
-}
-
-impl Default for AppState {
-    fn default() -> Self {
-        Self::new()
     }
 }

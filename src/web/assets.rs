@@ -12,6 +12,12 @@ use rust_embed::RustEmbed;
 #[folder = "frontend/dist"]
 pub struct Assets;
 
+/// Fingerprint of the embedded `frontend/dist` tree, produced by `build.rs`.
+///
+/// Logged at startup so a deploy can be tied to an exact bundle, and it is what
+/// forces a recompile when the frontend is rebuilt (see `build.rs`).
+pub const FINGERPRINT: &str = env!("STACK_STACK_ASSETS_FINGERPRINT");
+
 /// Vite fingerprints everything under `assets/`, so it can be cached forever.
 const IMMUTABLE: &str = "public, max-age=31536000, immutable";
 const NO_CACHE: &str = "no-cache";

@@ -13,6 +13,10 @@ use serde::{Deserialize, Serialize};
 pub const DEFAULT_CONFIG_PATH: &str = "/etc/stack-stack/config.json";
 pub const DEFAULT_PORT: u16 = 8553;
 pub const DEFAULT_SAMPLE_INTERVAL_MS: u64 = 1000;
+pub const DEFAULT_DOCKER_SOCKET: &str = "/var/run/docker.sock";
+pub const DEFAULT_APPS_DIR: &str = "/etc/stack-stack/apps";
+pub const DEFAULT_CATALOG_PATH: &str = "/etc/stack-stack/catalog.json";
+pub const DEFAULT_COMPOSE_TIMEOUT_S: u64 = 300;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
@@ -37,6 +41,15 @@ pub struct Config {
     /// silently drop every default. Omitting the key keeps the built-in list.
     #[serde(deserialize_with = "extend_ignored_fs")]
     pub ignored_fs: Vec<String>,
+    /// Docker daemon socket. Only a local Unix socket is supported; there is no
+    /// remote/TLS transport in this build.
+    pub docker_socket: String,
+    /// Where app-store compose files live, one directory per app id.
+    pub apps_dir: String,
+    /// Optional catalog override merged over the embedded seed catalog.
+    pub catalog_path: String,
+    /// Hard limit on a single `docker compose` invocation (pull + up can be slow).
+    pub compose_timeout_s: u64,
 }
 
 impl Default for Config {
@@ -75,6 +88,10 @@ impl Default for Config {
             .iter()
             .map(|s| s.to_string())
             .collect(),
+            docker_socket: DEFAULT_DOCKER_SOCKET.to_string(),
+            apps_dir: DEFAULT_APPS_DIR.to_string(),
+            catalog_path: DEFAULT_CATALOG_PATH.to_string(),
+            compose_timeout_s: DEFAULT_COMPOSE_TIMEOUT_S,
         }
     }
 }
