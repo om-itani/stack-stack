@@ -8,7 +8,7 @@
 //! * **A wall-clock deadline.** A wedged `docker compose` or `nft` is killed
 //!   rather than hanging a request until the process is restarted.
 
-use std::io::Read;
+use std::io::{Read, Write};
 use std::path::Path;
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
@@ -53,10 +53,38 @@ pub fn run(
     cwd: Option<&Path>,
     timeout: Duration,
 ) -> io::Result<Output> {
+    run_inner(program, args, cwd, timeout, None)
+}
+
+/// Like [`run`], but writes `input` to the child's stdin before closing it.
+///
+/// This is how a secret is handed to `chpasswd` without ever appearing in the
+/// process argument list.
+pub fn run_with_input(
+    program: &str,
+    args: &[String],
+    cwd: Option<&Path>,
+    timeout: Duration,
+    input: &[u8],
+) -> io::Result<Output> {
+    run_inner(program, args, cwd, timeout, Some(input))
+}
+
+fn run_inner(
+    program: &str,
+    args: &[String],
+    cwd: Option<&Path>,
+    timeout: Duration,
+    input: Option<&[u8]>,
+) -> io::Result<Output> {
     let mut command = Command::new(program);
     command
         .args(args)
-        .stdin(Stdio::null())
+        .stdin(if input.is_some() {
+            Stdio::piped()
+        } else {
+            Stdio::null()
+        })
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
     if let Some(dir) = cwd {
@@ -64,6 +92,14 @@ pub fn run(
     }
 
     let mut child = command.spawn()?;
+
+    // Write stdin first, then close it, so a child reading to EOF is unblocked.
+    if let Some(bytes) = input
+        && let Some(mut stdin) = child.stdin.take()
+    {
+        let _ = stdin.write_all(bytes);
+        // Dropping `stdin` closes the pipe.
+    }
 
     // Take the pipes and drain them concurrently.
     let stdout = child.stdout.take();
@@ -186,5 +222,14 @@ mod tests {
             timed_out: false,
         };
         assert_eq!(output.combined(), "out\nerr\n");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn input_is_written_to_stdin() {
+        let output =
+            run_with_input("cat", &[], None, Duration::from_secs(5), b"secret\n").expect("spawn");
+        assert!(output.success(), "{output:?}");
+        assert_eq!(output.stdout, "secret\n");
     }
 }

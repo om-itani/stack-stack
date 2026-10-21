@@ -5,6 +5,7 @@ pub mod apps;
 pub mod assets;
 pub mod containers;
 pub mod network;
+pub mod virtualization;
 pub mod ws;
 
 use std::sync::Arc;
@@ -53,6 +54,47 @@ pub fn router(state: AppState) -> Router {
         .route(
             "/api/network/certificates/{name}",
             delete(network::certificate_remove),
+        )
+        .route(
+            "/api/virt",
+            get(virtualization::state).put(virtualization::update_config),
+        )
+        .route("/api/virt/preview/vm", post(virtualization::preview_vm))
+        .route("/api/virt/preview/ct", post(virtualization::preview_ct))
+        .route("/api/virt/vms", post(virtualization::create_vm))
+        .route("/api/virt/vms/{id}/start", post(virtualization::vm_start))
+        .route("/api/virt/vms/{id}/stop", post(virtualization::vm_stop))
+        .route(
+            "/api/virt/vms/{id}/shutdown",
+            post(virtualization::vm_shutdown),
+        )
+        .route("/api/virt/vms/{id}/reboot", post(virtualization::vm_reboot))
+        .route(
+            "/api/virt/vms/{id}/destroy",
+            post(virtualization::vm_destroy),
+        )
+        .route(
+            "/api/virt/vms/{id}/snapshot",
+            post(virtualization::vm_snapshot),
+        )
+        .route("/api/virt/vms/{id}/resize", post(virtualization::vm_resize))
+        .route("/api/virt/vms/{id}", delete(virtualization::vm_delete))
+        .route(
+            "/api/virt/vms/{id}/console/ws",
+            get(virtualization::vm_console_ws),
+        )
+        .route("/api/virt/cts", post(virtualization::create_ct))
+        .route("/api/virt/cts/{id}/start", post(virtualization::ct_start))
+        .route("/api/virt/cts/{id}/stop", post(virtualization::ct_stop))
+        .route("/api/virt/cts/{id}/kill", post(virtualization::ct_kill))
+        .route(
+            "/api/virt/cts/{id}/password",
+            post(virtualization::ct_password),
+        )
+        .route("/api/virt/cts/{id}", delete(virtualization::ct_delete))
+        .route(
+            "/api/virt/cts/{id}/console/ws",
+            get(virtualization::ct_console_ws),
         )
         .fallback(assets::serve)
         .with_state(state)

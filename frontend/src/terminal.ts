@@ -86,13 +86,13 @@ function closeModal(): void {
   }
 }
 
-function open(mode: Mode, containerId: string, containerName: string): void {
+function open(mode: Mode, path: string, title: string, subtitle: string): void {
   const view = (shell ??= buildShell());
   current?.dispose();
   current = null;
 
-  view.title.textContent = mode === "exec" ? "terminal" : "logs";
-  view.subtitle.textContent = containerName;
+  view.title.textContent = title;
+  view.subtitle.textContent = subtitle;
   view.mount.replaceChildren();
   view.overlay.style.display = "flex";
 
@@ -108,10 +108,6 @@ function open(mode: Mode, containerId: string, containerName: string): void {
   term.loadAddon(fit);
   term.open(view.mount);
 
-  const path =
-    mode === "exec"
-      ? `/api/containers/${encodeURIComponent(containerId)}/exec/ws`
-      : `/api/containers/${encodeURIComponent(containerId)}/logs/ws?tail=500`;
   const socket = new WebSocket(wsUrl(path));
 
   const send = (payload: unknown): void => {
@@ -192,9 +188,24 @@ function open(mode: Mode, containerId: string, containerName: string): void {
 }
 
 export function openTerminal(containerId: string, containerName: string): void {
-  open("exec", containerId, containerName);
+  open(
+    "exec",
+    `/api/containers/${encodeURIComponent(containerId)}/exec/ws`,
+    "terminal",
+    containerName,
+  );
 }
 
 export function openLogs(containerId: string, containerName: string): void {
-  open("logs", containerId, containerName);
+  open(
+    "logs",
+    `/api/containers/${encodeURIComponent(containerId)}/logs/ws?tail=500`,
+    "logs",
+    containerName,
+  );
+}
+
+/** Open a bidirectional console at an arbitrary WebSocket path (guests). */
+export function openConsole(path: string, title: string, subtitle: string): void {
+  open("exec", path, title, subtitle);
 }

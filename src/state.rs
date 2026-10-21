@@ -9,6 +9,7 @@ use crate::config::Config;
 use crate::containers::docker::DockerClient;
 use crate::networking::NetworkContext;
 use crate::system::metrics::Snapshot;
+use crate::virtualization::VirtContext;
 
 /// Fan-out capacity for the telemetry socket. A slow client that falls more
 /// than this many frames behind is told it lagged and resynchronises on the
@@ -33,6 +34,8 @@ pub struct AppState {
     pub docker: DockerClient,
     /// Router state: config document, apply manager and command runner.
     pub network: NetworkContext,
+    /// Virtualization state: guest document, catalog and lifecycle lock.
+    pub virt: VirtContext,
 }
 
 impl AppState {
@@ -41,6 +44,7 @@ impl AppState {
         let (latest, _) = watch::channel(None);
         let docker = DockerClient::new(config.docker_socket.clone(), DOCKER_TIMEOUT_S);
         let network = NetworkContext::new(std::path::PathBuf::from(&config.network_path));
+        let virt = VirtContext::new(std::path::PathBuf::from(&config.virt_path));
         Self {
             started_at: Instant::now(),
             telemetry,
@@ -48,6 +52,7 @@ impl AppState {
             config,
             docker,
             network,
+            virt,
         }
     }
 

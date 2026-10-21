@@ -18,6 +18,11 @@ pub const DEFAULT_APPS_DIR: &str = "/etc/stack-stack/apps";
 pub const DEFAULT_CATALOG_PATH: &str = "/etc/stack-stack/catalog.json";
 pub const DEFAULT_COMPOSE_TIMEOUT_S: u64 = 300;
 pub const DEFAULT_NETWORK_PATH: &str = "/etc/stack-stack/network.json";
+pub const DEFAULT_VIRT_PATH: &str = "/etc/stack-stack/virtualization.json";
+pub const DEFAULT_GUEST_CATALOG_PATH: &str = "/etc/stack-stack/guests.json";
+pub const DEFAULT_GUESTS_DIR: &str = "/var/lib/stack-stack/guests";
+pub const DEFAULT_IMAGES_DIR: &str = "/var/lib/stack-stack/images";
+pub const DEFAULT_VIRT_TIMEOUT_S: u64 = 1800;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
@@ -53,6 +58,16 @@ pub struct Config {
     pub compose_timeout_s: u64,
     /// Router/network configuration document (interfaces, firewall, DNS, …).
     pub network_path: String,
+    /// Virtualization document: every KVM guest and LXC container this box owns.
+    pub virt_path: String,
+    /// Optional guest image/template override merged over the embedded catalog.
+    pub guest_catalog_path: String,
+    /// Per-guest working directory: disks, seeds, pidfiles, QMP sockets.
+    pub guests_dir: String,
+    /// Cache for downloaded cloud images and appliance ISOs.
+    pub images_dir: String,
+    /// Hard limit on one guest lifecycle command (image pull + disk create).
+    pub virt_timeout_s: u64,
 }
 
 impl Default for Config {
@@ -96,6 +111,11 @@ impl Default for Config {
             catalog_path: DEFAULT_CATALOG_PATH.to_string(),
             compose_timeout_s: DEFAULT_COMPOSE_TIMEOUT_S,
             network_path: DEFAULT_NETWORK_PATH.to_string(),
+            virt_path: DEFAULT_VIRT_PATH.to_string(),
+            guest_catalog_path: DEFAULT_GUEST_CATALOG_PATH.to_string(),
+            guests_dir: DEFAULT_GUESTS_DIR.to_string(),
+            images_dir: DEFAULT_IMAGES_DIR.to_string(),
+            virt_timeout_s: DEFAULT_VIRT_TIMEOUT_S,
         }
     }
 }

@@ -439,3 +439,346 @@ export function wsUrl(path: string): string {
   const scheme = location.protocol === "https:" ? "wss" : "ws";
   return `${scheme}://${location.host}${path}`;
 }
+
+// ---------------------------------------------------------------------------
+// Virtualization (KVM/QEMU + LXC)
+// ---------------------------------------------------------------------------
+
+export type GuestImageKind = "vm" | "lxc";
+export type NetMode = "dhcp" | "static" | "none";
+export type Machine = "q35" | "pc";
+export type Firmware = "bios" | "uefi";
+export type DiskFormat = "qcow2" | "raw";
+export type DiskCache = "none" | "writeback" | "directsync" | "unsafe";
+export type AioMode = "io_uring" | "native" | "threads";
+export type CpuModel = "host" | "max" | "qemu64";
+export type GuestKind = "vm" | "ct";
+
+export interface GuestImage {
+  id: string;
+  name: string;
+  kind: GuestImageKind;
+  category: string;
+  description: string;
+  arch: string;
+  url: string | null;
+  sha256: string | null;
+  format: string | null;
+  default_user: string | null;
+  min_disk_gb: number;
+  min_memory_mb: number;
+  lxc_dist: string | null;
+  lxc_release: string | null;
+  lxc_mirror: string | null;
+  icon: string;
+  tags: string[];
+  cached: boolean;
+}
+
+export interface CloudInitConfig {
+  enabled: boolean;
+  hostname: string;
+  username: string;
+  password: string;
+  ssh_keys: string[];
+  ip_mode: NetMode;
+  address: string | null;
+  gateway: string;
+  dns: string[];
+}
+
+export interface CpuTopology {
+  sockets: number;
+  cores: number;
+  threads: number;
+}
+
+export interface VmConfig {
+  id: string;
+  name: string;
+  description: string;
+  image: string | null;
+  arch: string;
+  machine: Machine;
+  firmware: Firmware;
+  cpu_model: CpuModel;
+  cpu_features: string[];
+  vcpus: number;
+  cpu_topology: CpuTopology | null;
+  memory_mb: number;
+  balloon_mb: number | null;
+  hugepages: boolean;
+  mem_prealloc: boolean;
+  disk_gb: number;
+  disk_format: DiskFormat;
+  disk_cache: DiskCache;
+  aio: AioMode;
+  discard: boolean;
+  bridge: string;
+  mac: string | null;
+  multiqueue: boolean;
+  vnc_enabled: boolean;
+  vnc_port: number | null;
+  vnc_bind: string;
+  serial_console: boolean;
+  nested: boolean;
+  tpm: boolean;
+  guest_agent: boolean;
+  rng: boolean;
+  cpuset: string | null;
+  autostart: boolean;
+  cloud_init: CloudInitConfig;
+  extra_args: string[];
+  tags: string[];
+  comment: string;
+}
+
+export interface BindMount {
+  source: string;
+  target: string;
+  readonly: boolean;
+}
+
+export interface CtConfig {
+  id: string;
+  name: string;
+  hostname: string;
+  description: string;
+  template: string;
+  arch: string;
+  cores: number;
+  memory_mb: number;
+  swap_mb: number;
+  rootfs_gb: number;
+  unprivileged: boolean;
+  nesting: boolean;
+  bridge: string;
+  ip_mode: NetMode;
+  address: string | null;
+  gateway: string;
+  dns: string[];
+  mac: string | null;
+  password: string;
+  ssh_keys: string[];
+  autostart: boolean;
+  startup_order: number;
+  startup_delay: number;
+  binds: BindMount[];
+  cap_drop: string[];
+  tags: string[];
+  comment: string;
+}
+
+export interface GuestDefaults {
+  storage_dir: string;
+  images_dir: string;
+  bridge: string;
+  arch: string;
+  disk_format: DiskFormat;
+  vnc_bind: string;
+  vnc_port_start: number;
+}
+
+export interface VirtualizationConfig {
+  defaults: GuestDefaults;
+  vms: VmConfig[];
+  cts: CtConfig[];
+}
+
+export interface GuestStatus {
+  id: string;
+  kind: GuestKind;
+  name: string;
+  state: string;
+  pid: number | null;
+  memory_bytes: number | null;
+  cpu_seconds: number | null;
+  ip: string | null;
+  autostart: boolean;
+}
+
+export interface CpuInfo {
+  vendor: string | null;
+  model: string | null;
+  logical_cpus: number;
+  physical_cores: number | null;
+  virtualization_flag: string | null;
+  has_aes: boolean;
+  has_avx2: boolean;
+}
+
+export interface ToolInfo {
+  program: string;
+  version: string;
+}
+
+export interface HostCapabilities {
+  arch: string;
+  kvm: boolean;
+  nested: boolean;
+  cpu: CpuInfo;
+  memory_mb: number;
+  hugepages_2m_total: number;
+  hugepages_2m_free: number;
+  qemu: ToolInfo | null;
+  accelerators: string[];
+  lxc: ToolInfo | null;
+  subuid_mapped: boolean;
+  bridges: string[];
+  uefi: boolean;
+}
+
+export interface VirtState {
+  config: VirtualizationConfig;
+  problems: Problem[];
+  config_error: string | null;
+  catalog: GuestImage[];
+  host: HostCapabilities;
+  statuses: GuestStatus[];
+}
+
+export interface VmPreview {
+  qemu: string;
+  uuid: string;
+  vnc: string | null;
+  user_data: string | null;
+  meta_data: string | null;
+  network_config: string | null;
+}
+
+export interface CtPreview {
+  lxc: string;
+  resolv_conf: string | null;
+}
+
+export interface ActionReport {
+  ok: boolean;
+  output: string;
+  warnings: string[];
+  disk: string | null;
+  seed: string | null;
+}
+
+export const virtApi = {
+  state: () => request<VirtState>("/api/virt"),
+  save: (config: VirtualizationConfig) => jsonRequest<VirtState>("/api/virt", "PUT", config),
+
+  previewVm: (vm: VmConfig) => jsonRequest<VmPreview>("/api/virt/preview/vm", "POST", vm),
+  previewCt: (ct: CtConfig) => jsonRequest<CtPreview>("/api/virt/preview/ct", "POST", ct),
+
+  createVm: (vm: VmConfig) => jsonRequest<ActionReport>("/api/virt/vms", "POST", vm),
+  createCt: (ct: CtConfig) => jsonRequest<ActionReport>("/api/virt/cts", "POST", ct),
+
+  vmStart: (id: string) => post<ActionReport>(`/api/virt/vms/${encodeURIComponent(id)}/start`),
+  vmStop: (id: string) => post<ActionReport>(`/api/virt/vms/${encodeURIComponent(id)}/stop`),
+  vmShutdown: (id: string) => post<ActionReport>(`/api/virt/vms/${encodeURIComponent(id)}/shutdown`),
+  vmReboot: (id: string) => post<ActionReport>(`/api/virt/vms/${encodeURIComponent(id)}/reboot`),
+  vmDestroy: (id: string) => post<ActionReport>(`/api/virt/vms/${encodeURIComponent(id)}/destroy`),
+  vmDelete: (id: string) =>
+    request<ActionReport>(`/api/virt/vms/${encodeURIComponent(id)}`, { method: "DELETE" }),
+  vmSnapshot: (id: string, action: string, name?: string) =>
+    jsonRequest<ActionReport>(`/api/virt/vms/${encodeURIComponent(id)}/snapshot`, "POST", {
+      action,
+      name: name ?? null,
+    }),
+  vmResize: (id: string, diskGb: number) =>
+    jsonRequest<ActionReport>(`/api/virt/vms/${encodeURIComponent(id)}/resize`, "POST", {
+      disk_gb: diskGb,
+    }),
+
+  ctStart: (id: string) => post<ActionReport>(`/api/virt/cts/${encodeURIComponent(id)}/start`),
+  ctStop: (id: string) => post<ActionReport>(`/api/virt/cts/${encodeURIComponent(id)}/stop`),
+  ctKill: (id: string) => post<ActionReport>(`/api/virt/cts/${encodeURIComponent(id)}/kill`),
+  ctDelete: (id: string) =>
+    request<ActionReport>(`/api/virt/cts/${encodeURIComponent(id)}`, { method: "DELETE" }),
+  ctPassword: (id: string, password: string) =>
+    jsonRequest<ActionReport>(`/api/virt/cts/${encodeURIComponent(id)}/password`, "POST", {
+      password,
+    }),
+};
+
+/** A blank VM with the same defaults the backend uses. */
+export function blankVm(): VmConfig {
+  return {
+    id: "",
+    name: "",
+    description: "",
+    image: null,
+    arch: "amd64",
+    machine: "q35",
+    firmware: "bios",
+    cpu_model: "host",
+    cpu_features: [],
+    vcpus: 2,
+    cpu_topology: null,
+    memory_mb: 2048,
+    balloon_mb: null,
+    hugepages: false,
+    mem_prealloc: false,
+    disk_gb: 20,
+    disk_format: "qcow2",
+    disk_cache: "none",
+    aio: "io_uring",
+    discard: true,
+    bridge: "br0",
+    mac: null,
+    multiqueue: true,
+    vnc_enabled: true,
+    vnc_port: null,
+    vnc_bind: "127.0.0.1",
+    serial_console: true,
+    nested: false,
+    tpm: false,
+    guest_agent: true,
+    rng: true,
+    cpuset: null,
+    autostart: false,
+    cloud_init: {
+      enabled: true,
+      hostname: "",
+      username: "stack",
+      password: "",
+      ssh_keys: [],
+      ip_mode: "dhcp",
+      address: null,
+      gateway: "",
+      dns: [],
+    },
+    extra_args: [],
+    tags: [],
+    comment: "",
+  };
+}
+
+/** A blank LXC container with the same defaults the backend uses. */
+export function blankCt(): CtConfig {
+  return {
+    id: "",
+    name: "",
+    hostname: "",
+    description: "",
+    template: "",
+    arch: "amd64",
+    cores: 2,
+    memory_mb: 1024,
+    swap_mb: 512,
+    rootfs_gb: 8,
+    unprivileged: true,
+    nesting: false,
+    bridge: "br0",
+    ip_mode: "dhcp",
+    address: null,
+    gateway: "",
+    dns: [],
+    mac: null,
+    password: "",
+    ssh_keys: [],
+    autostart: false,
+    startup_order: 0,
+    startup_delay: 0,
+    binds: [],
+    cap_drop: [],
+    tags: [],
+    comment: "",
+  };
+}
