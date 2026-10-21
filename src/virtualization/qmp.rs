@@ -19,7 +19,7 @@ const TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
 /// as "fall back to signalling the process".
 #[cfg(unix)]
 pub fn command(socket: &Path, command: &str) -> Result<(), String> {
-    use std::io::{BufRead, BufReader, Write};
+    use std::io::BufReader;
     use std::os::unix::net::UnixStream;
 
     let stream = UnixStream::connect(socket)

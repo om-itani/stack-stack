@@ -51,6 +51,7 @@ APT_PACKAGES=(
   git
   curl
   ca-certificates
+  gnupg
   openssl
   samba
   nfs-kernel-server
@@ -68,14 +69,12 @@ APT_PACKAGES=(
   lm-sensors
   docker.io
   docker-compose
-  cloudflared
   unbound
   dnsmasq
   nftables
   iptables
   iproute2
   ipset
-  tc
   jq
 )
 
@@ -207,6 +206,25 @@ install_packages() {
       warn_file "could not install ${pkg}; the matching feature will report unavailable"
     fi
   done
+
+  # cloudflared is not a Debian package; pull it from Cloudflare's APT repo so
+  # the tunnel feature works. If the repo add fails (offline, DNS, etc.) the
+  # script warns and continues — the tunnel code degrades gracefully.
+  if ! command -v cloudflared >/dev/null 2>&1; then
+    install -d -m 0755 /usr/share/keyrings
+    if ! curl -fsSL https://pkg.cloudflare.com/cloudflare-main.gpg \
+        | gpg --dearmor -o /usr/share/keyrings/cloudflare-main.gpg 2>/dev/null; then
+      warn_file "could not add Cloudflare signing key; cloudflared tunnel feature will be unavailable"
+    else
+      echo "deb [signed-by=/usr/share/keyrings/cloudflare-main.gpg] https://pkg.cloudflare.com/cloudflared any main" \
+          > /etc/apt/sources.list.d/cloudflared.list
+      if apt-get update -qq && apt-get install -y -qq cloudflared; then
+        log_file "installed cloudflared"
+      else
+        warn_file "could not install cloudflared; the tunnel feature will report unavailable"
+      fi
+    fi
+  fi
 
   # Enable and start Docker
   systemctl enable docker >/dev/null 2>&1 || true

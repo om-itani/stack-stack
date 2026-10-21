@@ -13,13 +13,19 @@
 //! On a non-unix development host the whole surface degrades to an error, which
 //! the WebSocket turns into the same "unavailable" report every other tool uses.
 
+#[cfg(unix)]
+use std::sync::atomic::{AtomicI32, Ordering};
+
+#[cfg(unix)]
+const EXIT_CODE_UNSET: i32 = i32::MIN;
+
 /// A spawned login shell attached to a PTY.
 #[cfg(unix)]
 pub struct HostShell {
     master: std::os::fd::RawFd,
     pid: libc::pid_t,
-    /// Set once the child has been reaped.
-    exit_code: std::cell::Cell<Option<i32>>,
+    /// Set once the child has been reaped. `EXIT_CODE_UNSET` means "not reaped yet".
+    exit_code: AtomicI32,
 }
 
 #[cfg(unix)]
@@ -92,7 +98,7 @@ impl HostShell {
             Ok(Self {
                 master,
                 pid,
-                exit_code: std::cell::Cell::new(None),
+                exit_code: AtomicI32::new(EXIT_CODE_UNSET),
             })
         }
     }
@@ -157,7 +163,7 @@ impl HostShell {
 
     /// Non-blocking reap; `true` when the child has exited.
     pub fn poll_exit(&self) -> bool {
-        if self.exit_code.get().is_some() {
+        if self.exit_code() .is_some() {
             return true;
         }
         unsafe {
@@ -171,7 +177,7 @@ impl HostShell {
                 } else {
                     0
                 };
-                self.exit_code.set(Some(code));
+                self.set_exit_code(code);
                 true
             } else {
                 false
@@ -181,7 +187,7 @@ impl HostShell {
 
     /// Blocking reap; call once before dropping to avoid a zombie.
     pub fn reap(&self) -> i32 {
-        if let Some(code) = self.exit_code.get() {
+        if let Some(code) = self.exit_code() {
             return code;
         }
         unsafe {
@@ -194,9 +200,20 @@ impl HostShell {
             } else {
                 0
             };
-            self.exit_code.set(Some(code));
+            self.set_exit_code(code);
             code
         }
+    }
+
+    /// Returns the reaped exit code, or `None` if the child hasn't been reaped.
+    fn exit_code(&self) -> Option<i32> {
+        let v = self.exit_code.load(Ordering::Acquire);
+        if v == EXIT_CODE_UNSET { None } else { Some(v) }
+    }
+
+    /// Record the exit code after reaping.
+    fn set_exit_code(&self, code: i32) {
+        self.exit_code.store(code, Ordering::Release);
     }
 }
 
