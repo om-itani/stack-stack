@@ -46,6 +46,19 @@ pub trait Runner: Send + Sync {
         self.run(program, args)
     }
 
+    /// Run with extra environment variables, for secrets handed to restic.
+    /// Implementations that cannot set the environment ignore `env`.
+    fn run_env(
+        &self,
+        program: &str,
+        args: &[String],
+        env: &[(String, String)],
+        timeout: Duration,
+    ) -> Result<Output, String> {
+        let _ = env;
+        self.run_timeout(program, args, timeout)
+    }
+
     /// True when the program exists and ran; used for capability probing.
     fn available(&self, program: &str, probe: &[&str]) -> bool {
         self.call(program, probe)
@@ -99,6 +112,17 @@ impl Runner for SystemRunner {
         proc::run_with_input(program, args, None, timeout, input)
             .map_err(|err| format!("cannot run {program}: {err}"))
     }
+
+    fn run_env(
+        &self,
+        program: &str,
+        args: &[String],
+        env: &[(String, String)],
+        timeout: Duration,
+    ) -> Result<Output, String> {
+        proc::run_env(program, args, env, timeout)
+            .map_err(|err| format!("cannot run {program}: {err}"))
+    }
 }
 
 #[cfg(test)]
@@ -119,9 +143,13 @@ pub mod fake {
         output: Output,
     }
 
+    /// One recorded `run_env` call: program, arguments and the environment.
+    type EnvCall = (String, Vec<String>, Vec<(String, String)>);
+
     #[derive(Default)]
     pub struct FakeRunner {
         calls: Mutex<Vec<(String, Vec<String>)>>,
+        env_calls: Mutex<Vec<EnvCall>>,
         generic: HashMap<String, Output>,
         conditional: Vec<Rule>,
         missing: Vec<String>,
@@ -186,6 +214,17 @@ pub mod fake {
                         .eq(args.iter().copied())
             })
         }
+
+        /// Every environment variable set on an `run_env` call for `program`.
+        pub fn env_vars(&self, program: &str) -> Vec<(String, String)> {
+            self.env_calls
+                .lock()
+                .expect("env lock")
+                .iter()
+                .filter(|(name, _, _)| name == program)
+                .flat_map(|(_, _, env)| env.clone())
+                .collect()
+        }
     }
 
     impl Runner for FakeRunner {
@@ -215,6 +254,21 @@ pub mod fake {
                 .get(program)
                 .cloned()
                 .unwrap_or_else(|| output(Some(0), "", "")))
+        }
+
+        fn run_env(
+            &self,
+            program: &str,
+            args: &[String],
+            env: &[(String, String)],
+            _timeout: Duration,
+        ) -> Result<Output, String> {
+            self.env_calls.lock().expect("env lock").push((
+                program.to_string(),
+                args.to_vec(),
+                env.to_vec(),
+            ));
+            self.run(program, args)
         }
     }
 

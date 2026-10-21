@@ -52,6 +52,17 @@ interface ActionResult {
   ok: boolean;
 }
 
+export interface TestResult {
+  ok: boolean;
+  detail: string;
+}
+
+export interface OkDetail {
+  ok: boolean;
+  detail?: string;
+  count?: number;
+}
+
 export interface OpResult {
   ok: boolean;
   output: string;
@@ -113,6 +124,14 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   }
 
   if (!response.ok) {
+    // A 401 anywhere other than the auth endpoints means the session expired or
+    // was dropped; the shell listens for this and returns to the login gate.
+    if (
+      response.status === 401 &&
+      !path.startsWith("/api/auth/")
+    ) {
+      window.dispatchEvent(new CustomEvent("stack-stack:unauthorized"));
+    }
     const record = body && typeof body === "object" ? (body as Record<string, unknown>) : null;
     const message = record && "error" in record
       ? String(record.error)
@@ -416,6 +435,725 @@ export const networkApi = {
     request<{ ok: boolean }>(`/api/network/certificates/${encodeURIComponent(name)}`, {
       method: "DELETE",
     }),
+};
+
+// ---------------------------------------------------------------------------
+// Auth / login gate
+// ---------------------------------------------------------------------------
+
+export interface AuthStatus {
+  setup_required: boolean;
+  authenticated: boolean;
+  must_change: boolean;
+  error?: string;
+}
+
+export const authApi = {
+  /** Exempt from the gate, so it doubles as the boot check. */
+  session: () => request<AuthStatus>("/api/auth/session"),
+  setup: (password: string) =>
+    jsonRequest<AuthStatus>("/api/auth/setup", "POST", { password }),
+  login: (password: string) =>
+    jsonRequest<AuthStatus>("/api/auth/login", "POST", { password }),
+  logout: () => post<AuthStatus>("/api/auth/logout"),
+  changePassword: (current: string, newPassword: string) =>
+    jsonRequest<AuthStatus>("/api/auth/password", "POST", {
+      current,
+      new_password: newPassword,
+    }),
+};
+
+// ---------------------------------------------------------------------------
+// WireGuard
+// ---------------------------------------------------------------------------
+
+export interface WgPeer {
+  name: string;
+  public_key: string;
+  allowed_ips: string[];
+  dns: string | null;
+  persistent_keepalive: number;
+  enabled: boolean;
+}
+
+export interface WgConfig {
+  enabled: boolean;
+  interface: string;
+  address_cidr: string;
+  listen_port: number;
+  mtu: number;
+  peers: WgPeer[];
+}
+
+export interface WgPeerStatus {
+  public_key: string;
+  endpoint: string;
+  allowed_ips: string;
+  latest_handshake: number;
+  rx_bytes: number;
+  tx_bytes: number;
+}
+
+export interface WgInterfaceStatus {
+  public_key: string;
+  listen_port: number;
+  peers: WgPeerStatus[];
+}
+
+export interface WgState {
+  config: WgConfig;
+  problems: Problem[];
+  config_error: string | null;
+  preview: string;
+  has_key: boolean;
+  public_key: string | null;
+  public_key_error: string | null;
+  status: WgInterfaceStatus | null;
+  status_error: string | null;
+  endpoint: string | null;
+}
+
+export interface WgApplyReport {
+  state: WgState;
+  steps: StepResult[];
+}
+
+export interface GeneratedKey {
+  private_key: string;
+  public_key: string;
+}
+
+export interface ClientExport {
+  config: string;
+  qr: string | null;
+  qr_error: string | null;
+}
+
+export const wireguardApi = {
+  state: (live = true) => request<WgState>(`/api/wireguard?live=${live}`),
+  save: (config: WgConfig) => jsonRequest<WgState>("/api/wireguard/config", "PUT", config),
+  apply: (config: WgConfig) =>
+    jsonRequest<WgApplyReport>("/api/wireguard/apply", "POST", config),
+  generateKey: (asServer: boolean) =>
+    jsonRequest<GeneratedKey>("/api/wireguard/key", "POST", { as_server: asServer }),
+  setServerKey: (privateKey: string) =>
+    jsonRequest<{ ok: boolean }>("/api/wireguard/key/server", "POST", privateKey),
+  exportClient: (peerName: string, address: string) =>
+    jsonRequest<ClientExport>("/api/wireguard/export", "POST", {
+      peer_name: peerName,
+      address,
+    }),
+  addPeer: (peer: WgPeer) => jsonRequest<WgState>("/api/wireguard/peers", "POST", peer),
+  removePeer: (name: string) =>
+    request<WgState>(`/api/wireguard/peers/${encodeURIComponent(name)}`, { method: "DELETE" }),
+};
+
+// ---------------------------------------------------------------------------
+// Logs (journald)
+// ---------------------------------------------------------------------------
+
+export interface UnitInfo {
+  unit: string;
+  active: string;
+  sub: string;
+  description: string;
+}
+
+export interface LogEntry {
+  ts_ms: number;
+  priority: number;
+  unit: string;
+  message: string;
+}
+
+export interface LogsState {
+  units: UnitInfo[];
+  units_error: string | null;
+  entries: LogEntry[];
+  entries_error: string | null;
+  available: boolean;
+  priorities: [string, string][];
+}
+
+export const logsApi = {
+  state: (unit = "", lines = 200, priority = "") =>
+    request<LogsState>(
+      `/api/logs?unit=${encodeURIComponent(unit)}&lines=${lines}&priority=${encodeURIComponent(priority)}`,
+    ),
+  followUrl: (unit: string, priority: string) =>
+    wsUrl(
+      `/api/logs/ws?unit=${encodeURIComponent(unit)}&priority=${encodeURIComponent(priority)}`,
+    ),
+};
+
+// ---------------------------------------------------------------------------
+// Dynamic DNS (Cloudflare)
+// ---------------------------------------------------------------------------
+
+export interface DdnsConfig {
+  enabled: boolean;
+  zone_id: string;
+  record_names: string[];
+  proxied: boolean;
+  interval_min: number;
+  ttl: number;
+  last_seen_ip: string | null;
+  last_ok_at: number | null;
+}
+
+export interface DdnsState {
+  config: DdnsConfig;
+  problems: Problem[];
+  config_error: string | null;
+  has_token: boolean;
+  wan_ip: string | null;
+}
+
+export interface UpdateOutcome {
+  name: string;
+  changed: boolean;
+  ok: boolean;
+  detail: string;
+}
+
+export interface UpdateReport {
+  outcomes: UpdateOutcome[];
+  state: DdnsState;
+}
+
+export const ddnsApi = {
+  state: () => request<DdnsState>("/api/ddns"),
+  saveConfig: (config: DdnsConfig) =>
+    jsonRequest<DdnsState>("/api/ddns/config", "PUT", config),
+  saveToken: (apiToken: string) =>
+    jsonRequest<{ ok: boolean }>("/api/ddns/token", "POST", { api_token: apiToken }),
+  update: () => post<UpdateReport>("/api/ddns/update"),
+};
+
+// ---------------------------------------------------------------------------
+// SMART self-tests
+// ---------------------------------------------------------------------------
+
+export type SmartKind = "short" | "long";
+
+export interface DevicePlan {
+  device: string;
+  short_weekday: number | null;
+  short_at: string;
+  long_day: number | null;
+  long_at: string;
+}
+
+export interface SmartConfig {
+  devices: DevicePlan[];
+}
+
+export interface TestProgress {
+  running: boolean;
+  percent_remaining: number | null;
+  detail: string;
+  last_result: string | null;
+  last_percent: string | null;
+}
+
+export interface DeviceProgress {
+  device: string;
+  running: boolean;
+  percent_remaining: number | null;
+  detail: string;
+  last_result: string | null;
+  last_percent: string | null;
+}
+
+export interface TestRecord {
+  device: string;
+  kind: SmartKind;
+  started_ms: number;
+  accepted: boolean;
+  detail: string;
+}
+
+export interface SmartState {
+  config: SmartConfig;
+  problems: Problem[];
+  config_error: string | null;
+  history: TestRecord[];
+  progress: DeviceProgress[];
+  available: boolean;
+  running: boolean;
+}
+
+export const smartApi = {
+  state: () => request<SmartState>("/api/smart"),
+  saveConfig: (config: SmartConfig) =>
+    jsonRequest<SmartState>("/api/smart/config", "PUT", config),
+  start: (device: string, kind: SmartKind) =>
+    jsonRequest<TestRecord>(`/api/smart/${encodeURIComponent(device)}`, "POST", kind),
+  progress: (device: string) =>
+    request<TestProgress>(`/api/smart/progress?device=${encodeURIComponent(device)}`),
+};
+
+// ---------------------------------------------------------------------------
+// Backups (restic)
+// ---------------------------------------------------------------------------
+
+export type Cadence = "hourly" | "daily" | "weekly";
+
+export interface Schedule {
+  cadence: Cadence;
+  at: string;
+  weekday: number;
+}
+
+export interface Retention {
+  keep_last: number;
+  keep_daily: number;
+  keep_weekly: number;
+  keep_monthly: number;
+  keep_yearly: number;
+}
+
+export interface JobSources {
+  docker_volumes: boolean;
+  compose_apps: boolean;
+  virt_guests: boolean;
+  documents: boolean;
+  certs_ca: boolean;
+  file_roots: boolean;
+  custom: string[];
+}
+
+export type BackupBackend =
+  | { kind: "local"; path: string }
+  | { kind: "s3"; endpoint: string; bucket: string }
+  | { kind: "sftp"; target: string };
+
+export interface BackupJob {
+  id: string;
+  name: string;
+  enabled: boolean;
+  sources: JobSources;
+  excludes: string[];
+  schedule: Schedule;
+  retention: Retention;
+  backend: BackupBackend;
+  secret_ref: string;
+}
+
+export interface BackupRun {
+  job_id: string;
+  name: string;
+  ts_ms: number;
+  ok: boolean;
+  duration_ms: number;
+  snapshot_id: string | null;
+  bytes: number | null;
+  detail: string;
+}
+
+export interface BackupState {
+  config: { jobs: BackupJob[] };
+  problems: Problem[];
+  config_error: string | null;
+  history: BackupRun[];
+  secrets_configured: string[];
+  next_runs: Record<string, number>;
+  running: boolean;
+}
+
+export interface Snapshot {
+  id: string;
+  short_id: string;
+  time: string;
+  hostname: string;
+  paths: string[];
+  tags: string[];
+}
+
+export interface LsEntry {
+  path: string;
+  name: string;
+  kind: string;
+  size: number;
+  mtime: string;
+}
+
+export const backupApi = {
+  state: () => request<BackupState>("/api/backup"),
+  saveConfig: (config: { jobs: BackupJob[] }) =>
+    jsonRequest<BackupState>("/api/backup/config", "PUT", config),
+  run: (id: string) => post<BackupState>(`/api/backup/jobs/${encodeURIComponent(id)}/run`),
+  verify: (id: string) =>
+    post<OkDetail>(`/api/backup/jobs/${encodeURIComponent(id)}/verify`),
+  saveSecrets: (
+    id: string,
+    resticPassword: string,
+    awsAccessKeyId: string | null,
+    awsSecretAccessKey: string | null,
+    replace: boolean,
+  ) =>
+    jsonRequest<OkDetail>(`/api/backup/jobs/${encodeURIComponent(id)}/secrets`, "POST", {
+      restic_password: resticPassword,
+      aws_access_key_id: awsAccessKeyId,
+      aws_secret_access_key: awsSecretAccessKey,
+      replace,
+    }),
+  snapshots: (id: string) =>
+    request<Snapshot[]>(`/api/backup/jobs/${encodeURIComponent(id)}/snapshots`),
+  browse: (id: string, snapshot: string, path: string) =>
+    request<LsEntry[]>(
+      `/api/backup/jobs/${encodeURIComponent(id)}/snapshots/${encodeURIComponent(snapshot)}/ls?path=${encodeURIComponent(path)}`,
+    ),
+  restore: (id: string, snapshot: string, target: string, include: string | null) =>
+    jsonRequest<OkDetail>(`/api/backup/jobs/${encodeURIComponent(id)}/restore`, "POST", {
+      snapshot,
+      target,
+      include,
+    }),
+  downloadUrl: (id: string, snapshot: string, path: string) =>
+    `/api/backup/jobs/${encodeURIComponent(id)}/download?snapshot=${encodeURIComponent(snapshot)}&path=${encodeURIComponent(path)}`,
+};
+
+// ---------------------------------------------------------------------------
+// Shares (Samba + NFS)
+// ---------------------------------------------------------------------------
+
+export interface SmbShare {
+  name: string;
+  path: string;
+  browsable: boolean;
+  read_only: boolean;
+  guest_ok: boolean;
+  valid_users: string[];
+  force_user: string | null;
+  create_mask: string;
+  dir_mask: string;
+  comment: string;
+}
+
+export interface SmbUser {
+  username: string;
+  enabled: boolean;
+}
+
+export interface SmbConfig {
+  enabled: boolean;
+  workgroup: string;
+  server_string: string;
+  shares: SmbShare[];
+  users: SmbUser[];
+}
+
+export interface SmbUserStatus {
+  username: string;
+  uid: number | null;
+  full_name: string;
+}
+
+export interface SambaState {
+  config: SmbConfig;
+  problems: Problem[];
+  config_error: string | null;
+  preview: string;
+  lan_cidr: string | null;
+  users: SmbUserStatus[];
+  users_error: string | null;
+}
+
+export interface NfsExport {
+  path: string;
+  clients: string[];
+  ro: boolean;
+  sync: boolean;
+  no_subtree_check: boolean;
+  root_squash: boolean;
+}
+
+export interface NfsConfig {
+  enabled: boolean;
+  v4: boolean;
+  exports: NfsExport[];
+}
+
+export interface ActiveExport {
+  path: string;
+  clients: string;
+}
+
+export interface NfsState {
+  config: NfsConfig;
+  problems: Problem[];
+  config_error: string | null;
+  preview: string;
+  active: ActiveExport[];
+  active_error: string | null;
+}
+
+export interface SharesReport<T> {
+  state: T;
+  steps: StepResult[];
+}
+
+export const sambaApi = {
+  state: () => request<SambaState>("/api/samba"),
+  save: (config: SmbConfig) => jsonRequest<SambaState>("/api/samba/config", "PUT", config),
+  apply: (config: SmbConfig) =>
+    jsonRequest<SharesReport<SambaState>>("/api/samba/apply", "POST", config),
+  setUser: (username: string, password: string | null, enabled: boolean | null) =>
+    jsonRequest<{ ok: boolean }>("/api/samba/users", "POST", { username, password, enabled }),
+  removeUser: (username: string) =>
+    request<{ ok: boolean }>(`/api/samba/users/${encodeURIComponent(username)}`, {
+      method: "DELETE",
+    }),
+};
+
+export const nfsApi = {
+  state: () => request<NfsState>("/api/nfs"),
+  save: (config: NfsConfig) => jsonRequest<NfsState>("/api/nfs/config", "PUT", config),
+  apply: (config: NfsConfig) =>
+    jsonRequest<SharesReport<NfsState>>("/api/nfs/apply", "POST", config),
+};
+
+// ---------------------------------------------------------------------------
+// File manager
+// ---------------------------------------------------------------------------
+
+export type FileKind = "file" | "dir" | "symlink" | "other";
+
+export interface FileEntry {
+  name: string;
+  path: string;
+  kind: FileKind;
+  size: number;
+  modified_ms: number | null;
+  mode: string | null;
+  owner: string | null;
+  group: string | null;
+  symlink_target: string | null;
+}
+
+export interface FileListing {
+  path: string;
+  parent: string | null;
+  entries: FileEntry[];
+  truncated: boolean;
+}
+
+export interface FilesConfig {
+  roots: string[];
+  show_hidden: boolean;
+  upload_max_bytes: number;
+  listing_cap: number;
+}
+
+export interface FilesState {
+  config: FilesConfig;
+  problems: Problem[];
+  config_error: string | null;
+  roots: string[];
+  listing: FileListing;
+}
+
+export interface FileText {
+  path: string;
+  size: number;
+  truncated: boolean;
+  mime: string;
+  content: string;
+}
+
+export interface Accounts {
+  users: string[];
+  groups: string[];
+}
+
+export const filesApi = {
+  state: (path = "") =>
+    request<FilesState>(`/api/files?path=${encodeURIComponent(path)}`),
+  read: (path: string) =>
+    request<FileText>(`/api/files/read?path=${encodeURIComponent(path)}`),
+  save: (path: string, content: string) =>
+    jsonRequest<ActionResult>("/api/files/save", "POST", { path, content }),
+  mkdir: (path: string) => jsonRequest<ActionResult>("/api/files/mkdir", "POST", { path }),
+  createFile: (path: string) =>
+    jsonRequest<ActionResult>("/api/files/file", "POST", { path }),
+  rename: (from: string, to: string) =>
+    jsonRequest<ActionResult>("/api/files/rename", "POST", { from, to }),
+  remove: (path: string, recursive: boolean) =>
+    jsonRequest<ActionResult>("/api/files/delete", "POST", { path, recursive }),
+  chmod: (path: string, mode: string) =>
+    jsonRequest<ActionResult>("/api/files/chmod", "POST", { path, mode }),
+  chown: (path: string, user: string | null, group: string | null) =>
+    jsonRequest<ActionResult>("/api/files/chown", "POST", { path, user, group }),
+  extract: (path: string) =>
+    jsonRequest<ActionResult>("/api/files/extract", "POST", { path }),
+  accounts: () => request<Accounts>("/api/files/accounts"),
+  saveConfig: (config: FilesConfig) =>
+    jsonRequest<{ ok: boolean; roots: string[] }>("/api/files/config", "PUT", config),
+  downloadUrl: (path: string) => `/api/files/download?path=${encodeURIComponent(path)}`,
+  archiveUrl: (path: string) => `/api/files/archive?path=${encodeURIComponent(path)}`,
+  uploadUrl: (dir: string) => `/api/files/upload?path=${encodeURIComponent(dir)}`,
+};
+
+// ---------------------------------------------------------------------------
+// Reverse proxy + internal CA
+// ---------------------------------------------------------------------------
+
+export type ProxyTls = "ca-managed" | "cert" | "off";
+
+export interface ProxyUpstreamContainer {
+  kind: "container";
+  id: string;
+  port: number | null;
+}
+
+export interface ProxyUpstreamUrl {
+  kind: "url";
+  url: string;
+}
+
+export type ProxyUpstream = ProxyUpstreamContainer | ProxyUpstreamUrl;
+
+export interface ProxyRoute {
+  id: string;
+  hostname: string;
+  upstream: ProxyUpstream;
+  tls: ProxyTls;
+  tls_cert: string | null;
+  enabled: boolean;
+  comment: string;
+}
+
+export interface PortCheck {
+  port: number;
+  role: string;
+  available: boolean;
+  detail: string;
+}
+
+export interface CaInfo {
+  configured: boolean;
+  directory: string;
+  cert_path: string;
+  key_path: string;
+  subject: string | null;
+  not_after: string | null;
+  days_remaining: number | null;
+  fingerprint: string | null;
+  error?: string | null;
+}
+
+export interface LeafInfo {
+  name: string;
+  hostname: string;
+  cert_path: string;
+  key_path: string;
+  subject: string | null;
+  issuer: string | null;
+  not_after: string | null;
+  days_remaining: number | null;
+  sans: string[];
+  ca_signed: boolean;
+  needs_renewal: boolean;
+}
+
+export interface ProxyState {
+  config: { routes: ProxyRoute[] };
+  problems: Problem[];
+  config_error: string | null;
+  running: boolean;
+  admin_hostname: string;
+  http_port: number;
+  https_port: number;
+  preflight: PortCheck[];
+  tls_ready: boolean;
+  ca: CaInfo;
+  certificates: LeafInfo[];
+}
+
+export interface RouteReport {
+  state: ProxyState;
+  steps: StepResult[];
+}
+
+export interface TrustInstruction {
+  os: string;
+  steps: string[];
+}
+
+export interface CaState {
+  info: CaInfo;
+  leaves: LeafInfo[];
+  trust: TrustInstruction[];
+}
+
+export const proxyApi = {
+  state: () => request<ProxyState>("/api/proxy"),
+  save: (config: { routes: ProxyRoute[] }) =>
+    jsonRequest<ProxyState>("/api/proxy", "PUT", config),
+  createRoute: (route: ProxyRoute) =>
+    jsonRequest<RouteReport>("/api/proxy/routes", "POST", route),
+  updateRoute: (id: string, route: ProxyRoute) =>
+    jsonRequest<RouteReport>(`/api/proxy/routes/${encodeURIComponent(id)}`, "PUT", route),
+  deleteRoute: (id: string) =>
+    request<RouteReport>(`/api/proxy/routes/${encodeURIComponent(id)}`, { method: "DELETE" }),
+  preflight: () => post<PortCheck[]>("/api/proxy/preflight"),
+  enable: (enabled: boolean) =>
+    jsonRequest<ProxyState>("/api/proxy/enable", "POST", { enabled }),
+};
+
+export const caApi = {
+  state: () => request<CaState>("/api/ca"),
+  init: () => post<CaInfo>("/api/ca/init"),
+  downloadPath: "/api/ca/download",
+  issue: (hostname: string, extraDns: string[] = [], ip: string | null = null) =>
+    jsonRequest<LeafInfo>("/api/ca/issue", "POST", { hostname, extra_dns: extraDns, ip }),
+  remove: (name: string) =>
+    request<{ ok: boolean }>(`/api/ca/leaves/${encodeURIComponent(name)}`, { method: "DELETE" }),
+};
+
+// ---------------------------------------------------------------------------
+// Notifications
+// ---------------------------------------------------------------------------
+
+export type NotifyLevel = "info" | "warning" | "error";
+
+export interface Notification {
+  id: number;
+  ts_ms: number;
+  level: NotifyLevel;
+  event: string;
+  title: string;
+  message: string;
+}
+
+export interface NotifyConfig {
+  enabled: boolean;
+  backup_failed: boolean;
+  cert_expiring: boolean;
+  cert_expiring_days: number;
+  firewall_rollback: boolean;
+  smart_prefail: boolean;
+  disk_used_pct: number;
+  service_down: boolean;
+  webhook_url: string | null;
+}
+
+export interface NotifyState {
+  items: Notification[];
+  config: NotifyConfig;
+  config_error: string | null;
+}
+
+export const notifyApi = {
+  feed: (limit?: number) =>
+    request<NotifyState>(
+      limit ? `/api/notifications?limit=${limit}` : "/api/notifications",
+    ),
+  clear: () => post<{ ok: boolean }>("/api/notifications/clear"),
+  saveConfig: (config: NotifyConfig) =>
+    jsonRequest<NotifyState>("/api/notifications/config", "PUT", config),
+  test: () => post<TestResult>("/api/notifications/test"),
 };
 
 export const api = {

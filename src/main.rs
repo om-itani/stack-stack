@@ -3,14 +3,22 @@
 //! Phase 1 surface: host metrics collected straight from `/proc`, fanned out
 //! over a WebSocket, plus the embedded frontend shell.
 
+mod auth;
+mod ca;
 mod config;
 mod containers;
 mod error;
+mod files;
 mod networking;
+mod notify;
 mod proc;
+mod proxy;
+mod rand;
 mod runner;
+mod services;
 mod state;
 mod system;
+mod tls;
 mod virtualization;
 mod web;
 
@@ -26,6 +34,42 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let app_state = AppState::new(cfg.clone());
     web::ws::spawn_sampler(app_state.clone(), cfg.clone());
+    web::auth::spawn_session_sweeper(app_state.clone());
+    notify::spawn_threshold_watcher(app_state.notify.clone(), app_state.telemetry.subscribe());
+    web::backup::spawn_scheduler(app_state.clone());
+    web::smart::spawn_scheduler(app_state.clone());
+    web::ddns::spawn_scheduler(app_state.clone());
+
+    if cfg.tls_enabled {
+        // The admin hostname needs a certificate before the first handshake, and
+        // the resolver map must be populated before the listener accepts. Any
+        // CA-managed leaf inside the renewal window is re-issued here too.
+        if let Err(err) = tls::ensure_admin_cert(&app_state) {
+            tracing::warn!(%err, "could not issue the admin certificate; HTTPS will use whatever is available");
+        }
+        let renewed = tls::renew_due_routes(&app_state);
+        if !renewed.is_empty() {
+            tracing::info!(?renewed, "renewed CA-managed certificates");
+        }
+        if let Err(err) = tls::refresh(&app_state) {
+            tracing::warn!(%err, "could not build the TLS certificate map");
+        }
+        match app_state.tls.supervisor.start(app_state.clone()).await {
+            Ok(()) => tracing::info!(
+                http = cfg.tls_http_port,
+                https = cfg.tls_https_port,
+                admin_host = %cfg.tls_admin_hostname,
+                "TLS front door listening"
+            ),
+            Err(err) => tracing::warn!(%err, "TLS front door could not start"),
+        }
+    }
+    if !app_state.auth.configured() {
+        tracing::warn!(
+            path = %cfg.auth_path,
+            "no admin password is configured; the UI is in first-run setup mode"
+        );
+    }
 
     let app = web::router(app_state);
     let listener = tokio::net::TcpListener::bind(&addr).await?;

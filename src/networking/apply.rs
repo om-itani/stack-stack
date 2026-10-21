@@ -20,6 +20,7 @@ use tokio::sync::Mutex;
 use crate::networking::model::NetworkConfig;
 use crate::networking::runner::Runner;
 use crate::networking::{cloudflared, dnsmasq, nftables, sqm, unbound};
+use crate::notify::{NotificationRequest, Notifier, event};
 
 /// How long a fresh firewall ruleset stays reversible.
 pub const CONFIRM_WINDOW_S: u64 = 30;
@@ -381,6 +382,7 @@ pub struct ApplyManager {
     window: Duration,
     generation: Arc<AtomicU64>,
     state: Arc<Mutex<Option<Pending>>>,
+    notifier: Option<Arc<dyn Notifier>>,
 }
 
 impl ApplyManager {
@@ -391,6 +393,20 @@ impl ApplyManager {
             window,
             generation: Arc::new(AtomicU64::new(1)),
             state: Arc::new(Mutex::new(None)),
+            notifier: None,
+        }
+    }
+
+    /// Attach a notification sink. Set by [`crate::networking::NetworkContext`]
+    /// when the router runs inside the full app; absent in unit tests.
+    pub fn with_notifier(mut self, notifier: Arc<dyn Notifier>) -> Self {
+        self.notifier = Some(notifier);
+        self
+    }
+
+    fn notify(&self, request: NotificationRequest) {
+        if let Some(notifier) = &self.notifier {
+            notifier.notify(request);
         }
     }
 
@@ -434,6 +450,27 @@ impl ApplyManager {
             steps: applied.steps,
             pending: pending_info,
         })
+    }
+
+    /// Apply only the DNS subsystem.
+    ///
+    /// Used when a proxy route changes a local rewrite. It deliberately never
+    /// touches the firewall, so it cannot open the safe-mode confirmation window
+    /// or risk a lockout — the operator is editing proxy routes, not rules.
+    pub async fn apply_dns(
+        &self,
+        config: &NetworkConfig,
+    ) -> Result<StepResult, crate::error::ApiError> {
+        let config = config.clone();
+        let paths = Arc::clone(&self.paths);
+        let runner = Arc::clone(&self.runner);
+        tokio::task::spawn_blocking(move || {
+            let mut steps = Vec::new();
+            apply_unbound(&config, &paths, runner.as_ref(), &mut steps);
+            steps.pop().expect("the DNS step is always pushed")
+        })
+        .await
+        .map_err(|err| crate::error::ApiError::internal(format!("dns apply task failed: {err}")))
     }
 
     /// Accept the new ruleset, cancelling the automatic rollback.
@@ -492,16 +529,41 @@ impl ApplyManager {
         .await;
 
         match result {
-            Ok(Ok(())) => tracing::warn!(
-                generation,
-                "firewall change was not confirmed in time; previous ruleset restored"
-            ),
-            Ok(Err(err)) => tracing::error!(
-                generation,
-                %err,
-                "firewall rollback FAILED; the host may be unreachable"
-            ),
-            Err(err) => tracing::error!(generation, %err, "firewall rollback task failed"),
+            Ok(Ok(())) => {
+                tracing::warn!(
+                    generation,
+                    "firewall change was not confirmed in time; previous ruleset restored"
+                );
+                self.notify(NotificationRequest::warning(
+                    event::FIREWALL_ROLLBACK,
+                    "Firewall change rolled back",
+                    "The new firewall ruleset was not confirmed in time, so the previous ruleset \
+                     was restored. Any intended change did not take effect.",
+                ));
+            }
+            Ok(Err(err)) => {
+                tracing::error!(
+                    generation,
+                    %err,
+                    "firewall rollback FAILED; the host may be unreachable"
+                );
+                self.notify(NotificationRequest::error(
+                    event::FIREWALL_ROLLBACK,
+                    "Firewall rollback FAILED",
+                    format!(
+                        "The unconfirmed ruleset could not be rolled back: {err}. The host may be \
+                         unreachable."
+                    ),
+                ));
+            }
+            Err(err) => {
+                tracing::error!(generation, %err, "firewall rollback task failed");
+                self.notify(NotificationRequest::error(
+                    event::FIREWALL_ROLLBACK,
+                    "Firewall rollback task failed",
+                    format!("The rollback task could not run: {err}."),
+                ));
+            }
         }
     }
 }

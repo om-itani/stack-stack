@@ -53,7 +53,20 @@ pub fn run(
     cwd: Option<&Path>,
     timeout: Duration,
 ) -> io::Result<Output> {
-    run_inner(program, args, cwd, timeout, None)
+    run_inner(program, args, cwd, &[], timeout, None)
+}
+
+/// Like [`run`], but with extra environment variables set on the child.
+///
+/// This is how restic receives `RESTIC_PASSWORD` and backend credentials: an
+/// environment variable is not visible in `ps` the way an argument is.
+pub fn run_env(
+    program: &str,
+    args: &[String],
+    env: &[(String, String)],
+    timeout: Duration,
+) -> io::Result<Output> {
+    run_inner(program, args, None, env, timeout, None)
 }
 
 /// Like [`run`], but writes `input` to the child's stdin before closing it.
@@ -67,13 +80,14 @@ pub fn run_with_input(
     timeout: Duration,
     input: &[u8],
 ) -> io::Result<Output> {
-    run_inner(program, args, cwd, timeout, Some(input))
+    run_inner(program, args, cwd, &[], timeout, Some(input))
 }
 
 fn run_inner(
     program: &str,
     args: &[String],
     cwd: Option<&Path>,
+    env: &[(String, String)],
     timeout: Duration,
     input: Option<&[u8]>,
 ) -> io::Result<Output> {
@@ -89,6 +103,9 @@ fn run_inner(
         .stderr(Stdio::piped());
     if let Some(dir) = cwd {
         command.current_dir(dir);
+    }
+    for (key, value) in env {
+        command.env(key, value);
     }
 
     let mut child = command.spawn()?;

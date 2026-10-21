@@ -3,12 +3,27 @@
 use std::sync::Arc;
 use std::time::Instant;
 
+use std::time::Duration;
+
 use tokio::sync::{broadcast, watch};
 
+use crate::auth::AuthContext;
+use crate::ca::CaContext;
 use crate::config::Config;
 use crate::containers::docker::DockerClient;
+use crate::files::FilesContext;
 use crate::networking::NetworkContext;
+use crate::notify::{NotificationCenter, Notifier};
+use crate::runner::SystemRunner;
+use crate::services::backup::{BackupEngine, SourceDirs};
+use crate::services::ddns::DdnsContext;
+use crate::services::logs::LogsContext;
+use crate::services::nfs::NfsContext;
+use crate::services::samba::SambaContext;
+use crate::services::smart::SmartContext;
+use crate::services::wireguard::WgContext;
 use crate::system::metrics::Snapshot;
+use crate::tls::TlsRuntime;
 use crate::virtualization::VirtContext;
 
 /// Fan-out capacity for the telemetry socket. A slow client that falls more
@@ -36,6 +51,29 @@ pub struct AppState {
     pub network: NetworkContext,
     /// Virtualization state: guest document, catalog and lifecycle lock.
     pub virt: VirtContext,
+    /// Single-admin login gate: credential document and in-memory sessions.
+    pub auth: AuthContext,
+    /// Notification bus: the in-memory feed, live stream and optional webhook.
+    pub notify: Arc<NotificationCenter>,
+    /// TLS front door: internal CA, SNI certificate map and listener ports.
+    pub tls: TlsRuntime,
+    /// File manager: guarded filesystem access and its roots document.
+    pub files: FilesContext,
+    /// Samba share document and apply surface.
+    pub samba: SambaContext,
+    /// NFS export document and apply surface.
+    pub nfs: NfsContext,
+    /// Backup engine: restic jobs, secrets, history and the scheduler's lock.
+    pub backup: BackupEngine,
+    /// WireGuard interface document and apply surface.
+    pub wireguard: WgContext,
+    /// SMART self-test scheduling and history.
+    pub smart: SmartContext,
+
+    /// journald reader surface.
+    pub logs: LogsContext,
+    /// Dynamic DNS document, token and update surface.
+    pub ddns: DdnsContext,
 }
 
 impl AppState {
@@ -43,8 +81,78 @@ impl AppState {
         let (telemetry, _) = broadcast::channel(TELEMETRY_BACKLOG);
         let (latest, _) = watch::channel(None);
         let docker = DockerClient::new(config.docker_socket.clone(), DOCKER_TIMEOUT_S);
-        let network = NetworkContext::new(std::path::PathBuf::from(&config.network_path));
+        let notify = Arc::new(NotificationCenter::new(
+            std::path::PathBuf::from(&config.notify_path),
+            Arc::new(SystemRunner::new(Duration::from_secs(15))),
+        ));
+        let notifier: Arc<dyn Notifier> = notify.clone();
+        let network = NetworkContext::new(
+            std::path::PathBuf::from(&config.network_path),
+            Some(notifier),
+        );
         let virt = VirtContext::new(std::path::PathBuf::from(&config.virt_path));
+        let auth = AuthContext::new(
+            std::path::PathBuf::from(&config.auth_path),
+            Arc::new(SystemRunner::new(Duration::from_secs(30))),
+            Duration::from_secs(config.session_ttl_h.max(1) * 3600),
+        );
+        let ca = CaContext::new(
+            std::path::PathBuf::from(&config.ca_dir),
+            Arc::new(SystemRunner::new(Duration::from_secs(60))),
+        );
+        let tls = TlsRuntime::new(&config, ca);
+        let files = FilesContext::new(
+            std::path::PathBuf::from(&config.files_path),
+            Arc::new(SystemRunner::new(Duration::from_secs(1800))),
+        );
+        let samba = SambaContext::new(
+            std::path::PathBuf::from(&config.samba_path),
+            std::path::PathBuf::from(crate::services::samba::SMB_CONF),
+            Arc::new(SystemRunner::new(Duration::from_secs(60))),
+        );
+        let nfs = NfsContext::new(
+            std::path::PathBuf::from(&config.nfs_path),
+            std::path::PathBuf::from(crate::services::nfs::EXPORTS),
+            Arc::new(SystemRunner::new(Duration::from_secs(60))),
+        );
+        let config_dir = std::path::PathBuf::from(&config.auth_path)
+            .parent()
+            .map(std::path::Path::to_path_buf)
+            .unwrap_or_else(|| std::path::PathBuf::from("/etc/stack-stack"));
+        let (files_config, _) = crate::files::load(std::path::Path::new(&config.files_path));
+        let restic_timeout = Duration::from_secs(config.restic_timeout_s.max(60));
+        let backup = BackupEngine::new(
+            std::path::PathBuf::from(&config.backup_path),
+            std::path::PathBuf::from(&config.backup_secrets_path),
+            Arc::new(SystemRunner::new(restic_timeout)),
+            restic_timeout,
+            SourceDirs {
+                docker_volumes: std::path::PathBuf::from("/var/lib/docker/volumes"),
+                apps: std::path::PathBuf::from(&config.apps_dir),
+                guests: std::path::PathBuf::from(&config.guests_dir),
+                config_dir,
+                ca: std::path::PathBuf::from(&config.ca_dir),
+                file_roots: files_config.roots,
+            },
+        );
+        let wireguard = WgContext::new(
+            std::path::PathBuf::from(&config.wg_path),
+            std::path::PathBuf::from(&config.wg_secrets_path),
+            Arc::new(SystemRunner::new(Duration::from_secs(60))),
+        );
+        let logs = LogsContext::new(Arc::new(SystemRunner::new(Duration::from_secs(30))));
+        let ddns = DdnsContext::new(
+            std::path::PathBuf::from(&config.ddns_path),
+            std::path::PathBuf::from(&config.ddns_secrets_path),
+            std::path::PathBuf::from(&config.network_path),
+            Arc::new(SystemRunner::new(Duration::from_secs(60))),
+        );
+
+        let smart = SmartContext::new(
+            std::path::PathBuf::from(&config.smart_path),
+            Arc::new(SystemRunner::new(Duration::from_secs(120))),
+            Duration::from_secs(120),
+        );
         Self {
             started_at: Instant::now(),
             telemetry,
@@ -53,6 +161,17 @@ impl AppState {
             docker,
             network,
             virt,
+            auth,
+            notify,
+            tls,
+            files,
+            samba,
+            nfs,
+            backup,
+            wireguard,
+            smart,
+            logs,
+            ddns,
         }
     }
 

@@ -37,6 +37,7 @@ import {
   tableEditor,
   textInput,
 } from "../ui";
+import { buildProxyTab } from "./proxyTab";
 
 export interface PageHandle {
   root: HTMLElement;
@@ -134,6 +135,7 @@ export function createNetworkPage(): PageHandle {
     { id: "sqm", label: "sqm", build: buildSqm },
     { id: "tunnel", label: "tunnel", build: buildTunnel },
     { id: "certs", label: "certificates", build: buildCerts },
+    { id: "proxy", label: "proxy", build: buildProxyTab },
     { id: "preview", label: "preview", build: buildPreview },
     { id: "status", label: "status", build: buildStatus },
   ];

@@ -10,6 +10,7 @@ import { Sparkline } from "../spark";
 import type { Telemetry } from "../telemetry";
 import type { Disk, Network, Smart, Snapshot } from "../telemetry";
 import { bytes, emptyNote, fill, must, percent, rate } from "../ui";
+import { buildSmartPanel } from "./smartPanel";
 
 const EMERALD = "#34d399";
 const SKY = "#38bdf8";
@@ -388,6 +389,9 @@ export function createSystemPage(telemetry: Telemetry): { root: HTMLElement } {
       render(snapshot);
     }
   });
+
+  // SMART self-tests: a schedule + history card next to the live health badge.
+  root.append(buildSmartPanel());
 
   return { root };
 }

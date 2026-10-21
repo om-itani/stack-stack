@@ -292,10 +292,10 @@ pub fn remove(config: &NetworkConfig, name: &str) -> Result<(), ApiError> {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ParsedX509 {
-    subject: Option<String>,
-    issuer: Option<String>,
-    sans: Vec<String>,
-    not_after: Option<String>,
+    pub subject: Option<String>,
+    pub issuer: Option<String>,
+    pub sans: Vec<String>,
+    pub not_after: Option<String>,
 }
 
 /// Parse the `-noout` lines `openssl x509` prints.

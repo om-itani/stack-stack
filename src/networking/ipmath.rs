@@ -262,6 +262,11 @@ impl Port {
             .map_err(|_| format!("invalid port: {input:?}"))?;
         Self::new(value)
     }
+
+    /// The numeric port.
+    pub fn value(&self) -> u16 {
+        self.0
+    }
 }
 
 impl fmt::Display for Port {

@@ -6,18 +6,31 @@ description = "stack-stack — a single-binary homelab control plane (metrics, c
 license = "MIT"
 
 [dependencies]
-axum = { version = "0.8.9", features = ["ws"] }
+axum = { version = "0.8.9", features = ["ws", "multipart"] }
 # Docker daemon client. Only the Unix-socket / named-pipe transports are needed
 # (`pipe`); the default `http`/TLS surface is switched off so no TLS stack is
 # pulled into a binary that only ever talks to the local socket.
 bollard = { version = "0.21.1", default-features = false, features = ["pipe"] }
 futures-util = "0.3.34"
+# TLS front door. This is the one accepted dependency exception of Phase 5:
+# first-party TLS termination needs a TLS stack, and the alternative (an
+# external terminator binary) is explicitly out of scope. ring is the single
+# crypto backend; nothing else in the crate is allowed to reach for the network
+# or a crypto crate. Everything is confined to `src/tls.rs`.
+hyper = { version = "1.12.0", default-features = false, features = ["http1", "server"] }
+# `TokioIo` adapts a tokio stream to hyper's runtime traits; needed to serve the
+# admin app over a TLS stream.
+hyper-util = { version = "0.1.21", default-features = false, features = ["tokio"] }
 libc = "0.2.191"
 mime_guess = "2.0.5"
+rustls = { version = "0.23.45", default-features = false, features = ["ring", "logging", "std", "tls12"] }
+rustls-pemfile = "2.2.0"
 rust-embed = { version = "8.13.0", features = ["axum", "mime-guess"] }
 serde = { version = "1.0.229", features = ["derive", "rc"] }
 serde_json = "1.0.154"
-tokio = { version = "1.53.3", features = ["rt-multi-thread", "macros", "net", "signal", "time", "sync", "io-util"] }
+tokio = { version = "1.53.3", features = ["rt-multi-thread", "macros", "net", "signal", "time", "sync", "io-util", "fs"] }
+tokio-rustls = { version = "0.26.6", default-features = false, features = ["ring", "logging", "tls12"] }
+tower = { version = "0.5.3", features = ["util"] }
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
 

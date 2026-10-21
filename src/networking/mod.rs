@@ -37,6 +37,7 @@ use serde::Serialize;
 use crate::networking::apply::{ApplyManager, ApplyPaths, CONFIRM_WINDOW_S};
 use crate::networking::model::NetworkConfig;
 use crate::networking::runner::{Runner, SystemRunner};
+use crate::notify::Notifier;
 
 /// Every generated file the UI can show side by side.
 #[derive(Debug, Clone, Serialize)]
@@ -71,13 +72,18 @@ pub struct NetworkContext {
 }
 
 impl NetworkContext {
-    pub fn new(config_path: PathBuf) -> Self {
+    /// `notifier` is threaded into the firewall safe-mode window so an automatic
+    /// rollback reaches the operator; it is `None` in bare unit tests.
+    pub fn new(config_path: PathBuf, notifier: Option<Arc<dyn Notifier>>) -> Self {
         let runner: Arc<dyn Runner> = Arc::new(SystemRunner::default());
-        let apply = ApplyManager::new(
+        let mut apply = ApplyManager::new(
             ApplyPaths::default(),
             Arc::clone(&runner),
             Duration::from_secs(CONFIRM_WINDOW_S),
         );
+        if let Some(notifier) = notifier {
+            apply = apply.with_notifier(notifier);
+        }
         Self {
             config_path,
             apply,

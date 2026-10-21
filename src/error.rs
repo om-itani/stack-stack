@@ -13,6 +13,8 @@ use serde::Serialize;
 pub enum ApiError {
     /// Caller sent something malformed (bad id, unknown field, invalid config).
     BadRequest(String),
+    /// Caller is not authenticated: missing/expired session, or a bad password.
+    Unauthorized(String),
     /// The object exists but we were asked for something it does not have.
     NotFound(String),
     /// A dependency we need is not present: no Docker socket, no `nft` binary.
@@ -33,6 +35,10 @@ impl ApiError {
         Self::BadRequest(message.into())
     }
 
+    pub fn unauthorized(message: impl Into<String>) -> Self {
+        Self::Unauthorized(message.into())
+    }
+
     pub fn not_found(message: impl Into<String>) -> Self {
         Self::NotFound(message.into())
     }
@@ -48,6 +54,7 @@ impl ApiError {
     fn parts(&self) -> (StatusCode, &str) {
         match self {
             Self::BadRequest(message) => (StatusCode::BAD_REQUEST, message),
+            Self::Unauthorized(message) => (StatusCode::UNAUTHORIZED, message),
             Self::NotFound(message) => (StatusCode::NOT_FOUND, message),
             Self::Unavailable(message) => (StatusCode::SERVICE_UNAVAILABLE, message),
             Self::Internal(message) => (StatusCode::INTERNAL_SERVER_ERROR, message),
@@ -108,6 +115,10 @@ mod tests {
         assert_eq!(
             ApiError::bad_request("x").parts().0,
             StatusCode::BAD_REQUEST
+        );
+        assert_eq!(
+            ApiError::unauthorized("x").parts().0,
+            StatusCode::UNAUTHORIZED
         );
         assert_eq!(ApiError::not_found("x").parts().0, StatusCode::NOT_FOUND);
         assert_eq!(

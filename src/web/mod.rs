@@ -3,16 +3,27 @@
 
 pub mod apps;
 pub mod assets;
+pub mod auth;
+pub mod backup;
 pub mod containers;
+pub mod ddns;
+pub mod files;
+pub mod logs;
 pub mod network;
+pub mod notify;
+pub mod proxy;
+pub mod shares;
+pub mod shell_ws;
+pub mod smart;
 pub mod virtualization;
+pub mod wireguard;
 pub mod ws;
 
 use std::sync::Arc;
 
 use axum::extract::State;
-use axum::routing::{delete, get, post};
-use axum::{Json, Router};
+use axum::routing::{delete, get, post, put};
+use axum::{Json, Router, middleware};
 use serde::Serialize;
 
 use crate::containers::host;
@@ -22,6 +33,16 @@ use crate::system::metrics::Snapshot;
 
 pub fn router(state: AppState) -> Router {
     Router::new()
+        .route("/api/auth/setup", post(auth::setup))
+        .route("/api/auth/login", post(auth::login))
+        .route("/api/auth/logout", post(auth::logout))
+        .route("/api/auth/session", get(auth::session))
+        .route("/api/auth/password", post(auth::change_password))
+        .route("/api/notifications", get(notify::feed))
+        .route("/api/notifications/clear", post(notify::clear))
+        .route("/api/notifications/config", put(notify::update_config))
+        .route("/api/notifications/test", post(notify::test))
+        .route("/api/notifications/ws", get(notify::ws))
         .route("/api/health", get(health))
         .route("/api/system/snapshot", get(system_snapshot))
         .route("/api/ws/telemetry", get(ws::telemetry_ws))
@@ -55,6 +76,78 @@ pub fn router(state: AppState) -> Router {
             "/api/network/certificates/{name}",
             delete(network::certificate_remove),
         )
+        .route("/api/proxy", get(proxy::state).put(proxy::save))
+        .route("/api/proxy/routes", post(proxy::create_route))
+        .route(
+            "/api/proxy/routes/{id}",
+            put(proxy::update_route).delete(proxy::delete_route),
+        )
+        .route("/api/proxy/preflight", post(proxy::preflight))
+        .route("/api/proxy/enable", post(proxy::enable))
+        .route("/api/ca", get(proxy::ca_state))
+        .route("/api/ca/init", post(proxy::ca_init))
+        .route("/api/ca/download", get(proxy::ca_download))
+        .route("/api/ca/issue", post(proxy::ca_issue))
+        .route("/api/ca/leaves/{name}", delete(proxy::ca_remove))
+        .route("/api/files", get(files::state))
+        .route("/api/files/config", put(files::save_config))
+        .route("/api/files/read", get(files::read))
+        .route("/api/files/download", get(files::download))
+        .route("/api/files/archive", get(files::archive))
+        .route("/api/files/accounts", get(files::accounts))
+        .route("/api/files/mkdir", post(files::mkdir))
+        .route("/api/files/file", post(files::create_file))
+        .route("/api/files/save", post(files::save))
+        .route("/api/files/rename", post(files::rename))
+        .route("/api/files/delete", post(files::delete))
+        .route("/api/files/chmod", post(files::chmod))
+        .route("/api/files/chown", post(files::chown))
+        .route("/api/files/extract", post(files::extract))
+        .route("/api/files/upload", post(files::upload))
+        .route("/api/samba", get(shares::samba_state))
+        .route("/api/samba/config", put(shares::samba_save))
+        .route("/api/samba/apply", post(shares::samba_apply))
+        .route("/api/samba/users", post(shares::samba_set_user))
+        .route("/api/samba/users/{name}", delete(shares::samba_remove_user))
+        .route("/api/nfs", get(shares::nfs_state))
+        .route("/api/nfs/config", put(shares::nfs_save))
+        .route("/api/nfs/apply", post(shares::nfs_apply))
+        .route("/api/backup", get(backup::state))
+        .route("/api/backup/config", put(backup::save_config))
+        .route("/api/backup/test", post(backup::test))
+        .route("/api/backup/jobs/{id}/run", post(backup::run_job))
+        .route("/api/backup/jobs/{id}/verify", post(backup::verify))
+        .route("/api/backup/jobs/{id}/secrets", post(backup::save_secrets))
+        .route("/api/backup/jobs/{id}/snapshots", get(backup::snapshots))
+        .route(
+            "/api/backup/jobs/{id}/snapshots/{snapshot}/ls",
+            get(backup::browse),
+        )
+        .route("/api/backup/jobs/{id}/restore", post(backup::restore))
+        .route("/api/backup/jobs/{id}/download", get(backup::download))
+        .route("/api/wireguard", get(wireguard::state))
+        .route("/api/wireguard/config", put(wireguard::save))
+        .route("/api/wireguard/apply", post(wireguard::apply))
+        .route("/api/wireguard/key", post(wireguard::generate_key))
+        .route("/api/wireguard/key/server", post(wireguard::set_server_key))
+        .route("/api/wireguard/export", post(wireguard::export_client))
+        .route("/api/wireguard/peers", post(wireguard::add_peer))
+        .route(
+            "/api/wireguard/peers/{name}",
+            delete(wireguard::remove_peer),
+        )
+        .route("/api/shell/ws", get(shell_ws::shell_ws))
+        .route("/api/smart", get(smart::state))
+        .route("/api/smart/config", put(smart::save_config))
+        .route("/api/smart/{device}", post(smart::start))
+        .route("/api/smart/progress", get(smart::progress))
+        .route("/api/logs", get(logs::state))
+        .route("/api/logs/units", get(logs::state))
+        .route("/api/logs/ws", get(logs::ws))
+        .route("/api/ddns", get(ddns::state))
+        .route("/api/ddns/config", put(ddns::save_config))
+        .route("/api/ddns/token", post(ddns::save_token))
+        .route("/api/ddns/update", post(ddns::update))
         .route(
             "/api/virt",
             get(virtualization::state).put(virtualization::update_config),
@@ -97,6 +190,9 @@ pub fn router(state: AppState) -> Router {
             get(virtualization::ct_console_ws),
         )
         .fallback(assets::serve)
+        // The login gate wraps the whole router: non-`/api/` paths (the SPA)
+        // pass straight through, everything else is checked against a session.
+        .layer(middleware::from_fn_with_state(state.clone(), auth::gate))
         .with_state(state)
 }
 
@@ -122,10 +218,13 @@ struct Health {
     /// Connected telemetry sockets; a quick "is the fan-out alive" signal.
     subscribers: usize,
     has_snapshot: bool,
+    /// Live admin sessions; never more than one or two by design.
+    sessions: usize,
 }
 
 /// Liveness probe. Used by the deploy script and by `systemctl` smoke tests:
-/// `curl -fsS http://127.0.0.1:8553/api/health`.
+/// `curl -fsS http://127.0.0.1:8553/api/health`. Deliberately exempt from the
+/// auth gate so the deploy health check needs no credentials.
 async fn health(State(state): State<AppState>) -> Json<Health> {
     Json(Health {
         status: "ok",
@@ -133,6 +232,7 @@ async fn health(State(state): State<AppState>) -> Json<Health> {
         uptime_s: state.uptime_s(),
         subscribers: state.telemetry.receiver_count(),
         has_snapshot: state.latest_snapshot().is_some(),
+        sessions: state.auth.sessions.len(),
     })
 }
 

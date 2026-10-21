@@ -23,16 +23,36 @@ pub const DEFAULT_GUEST_CATALOG_PATH: &str = "/etc/stack-stack/guests.json";
 pub const DEFAULT_GUESTS_DIR: &str = "/var/lib/stack-stack/guests";
 pub const DEFAULT_IMAGES_DIR: &str = "/var/lib/stack-stack/images";
 pub const DEFAULT_VIRT_TIMEOUT_S: u64 = 1800;
+pub const DEFAULT_AUTH_PATH: &str = "/etc/stack-stack/auth.json";
+pub const DEFAULT_SESSION_TTL_H: u64 = 168;
+pub const DEFAULT_NOTIFY_PATH: &str = "/etc/stack-stack/notify.json";
+pub const DEFAULT_CA_DIR: &str = "/etc/stack-stack/ca";
+pub const DEFAULT_PROXY_PATH: &str = "/etc/stack-stack/proxy.json";
+pub const DEFAULT_FILES_PATH: &str = "/etc/stack-stack/files.json";
+pub const DEFAULT_SAMBA_PATH: &str = "/etc/stack-stack/samba.json";
+pub const DEFAULT_NFS_PATH: &str = "/etc/stack-stack/nfs.json";
+pub const DEFAULT_BACKUP_PATH: &str = "/etc/stack-stack/backup.json";
+pub const DEFAULT_BACKUP_SECRETS_PATH: &str = "/etc/stack-stack/backup.secrets.json";
+pub const DEFAULT_RESTIC_TIMEOUT_S: u64 = 7200;
+pub const DEFAULT_WG_PATH: &str = "/etc/stack-stack/wireguard.json";
+pub const DEFAULT_WG_SECRETS_PATH: &str = "/etc/stack-stack/wireguard.secrets.json";
+pub const DEFAULT_SMART_PATH: &str = "/etc/stack-stack/smart.json";
+pub const DEFAULT_DDNS_PATH: &str = "/etc/stack-stack/ddns.json";
+pub const DEFAULT_DDNS_SECRETS_PATH: &str = "/etc/stack-stack/ddns.secrets.json";
+pub const DEFAULT_TLS_HTTP_PORT: u16 = 80;
+pub const DEFAULT_TLS_HTTPS_PORT: u16 = 443;
+pub const DEFAULT_TLS_ADMIN_HOSTNAME: &str = "stack-stack.lan";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Config {
     /// Address the HTTP listener binds to. 0.0.0.0 so the LAN can reach it.
     ///
-    /// SECURITY: the server has no authentication and no TLS by design; binding
-    /// beyond `127.0.0.1` exposes hostname, disk layout, network interfaces and
-    /// SMART data to anyone who can reach the port. Keep the default on a
-    /// trusted homelab LAN, or set `STACK_STACK_BIND=127.0.0.1` when it is not.
+    /// SECURITY: every `/api/*` route except `/api/health` and the auth
+    /// bootstrap endpoints is behind the single-admin login gate (see
+    /// `auth_path`/`session_ttl_h`). The `:8553` listener itself is still plain
+    /// HTTP; enable the TLS front door (`tls_enabled`) for HTTPS on `:443`, or
+    /// keep this listener on `127.0.0.1` when the box is not on a trusted LAN.
     pub bind: String,
     /// HTTP port. Locked to 8553 in the deployment plan.
     pub port: u16,
@@ -68,6 +88,51 @@ pub struct Config {
     pub images_dir: String,
     /// Hard limit on one guest lifecycle command (image pull + disk create).
     pub virt_timeout_s: u64,
+    /// Admin credential document. Missing or empty means "setup mode": the UI
+    /// shows a first-run screen and every other `/api/*` route is gated.
+    pub auth_path: String,
+    /// Session lifetime, in hours. Tokens are in-memory only and never persisted.
+    pub session_ttl_h: u64,
+    /// Notification document: per-event toggles, thresholds and the webhook URL.
+    pub notify_path: String,
+    /// Whether the TLS front door (`:80` redirect + `:443` HTTPS) is enabled.
+    /// Off by default so a box already running nginx/apache is not taken over.
+    pub tls_enabled: bool,
+    /// Plain HTTP port used only to redirect to HTTPS.
+    pub tls_http_port: u16,
+    /// HTTPS port: terminates TLS, serves the admin UI and proxies routes.
+    pub tls_https_port: u16,
+    /// Hostname the admin UI answers on over HTTPS.
+    pub tls_admin_hostname: String,
+    /// Certificate name used when a SNI has no matching managed certificate.
+    pub tls_default_cert: Option<String>,
+    /// Internal CA directory: root key/cert and per-hostname leaves.
+    pub ca_dir: String,
+    /// Reverse-proxy route document.
+    pub proxy_path: String,
+    /// File-manager document: writable roots, hidden-file and size limits.
+    pub files_path: String,
+    /// Samba share document.
+    pub samba_path: String,
+    /// NFS export document.
+    pub nfs_path: String,
+    /// Backup job document (secret-free).
+    pub backup_path: String,
+    /// Backup credentials document (0600): repository passwords and keys.
+    pub backup_secrets_path: String,
+    /// Hard limit on one restic command.
+    pub restic_timeout_s: u64,
+    /// WireGuard topology document (secret-free).
+    pub wg_path: String,
+    /// WireGuard server private key document (0600).
+    pub wg_secrets_path: String,
+
+    /// SMART self-test schedule document.
+    pub smart_path: String,
+    /// Dynamic DNS document.
+    pub ddns_path: String,
+    /// Dynamic DNS token document (0600).
+    pub ddns_secrets_path: String,
 }
 
 impl Default for Config {
@@ -116,6 +181,28 @@ impl Default for Config {
             guests_dir: DEFAULT_GUESTS_DIR.to_string(),
             images_dir: DEFAULT_IMAGES_DIR.to_string(),
             virt_timeout_s: DEFAULT_VIRT_TIMEOUT_S,
+            auth_path: DEFAULT_AUTH_PATH.to_string(),
+            session_ttl_h: DEFAULT_SESSION_TTL_H,
+            notify_path: DEFAULT_NOTIFY_PATH.to_string(),
+            tls_enabled: false,
+            tls_http_port: DEFAULT_TLS_HTTP_PORT,
+            tls_https_port: DEFAULT_TLS_HTTPS_PORT,
+            tls_admin_hostname: DEFAULT_TLS_ADMIN_HOSTNAME.to_string(),
+            tls_default_cert: None,
+            ca_dir: DEFAULT_CA_DIR.to_string(),
+            proxy_path: DEFAULT_PROXY_PATH.to_string(),
+            files_path: DEFAULT_FILES_PATH.to_string(),
+            samba_path: DEFAULT_SAMBA_PATH.to_string(),
+            nfs_path: DEFAULT_NFS_PATH.to_string(),
+            backup_path: DEFAULT_BACKUP_PATH.to_string(),
+            backup_secrets_path: DEFAULT_BACKUP_SECRETS_PATH.to_string(),
+            restic_timeout_s: DEFAULT_RESTIC_TIMEOUT_S,
+            wg_path: DEFAULT_WG_PATH.to_string(),
+            wg_secrets_path: DEFAULT_WG_SECRETS_PATH.to_string(),
+
+            smart_path: DEFAULT_SMART_PATH.to_string(),
+            ddns_path: DEFAULT_DDNS_PATH.to_string(),
+            ddns_secrets_path: DEFAULT_DDNS_SECRETS_PATH.to_string(),
         }
     }
 }
