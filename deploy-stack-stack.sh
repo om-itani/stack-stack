@@ -65,8 +65,11 @@ APT_PACKAGES=(
   xz-utils
   qemu-system-x86
   qemu-utils
+  qemu-kvm
   lxc
   lm-sensors
+  libvirt-daemon-system
+  libvirt-clients
   docker.io
   docker-compose
   unbound
@@ -226,13 +229,21 @@ install_packages() {
     fi
   fi
 
+  # tc is provided by iproute2, not a separate package — verify the binary exists.
+  command -v tc >/dev/null 2>&1 || warn_file "tc missing (iproute2 not installed?); SQM feature will be unavailable"
+
   # Enable and start Docker
   systemctl enable docker >/dev/null 2>&1 || true
   systemctl start docker >/dev/null 2>&1 || warn_file "could not start docker service"
 
   # Enable and start libvirtd for QEMU/KVM
-  systemctl enable libvirtd >/dev/null 2>&1 || true
-  systemctl start libvirtd >/dev/null 2>&1 || warn_file "could not start libvirtd service"
+  systemctl enable --now libvirtd >/dev/null 2>&1 || true
+  if ! systemctl is-active --quiet libvirtd; then
+    warn_file "libvirtd failed to start; journal follows:"
+    journalctl -u libvirtd --no-pager -n 30 >&2 || true
+  fi
+  # Ensure /run/libvirt exists even if libvirtd hasn't created it yet
+  install -d -m 0755 /run/libvirt
 
   # Add current user to docker and libvirt groups
   usermod -aG docker,libvirt,kvm "${SUDO_USER:-root}" 2>/dev/null || true
@@ -278,6 +289,9 @@ create_directories() {
   install -d -m 0750 "${STATE_DIR}/guests"
   install -d -m 0750 "${STATE_DIR}/images"
   install -d -m 0755 "${BACKUP_DIR}"
+  # The systemd unit references /run/libvirt; create it now so the first deploy
+  # works even before libvirtd has ever started (it is /run, so tmpfs-recreated).
+  install -d -m 0755 /run/libvirt
 }
 
 write_default_config() {
@@ -322,7 +336,7 @@ StartLimitIntervalSec=0
 NoNewPrivileges=false
 PrivateTmp=true
 ProtectSystem=strict
-ReadWritePaths=/etc/stack-stack /var/lib/stack-stack /var/run/docker.sock /run/libvirt
+ReadWritePaths=/etc/stack-stack /var/lib/stack-stack /run/docker.sock -/run/libvirt
 CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_RAW CAP_SYS_ADMIN CAP_DAC_OVERRIDE CAP_CHOWN CAP_FOWNER CAP_SYS_RESOURCE
 
 [Install]
@@ -356,8 +370,17 @@ restart_service() {
 # Comprehensive health check including all subsystems
 health_check() {
   log_file "health-checking ${HEALTH_URL}"
+
+  # Fail fast: if the service is not even active, dumps the journal so the
+  # actual error (e.g. 226/NAMESPACE) is visible instead of a 60s curl timeout.
+  if ! systemctl is-active --quiet "${SERVICE_NAME}"; then
+    warn_file "${SERVICE_NAME} is not active; journal follows:"
+    journalctl -u "${SERVICE_NAME}" --no-pager -n 50 >&2 || true
+    return 1
+  fi
+
   local attempt
-  for attempt in $(seq 1 30); do
+  for attempt in $(seq 1 60); do
     if curl -fsS --max-time 3 "${HEALTH_URL}" >/dev/null 2>&1; then
       log_file "stack-stack is healthy"
       curl -fsS --max-time 3 "${HEALTH_URL}"
@@ -366,7 +389,8 @@ health_check() {
     fi
     sleep 1
   done
-  warn_file "${HEALTH_URL} did not answer in time; check: journalctl -u ${SERVICE_NAME} -n 100"
+  warn_file "${HEALTH_URL} did not answer in time; journal follows:"
+  journalctl -u "${SERVICE_NAME}" --no-pager -n 50 >&2 || true
   return 1
 }
 
