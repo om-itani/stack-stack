@@ -26,6 +26,7 @@ use axum::extract::State;
 use axum::routing::{delete, get, post, put};
 use axum::{Json, Router, middleware};
 use serde::Serialize;
+use tower_http::compression::CompressionLayer;
 
 use crate::containers::host;
 use crate::containers::model::HostIp;
@@ -36,6 +37,12 @@ use crate::system::metrics::Snapshot;
 const STACK_BODY_LIMIT: usize = 1024 * 1024;
 
 pub fn router(state: AppState) -> Router {
+    // Static assets get gzip; API JSON does not (it is small, and compressing it
+    // costs CPU on every poll without saving meaningful bytes).
+    let assets_router = Router::<AppState>::new()
+        .fallback(assets::serve)
+        .layer(CompressionLayer::new());
+
     Router::new()
         .route("/api/auth/setup", post(auth::setup))
         .route("/api/auth/login", post(auth::login))
@@ -208,7 +215,9 @@ pub fn router(state: AppState) -> Router {
             "/api/virt/cts/{id}/console/ws",
             get(virtualization::ct_console_ws),
         )
-        .fallback(assets::serve)
+        // The asset sub-router owns the final fallback so its compression layer
+        // cannot reach the API routes.
+        .merge(assets_router)
         // The login gate wraps the whole router: non-`/api/` paths (the SPA)
         // pass straight through, everything else is checked against a session.
         .layer(middleware::from_fn_with_state(state.clone(), auth::gate))

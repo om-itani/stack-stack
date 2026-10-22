@@ -13,9 +13,11 @@
 
 import { api, stacksApi } from "../api";
 import type { Container, StackInfo } from "../api";
-import { openLogs, openTerminal } from "../terminal";
 import { HARDENING_FRAGMENT, composeForImage, serviceName, takeStackDraft } from "../stackdraft";
-import { button, el, emptyNote, field, textInput } from "../ui";
+// xterm is by far the largest dependency; it is imported on demand so it stays
+// out of the initial bundle (see `openTerminal`/`openLogs` below).
+const loadTerminal = () => import("../terminal");
+import { badge, button, el, emptyNote, field, textInput } from "../ui";
 
 const REFRESH_MS = 5000;
 
@@ -37,6 +39,18 @@ const STATE_STYLES: Record<string, string> = {
   dead: "text-rose-500",
   removing: "text-rose-500",
   stopping: "text-amber-400",
+};
+
+/** Badge tone per container state, for the pill in each card header. */
+const STATE_TONES: Record<string, "ok" | "warn" | "err" | "muted"> = {
+  running: "ok",
+  paused: "warn",
+  restarting: "warn",
+  stopping: "warn",
+  created: "muted",
+  exited: "muted",
+  dead: "err",
+  removing: "err",
 };
 
 export interface PageHandle {
@@ -260,10 +274,7 @@ export function createContainersPage(): PageHandle {
     const name = document.createElement("span");
     name.className = "truncate font-semibold text-slate-200";
     name.textContent = container.name || container.id.slice(0, 12);
-    const state = document.createElement("span");
-    state.className = `tabular text-[10px] uppercase ${STATE_STYLES[container.state] ?? "text-slate-500"}`;
-    state.textContent = container.state;
-    head.append(name, state);
+    head.append(name, badge(container.state, STATE_TONES[container.state] ?? "muted"));
 
     const meta = document.createElement("div");
     meta.className = "tabular flex flex-wrap items-baseline gap-x-3 px-3 py-1 text-[10px] text-slate-600";
@@ -337,11 +348,15 @@ export function createContainersPage(): PageHandle {
     );
 
     const logsBtn = button("logs");
-    logsBtn.addEventListener("click", () => openLogs(container.id, container.name));
+    logsBtn.addEventListener("click", () => {
+      void loadTerminal().then((terminal) => terminal.openLogs(container.id, container.name));
+    });
 
     const termBtn = button("terminal");
     termBtn.disabled = !running || busy;
-    termBtn.addEventListener("click", () => openTerminal(container.id, container.name));
+    termBtn.addEventListener("click", () => {
+      void loadTerminal().then((terminal) => terminal.openTerminal(container.id, container.name));
+    });
 
     const deleteBtn = button("delete", "text-rose-400 hover:border-rose-500");
     deleteBtn.disabled = busy;

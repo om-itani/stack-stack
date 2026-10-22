@@ -37,16 +37,32 @@ export function uptime(seconds: number): string {
   return hours > 0 ? `${hours}h ${minutes}m` : `${minutes}m`;
 }
 
-/** Paint a usage bar and recolour it as it approaches saturation. */
+/** Paint a usage bar. A gradient plus a soft glow reads as "live" far better
+ * than a flat block, and recolours as the value approaches saturation. */
 export function fill(bar: HTMLElement, value: number): void {
   const clamped = Math.min(100, Math.max(0, value));
   bar.style.width = `${clamped}%`;
   bar.className =
     clamped >= 90
-      ? "h-full bg-rose-500"
+      ? "h-full rounded-full bg-gradient-to-r from-rose-500 to-red-400 shadow-[0_0_10px_rgba(244,63,94,0.45)]"
       : clamped >= 75
-        ? "h-full bg-amber-400"
-        : "h-full bg-emerald-500";
+        ? "h-full rounded-full bg-gradient-to-r from-amber-500 to-orange-400 shadow-[0_0_10px_rgba(245,158,11,0.4)]"
+        : "h-full rounded-full bg-gradient-to-r from-emerald-500 to-teal-400 shadow-[0_0_10px_rgba(16,185,129,0.45)]";
+}
+
+/** A translucent pill for status text. */
+export function badge(text: string, tone: "ok" | "warn" | "err" | "muted" = "muted"): HTMLElement {
+  const node = document.createElement("span");
+  node.className = `badge badge-${tone}`;
+  node.textContent = text;
+  return node;
+}
+
+/** A shimmering placeholder for content that has not arrived yet. */
+export function skeleton(className = ""): HTMLElement {
+  const node = document.createElement("div");
+  node.className = `skeleton ${className}`.trim();
+  return node;
 }
 
 /** Query that throws on a miss; a missing element is a programming error. */
@@ -60,7 +76,7 @@ export function must<T extends Element>(selector: string, root: ParentNode = doc
 
 export function emptyNote(text: string): HTMLElement {
   const note = document.createElement("div");
-  note.className = "px-3 py-3 text-slate-600";
+  note.className = "px-4 py-6 text-center text-slate-500";
   note.textContent = text;
   return note;
 }
@@ -237,7 +253,7 @@ export function button(
   const node = document.createElement("button");
   node.type = "button";
   node.textContent = label;
-  node.className = `border border-[#1e2733] px-2 py-0.5 text-slate-300 transition-colors hover:border-slate-500 disabled:cursor-not-allowed disabled:opacity-40 ${className}`.trim();
+  node.className = `rounded-lg border border-white/10 bg-white/5 px-2 py-0.5 text-slate-300 transition-all duration-200 hover:-translate-y-px hover:border-white/20 hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-40 ${className}`.trim();
   if (onClick) {
     node.addEventListener("click", onClick);
   }

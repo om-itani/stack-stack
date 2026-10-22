@@ -36,6 +36,8 @@ pub async fn install(
     Path(app): Path<String>,
 ) -> Result<Json<OpResult>, ApiError> {
     let output = store::install(&state.config, &app).await?;
+    // Compose created containers outside the Docker client; drop the cached list.
+    state.docker.invalidate().await;
     Ok(Json(OpResult {
         ok: true,
         output: trim(&output),
@@ -47,6 +49,7 @@ pub async fn remove(
     Path(app): Path<String>,
 ) -> Result<Json<OpResult>, ApiError> {
     let output = store::remove(&state.config, &app).await?;
+    state.docker.invalidate().await;
     Ok(Json(OpResult {
         ok: true,
         output: trim(&output),

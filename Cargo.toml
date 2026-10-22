@@ -33,6 +33,7 @@ tokio-rustls = { version = "0.26.6", default-features = false, features = ["ring
 tower = { version = "0.5.3", features = ["util"] }
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
+tower-http = { version = "0.7.1", features = ["compression-gzip"] }
 
 [profile.release]
 opt-level = 3

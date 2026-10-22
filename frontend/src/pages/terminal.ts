@@ -6,8 +6,11 @@
  * same xterm component and frame protocol as container exec.
  */
 
-import { openConsole } from "../terminal";
 import { button, el, panel } from "../ui";
+
+// xterm is loaded only when the shell is actually opened, keeping it out of the
+// initial bundle.
+const loadTerminal = () => import("../terminal");
 
 export interface PageHandle {
   root: HTMLElement;
@@ -28,7 +31,9 @@ export function createTerminalPage(hostname: () => string): PageHandle {
 
   const launch = button("open shell", "text-emerald-400 hover:border-emerald-500", () => {
     const host = hostname() || "this host";
-    openConsole("/api/shell/ws", "host shell", host);
+    void loadTerminal().then((terminal) =>
+      terminal.openConsole("/api/shell/ws", "host shell", host),
+    );
   });
   cardBody.append(el("div", { class: "flex gap-2" }, [launch]));
   root.append(card);

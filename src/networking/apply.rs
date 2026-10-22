@@ -165,6 +165,38 @@ fn apply_firewall(
     }
 }
 
+/// Tail of a unit's journal, used to explain a failed restart. `systemctl`'s own
+/// stderr is usually just "Job for X failed"; the reason (address in use, bad
+/// config, missing binary) only appears in the journal.
+fn journal_tail(runner: &dyn Runner, unit: &str) -> String {
+    let service = format!("{unit}.service");
+    match runner.call(
+        "journalctl",
+        &["-u", &service, "-n", "20", "--no-pager", "-o", "cat"],
+    ) {
+        Ok(output) => trimmed(&output.combined()),
+        Err(err) => format!("journalctl unavailable: {err}"),
+    }
+}
+
+/// A port-53 clash is the single most common reason a resolver will not start,
+/// and it is indistinguishable from a generic failure in `systemctl`'s output.
+fn restart_failure(runner: &dyn Runner, unit: &str, restart: &crate::proc::Output) -> String {
+    let journal = journal_tail(runner, unit);
+    let mut message = format!("systemctl restart {unit}: {}", trimmed(&restart.combined()));
+    let lower = journal.to_lowercase();
+    if lower.contains("address already in use") || lower.contains("failed to bind") {
+        message.push_str(
+            "\nhint: another resolver already holds the port (check `ss -lunp | grep :53`); \
+             stop it or point unbound at a different port",
+        );
+    }
+    if !journal.is_empty() {
+        message.push_str(&format!("\njournalctl -u {unit}:\n{journal}"));
+    }
+    message
+}
+
 fn apply_dnsmasq(
     config: &NetworkConfig,
     paths: &ApplyPaths,
@@ -194,10 +226,7 @@ fn apply_dnsmasq(
 
         let restart = runner.call("systemctl", &["restart", "dnsmasq"])?;
         if !restart.success() {
-            return Err(format!(
-                "systemctl restart dnsmasq: {}",
-                trimmed(&restart.combined())
-            ));
+            return Err(restart_failure(runner, "dnsmasq", &restart));
         }
 
         Ok(if config.dhcp.enabled {
@@ -239,10 +268,7 @@ fn apply_unbound(
 
         let restart = runner.call("systemctl", &["restart", "unbound"])?;
         if !restart.success() {
-            return Err(format!(
-                "systemctl restart unbound: {}",
-                trimmed(&restart.combined())
-            ));
+            return Err(restart_failure(runner, "unbound", &restart));
         }
 
         Ok(format!(

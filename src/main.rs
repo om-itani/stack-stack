@@ -50,6 +50,10 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
     let cfg = Config::load();
     let addr = cfg.addr();
 
+    // Create the audit trail (mode 0600) and record this boot, so `tail -f` works
+    // before the first destructive action.
+    audit::init(&cfg.audit_path);
+
     let app_state = AppState::new(cfg.clone());
     web::ws::spawn_sampler(app_state.clone(), cfg.clone());
     web::auth::spawn_session_sweeper(app_state.clone());

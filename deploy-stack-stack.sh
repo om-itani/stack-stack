@@ -327,6 +327,11 @@ Description=stack-stack homelab control plane
 Documentation=https://github.com/om-itani/stack-stack
 After=network-online.target docker.service libvirtd.service
 Wants=network-online.target docker.service libvirtd.service
+# These belong in [Unit]: systemd warns "Unknown key" and ignores them under
+# [Service]. Five failures inside five seconds stops the loop so a crash loop is
+# visible in the journal instead of restarting forever.
+StartLimitIntervalSec=5
+StartLimitBurst=5
 
 [Service]
 Type=simple
@@ -341,8 +346,6 @@ Restart=always
 RestartSec=3
 TimeoutStopSec=30
 LimitNOFILE=65536
-# A crash must be visible in the journal rather than silently restarting forever.
-StartLimitIntervalSec=0
 # Security hardening
 NoNewPrivileges=false
 PrivateTmp=true

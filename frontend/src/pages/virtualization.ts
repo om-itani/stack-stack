@@ -27,7 +27,9 @@ import type {
   VmConfig,
   VmPreview,
 } from "../api";
-import { openConsole } from "../terminal";
+// xterm is loaded only when a console is opened, keeping it out of the initial
+// bundle.
+const loadTerminal = () => import("../terminal");
 import {
   button,
   checkbox,
@@ -357,7 +359,9 @@ export function createVirtualizationPage(): PageHandle {
         status.kind === "vm"
           ? `/api/virt/vms/${encodeURIComponent(status.id)}/console/ws`
           : `/api/virt/cts/${encodeURIComponent(status.id)}/console/ws`;
-      openConsole(path, status.kind === "vm" ? "serial console" : "shell", status.name);
+      void loadTerminal().then((terminal) =>
+      terminal.openConsole(path, status.kind === "vm" ? "serial console" : "shell", status.name),
+    );
     });
     actions.append(consoleBtn);
 

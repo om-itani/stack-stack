@@ -196,7 +196,7 @@ function startShell(): void {
 
   app.innerHTML = `
 <div class="flex h-screen flex-col">
-  <header class="flex flex-wrap items-center gap-x-4 gap-y-1 border-b border-[#1e2733] bg-[#0d131b] px-4 py-2">
+  <header class="flex flex-wrap items-center gap-x-4 gap-y-1 border-b border-white/10 bg-slate-900/50 px-4 py-2 backdrop-blur">
     <span class="font-bold tracking-[0.25em] text-emerald-400">STACK-STACK</span>
     <span data-ref="host" class="text-slate-300">—</span>
     <span data-ref="uptime" class="tabular text-slate-500">up —</span>
@@ -206,11 +206,11 @@ function startShell(): void {
       <span data-ref="version" class="text-slate-600"></span>
       <span data-ref="dot" class="inline-block size-2 rounded-full bg-slate-600"></span>
       <span data-ref="link" class="text-slate-400">connecting</span>
-      <button data-ref="logout" type="button" class="border border-[#1e2733] px-2 py-0.5 text-slate-400 hover:border-rose-500 hover:text-rose-400">sign out</button>
+      <button data-ref="logout" type="button" class="rounded-lg border border-white/10 bg-white/5 px-2 py-0.5 text-slate-400 transition-all duration-200 hover:border-rose-500/50 hover:text-rose-400">sign out</button>
     </span>
   </header>
   <div class="flex min-h-0 flex-1">
-    <nav data-ref="nav" class="flex w-40 shrink-0 flex-col overflow-y-auto border-r border-[#1e2733] bg-[#0d131b] p-2 pb-4"></nav>
+    <nav data-ref="nav" class="flex w-40 shrink-0 flex-col overflow-y-auto border-r border-white/10 bg-slate-900/30 p-2 pb-4"></nav>
     <div data-ref="view" class="min-h-0 flex-1 overflow-auto"></div>
   </div>
 </div>
@@ -277,7 +277,7 @@ function startShell(): void {
       navButton.type = "button";
       navButton.textContent = def.label;
       navButton.className =
-        "px-2 py-1 text-left text-slate-400 transition-colors hover:bg-[#111721] hover:text-slate-200";
+        "rounded-lg px-2 py-1 text-left text-slate-400 transition-all duration-200 hover:bg-white/5 hover:text-slate-200";
       navButton.addEventListener("click", () => show(def.id));
       navEl.append(navButton);
       navButtons.set(def.id, navButton);
@@ -303,6 +303,11 @@ function startShell(): void {
       // (e.g. `grid`, `flex`) outranks the UA rule for `[hidden]`.
       if (isActive) {
         handle.root.style.removeProperty("display");
+        // Replay the entrance animation on every visit. Re-adding the class
+        // needs a reflow in between or the browser coalesces it away.
+        handle.root.classList.remove("page-enter");
+        void handle.root.offsetWidth;
+        handle.root.classList.add("page-enter");
       } else {
         handle.root.style.display = "none";
       }
@@ -310,8 +315,8 @@ function startShell(): void {
       const navButton = navButtons.get(def.id);
       if (navButton) {
         navButton.className = isActive
-          ? "bg-[#111721] px-2 py-1 text-left text-emerald-400"
-          : "px-2 py-1 text-left text-slate-400 transition-colors hover:bg-[#111721] hover:text-slate-200";
+          ? "rounded-lg bg-white/10 px-2 py-1 text-left font-medium text-emerald-400 shadow-[inset_2px_0_0_0_rgb(16_185_129)]"
+          : "rounded-lg px-2 py-1 text-left text-slate-400 transition-all duration-200 hover:bg-white/5 hover:text-slate-200";
       }
     }
 

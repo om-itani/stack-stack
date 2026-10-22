@@ -115,6 +115,8 @@ pub async fn create_stack(
     Json(request): Json<CreateStackRequest>,
 ) -> Result<Json<StackResult>, ApiError> {
     let output = store::deploy_stack(&state.config, &request.name, &request.compose).await?;
+    // Compose created containers outside the Docker client; drop the cached list.
+    state.docker.invalidate().await;
     state.audit("stack.deploy", &request.name, "compose up -d");
     Ok(Json(StackResult {
         ok: true,
@@ -135,6 +137,7 @@ pub async fn delete_stack(
 ) -> Result<Json<StackResult>, ApiError> {
     let force = query.force.unwrap_or(false);
     let output = store::remove_stack(&state.config, &name, force).await?;
+    state.docker.invalidate().await;
     state.audit(
         "stack.remove",
         &name,

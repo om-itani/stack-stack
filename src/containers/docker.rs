@@ -9,6 +9,7 @@
 
 use std::pin::Pin;
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 #[cfg(unix)]
 use bollard::API_DEFAULT_VERSION;
@@ -71,12 +72,21 @@ pub enum ContainerAction {
     Restart,
 }
 
+/// How long a container listing is reused. The UI polls every few seconds; this
+/// collapses overlapping polls (and multiple tabs) onto one daemon call without
+/// being stale enough to notice.
+const LIST_TTL: Duration = Duration::from_secs(2);
+
+/// `(fetched_at, containers)` for the last successful listing.
+type ListCache = Arc<RwLock<Option<(Instant, Vec<Container>)>>>;
+
 #[derive(Clone)]
 pub struct DockerClient {
     #[cfg_attr(not(unix), allow(dead_code))]
     socket: Arc<str>,
     timeout_s: u64,
     cached: Arc<RwLock<Option<Docker>>>,
+    list_cache: ListCache,
 }
 
 impl DockerClient {
@@ -86,7 +96,14 @@ impl DockerClient {
             // A `docker ps` against a wedged daemon must not hang a handler.
             timeout_s: timeout_s.clamp(1, 600),
             cached: Arc::new(RwLock::new(None)),
+            list_cache: Arc::new(RwLock::new(None)),
         }
+    }
+
+    /// Drop the cached listing; called after any mutation so the next read is
+    /// fresh.
+    pub async fn invalidate(&self) {
+        *self.list_cache.write().await = None;
     }
 
     /// Cached connection, established on first use. A previously failed attempt
@@ -113,6 +130,12 @@ impl DockerClient {
         installed: &[String],
         apps: &[App],
     ) -> Result<Vec<Container>, ApiError> {
+        if let Some((at, containers)) = self.list_cache.read().await.as_ref()
+            && at.elapsed() < LIST_TTL
+        {
+            return Ok(containers.clone());
+        }
+
         // A read must never fail because Docker is missing: report an empty
         // fleet and let the UI say "Docker is not running". Mutations still
         // surface the 503.
@@ -144,6 +167,7 @@ impl DockerClient {
             .map(|summary| summary_to_container(summary, host_ip, installed, apps))
             .collect();
         containers.sort_by(|a, b| a.name.cmp(&b.name));
+        *self.list_cache.write().await = Some((Instant::now(), containers.clone()));
         Ok(containers)
     }
 
@@ -168,7 +192,9 @@ impl DockerClient {
                 docker.restart_container(id, Some(options)).await
             }
         };
-        result.map_err(ApiError::from)
+        result.map_err(ApiError::from)?;
+        self.invalidate().await;
+        Ok(())
     }
 
     /// Force-remove the container. Anonymous volumes are kept (`v: false`) so a
@@ -183,7 +209,9 @@ impl DockerClient {
         docker
             .remove_container(id, Some(options))
             .await
-            .map_err(ApiError::from)
+            .map_err(ApiError::from)?;
+        self.invalidate().await;
+        Ok(())
     }
 
     /// Follow logs from `tail` historical lines onward.

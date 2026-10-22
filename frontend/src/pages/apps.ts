@@ -180,7 +180,7 @@ export function createAppsPage(): PageHandle {
         setHubStatus("unavailable", "muted");
         return;
       }
-      renderHub(response.results);
+      renderHub(query, response.results);
       setHubStatus(
         `${response.results.length} result${response.results.length === 1 ? "" : "s"}`,
         "muted",
@@ -200,10 +200,10 @@ export function createAppsPage(): PageHandle {
     }
   }
 
-  function renderHub(repos: HubRepo[]): void {
+  function renderHub(query: string, repos: HubRepo[]): void {
     hubResults.replaceChildren();
     if (repos.length === 0) {
-      hubResults.append(emptyNote("no repositories matched"));
+      hubResults.append(emptyNote(`No images found for "${query}".`));
       return;
     }
     for (const repo of repos) {
