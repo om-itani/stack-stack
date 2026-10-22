@@ -3,6 +3,7 @@
 //! Phase 1 surface: host metrics collected straight from `/proc`, fanned out
 //! over a WebSocket, plus the embedded frontend shell.
 
+mod audit;
 mod auth;
 mod ca;
 mod config;
@@ -25,10 +26,27 @@ mod web;
 use config::Config;
 use state::AppState;
 
-#[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
+fn main() -> Result<(), Box<dyn std::error::Error>> {
     init_tracing();
 
+    // Explicit runtime sizing. Workers match the CPU count; the blocking pool is
+    // raised above the default so concurrent PTY sessions and Docker CLI calls
+    // cannot starve each other.
+    let workers = std::thread::available_parallelism()
+        .map(|count| count.get())
+        .unwrap_or(4);
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(workers)
+        .max_blocking_threads(256)
+        .thread_name("stack-stack")
+        .enable_all()
+        .build()?;
+
+    tracing::info!(workers, blocking_threads = 256, "tokio runtime started");
+    runtime.block_on(run())
+}
+
+async fn run() -> Result<(), Box<dyn std::error::Error>> {
     let cfg = Config::load();
     let addr = cfg.addr();
 

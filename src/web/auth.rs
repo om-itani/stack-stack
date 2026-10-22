@@ -51,7 +51,10 @@ pub async fn gate(State(state): State<AppState>, request: Request, next: Next) -
     }
 
     if is_upgrade {
-        tracing::warn!(path, "websocket upgrade rejected by auth gate (no valid session cookie)");
+        tracing::warn!(
+            path,
+            "websocket upgrade rejected by auth gate (no valid session cookie)"
+        );
     }
     let status = state.auth.status(false);
     let message = if status.setup_required {

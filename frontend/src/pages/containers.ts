@@ -14,19 +14,19 @@
 import { api, stacksApi } from "../api";
 import type { Container, StackInfo } from "../api";
 import { openLogs, openTerminal } from "../terminal";
-import { composeForImage, serviceName, takeStackDraft } from "../stackdraft";
+import { HARDENING_FRAGMENT, composeForImage, serviceName, takeStackDraft } from "../stackdraft";
 import { button, el, emptyNote, field, textInput } from "../ui";
 
 const REFRESH_MS = 5000;
 
-/** A minimal example so an empty editor is still a valid document. */
+/** A minimal, hardened example so an empty editor is still a valid document. */
 const STARTER_COMPOSE = `services:
   web:
     image: nginx:1.27
     restart: unless-stopped
     ports:
       - "8080:80"
-`;
+${HARDENING_FRAGMENT}`;
 
 const STATE_STYLES: Record<string, string> = {
   running: "text-emerald-400",
@@ -181,9 +181,14 @@ export function createContainersPage(): PageHandle {
       const title = document.createElement("span");
       title.className = "font-semibold text-slate-200";
       title.textContent = stack.name;
+      // A stack on disk with no containers is shown, not hidden: the operator
+      // needs to see that it exists and is down, and be able to bring it up.
+      const running = members.length > 0;
       const kind = document.createElement("span");
-      kind.className = "tabular text-[10px] text-slate-600";
-      kind.textContent = `stack · ${members.length} container${members.length === 1 ? "" : "s"}`;
+      kind.className = `tabular text-[10px] ${running ? "text-slate-600" : "text-amber-500"}`;
+      kind.textContent = running
+        ? `stack · ${members.length} container${members.length === 1 ? "" : "s"}`
+        : "stack · not running";
 
       const actions = document.createElement("span");
       actions.className = "ml-auto flex gap-2";
@@ -191,12 +196,12 @@ export function createContainersPage(): PageHandle {
       edit.addEventListener("click", () =>
         openEditor({ name: stack.name, compose: stack.compose, lockName: true }),
       );
-      const redeploy = button("redeploy", "text-[10px] text-emerald-400");
+      const redeploy = button(running ? "redeploy" : "deploy", "text-[10px] text-emerald-400");
       redeploy.disabled = busy;
       redeploy.addEventListener("click", () =>
         void run(
           () => stacksApi.create(stack.name, stack.compose),
-          `redeploying ${stack.name}…`,
+          `deploying ${stack.name}…`,
         ),
       );
       const removeBtn = button("remove", "text-[10px] text-rose-400 hover:border-rose-500");
@@ -206,13 +211,31 @@ export function createContainersPage(): PageHandle {
           void run(() => stacksApi.remove(stack.name), `removing ${stack.name}…`);
         }
       });
-      actions.append(edit, redeploy, removeBtn);
+      // Force removal skips `down`, so it is only offered behind its own, more
+      // explicit confirmation.
+      const forceBtn = button("force remove", "text-[10px] text-rose-500");
+      forceBtn.disabled = busy;
+      forceBtn.addEventListener("click", () => {
+        if (
+          window.confirm(
+            `Force-remove ${stack.name}? Running containers are left untouched and the compose file is deleted.`,
+          )
+        ) {
+          void run(() => stacksApi.remove(stack.name, true), `force-removing ${stack.name}…`);
+        }
+      });
+      actions.append(edit, redeploy, removeBtn, forceBtn);
       head.append(title, kind, actions);
 
       const body = document.createElement("div");
       body.className = "tabular flex flex-wrap gap-x-3 gap-y-0.5 px-3 py-1.5 text-[10px]";
       if (members.length === 0) {
-        body.append(el("span", { class: "text-slate-600", text: "no running containers" }));
+        body.append(
+          el("span", {
+            class: "text-amber-500",
+            text: "no containers running — deploy to bring the stack up",
+          }),
+        );
       } else {
         for (const member of members) {
           const dot = el("span", {
@@ -465,7 +488,10 @@ function openStackEditor(deps: StackEditorDeps, prefill: StackEditorPrefill = {}
       deps.setStatus(`stack ${name} deployed${tail ? ` · ${tail}` : ""}`, "ok");
       close();
     } catch (err) {
-      feedback.className = "tabular text-[11px] text-rose-400";
+      // The compose failure text (pull error, port conflict, YAML problem) is
+      // multi-line; show all of it in a scrollable block rather than one line.
+      feedback.className =
+        "tabular w-full max-h-40 overflow-auto whitespace-pre-wrap text-[11px] text-rose-400";
       feedback.textContent = deps.errorText(err);
       return;
     } finally {
@@ -475,7 +501,11 @@ function openStackEditor(deps: StackEditorDeps, prefill: StackEditorPrefill = {}
     await deps.reload();
   });
 
-  modal.append(heading, field("name", nameInput), field("compose (yaml)", area), actions);
+  const hint = el("div", {
+    class: "text-[10px] text-slate-600",
+    text: "generated files include hardened defaults (no-new-privileges, 10m x 3 log rotation); pasted YAML is used verbatim",
+  });
+  modal.append(heading, field("name", nameInput), field("compose (yaml)", area), hint, actions);
   overlay.append(modal);
   document.body.append(overlay);
   nameInput.focus();

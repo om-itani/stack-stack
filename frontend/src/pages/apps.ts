@@ -130,26 +130,73 @@ export function createAppsPage(): PageHandle {
     await load();
   }
 
+  function setHubStatus(text: string, tone: "muted" | "error"): void {
+    hubStatus.textContent = text;
+    hubStatus.className =
+      tone === "error"
+        ? "tabular truncate text-[11px] text-rose-400"
+        : "tabular truncate text-[11px] text-slate-500";
+  }
+
+  // Typing debounces; the button and Enter search immediately. An in-flight
+  // request is aborted when a newer one starts, so a five-letter query does not
+  // fire five upstream calls.
+  let hubDebounce: number | null = null;
+  let hubController: AbortController | null = null;
+
+  function scheduleHubSearch(): void {
+    if (hubDebounce !== null) {
+      window.clearTimeout(hubDebounce);
+    }
+    hubDebounce = window.setTimeout(() => void searchHub(), 300);
+  }
+
   async function searchHub(): Promise<void> {
+    if (hubDebounce !== null) {
+      window.clearTimeout(hubDebounce);
+      hubDebounce = null;
+    }
+    hubController?.abort();
     const query = hubInput.value.trim();
     if (!query) {
       hubResults.replaceChildren();
-      hubStatus.textContent = "";
+      setHubStatus("", "muted");
       return;
     }
+
+    const controller = new AbortController();
+    hubController = controller;
     hubBtn.disabled = true;
-    hubStatus.className = "tabular truncate text-[11px] text-slate-500";
-    hubStatus.textContent = "searching…";
+    setHubStatus("searching…", "muted");
     try {
-      const repos = await hubApi.search(query);
-      renderHub(repos);
-      hubStatus.textContent = `${repos.length} result${repos.length === 1 ? "" : "s"}`;
+      const response = await hubApi.search(query, controller.signal);
+      if (controller.signal.aborted) {
+        return;
+      }
+      if (!response.available) {
+        hubResults.replaceChildren(
+          emptyNote("docker hub search is unavailable: curl was not found on the server"),
+        );
+        setHubStatus("unavailable", "muted");
+        return;
+      }
+      renderHub(response.results);
+      setHubStatus(
+        `${response.results.length} result${response.results.length === 1 ? "" : "s"}`,
+        "muted",
+      );
     } catch (err) {
+      // A superseded request is expected; only surface real failures.
+      if (controller.signal.aborted || (err instanceof Error && err.name === "AbortError")) {
+        return;
+      }
       hubResults.replaceChildren(emptyNote(errorText(err)));
-      hubStatus.className = "tabular truncate text-[11px] text-rose-400";
-      hubStatus.textContent = errorText(err);
+      setHubStatus(errorText(err), "error");
     } finally {
-      hubBtn.disabled = false;
+      if (hubController === controller) {
+        hubController = null;
+        hubBtn.disabled = false;
+      }
     }
   }
 
@@ -199,6 +246,7 @@ export function createAppsPage(): PageHandle {
   }
 
   hubBtn.addEventListener("click", () => void searchHub());
+  hubInput.addEventListener("input", scheduleHubSearch);
   hubInput.addEventListener("keydown", (event) => {
     if (event.key === "Enter") {
       void searchHub();

@@ -295,6 +295,8 @@ create_directories() {
   install -d -m 0750 "${STATE_DIR}/images"
   # Operator-authored compose stacks (see the "Create Stack" UI).
   install -d -m 0750 "${STATE_DIR}/stacks"
+  # Append-only audit trail for destructive operations.
+  install -d -m 0750 /var/log/stack-stack
   install -d -m 0755 "${BACKUP_DIR}"
   # The systemd unit references /run/libvirt; create it now so the first deploy
   # works even before libvirtd has ever run (it is /run, so tmpfs-recreated).
@@ -345,7 +347,7 @@ StartLimitIntervalSec=0
 NoNewPrivileges=false
 PrivateTmp=true
 ProtectSystem=strict
-ReadWritePaths=/etc/stack-stack /var/lib/stack-stack /run/docker.sock -/run/libvirt -/run/lxc
+ReadWritePaths=/etc/stack-stack /var/lib/stack-stack /run/docker.sock -/run/libvirt -/run/lxc -/var/log/stack-stack
 CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_RAW CAP_SYS_ADMIN CAP_DAC_OVERRIDE CAP_CHOWN CAP_FOWNER CAP_SYS_RESOURCE
 
 [Install]
@@ -473,6 +475,83 @@ rollback_binary() {
   fi
 }
 
+# ---------------------------------------------------------------------------
+# System hardening (defence in depth)
+#
+# All of this is best-effort: a homelab box must still deploy if, say, ufw
+# cannot be installed. Each step warns and continues rather than aborting.
+# ---------------------------------------------------------------------------
+harden_system() {
+  if ! command -v apt-get >/dev/null 2>&1; then
+    warn_file "apt-get not found; skipping system hardening"
+    return 0
+  fi
+  log_file "applying system hardening"
+  export DEBIAN_FRONTEND=noninteractive
+
+  # 1) Unattended security upgrades. Debian minimal installs often have the
+  #    package present but no periodic policy configured.
+  if ! dpkg -s unattended-upgrades >/dev/null 2>&1; then
+    apt-get install -y unattended-upgrades >/dev/null 2>&1 \
+      || warn_file "could not install unattended-upgrades"
+  fi
+  write_if_changed /etc/apt/apt.conf.d/20auto-upgrades \
+    'APT::Periodic::Update-Package-Lists "1";
+APT::Periodic::Unattended-Upgrade "1";
+' >/dev/null || true
+
+  # 2) fail2ban. Debian 12+ logs to the journal, so the systemd backend is what
+  #    actually reads sshd events.
+  if ! command -v fail2ban-client >/dev/null 2>&1; then
+    apt-get install -y fail2ban >/dev/null 2>&1 || warn_file "could not install fail2ban"
+  fi
+  if [[ -d /etc/fail2ban ]]; then
+    write_if_changed /etc/fail2ban/jail.d/stack-stack.local \
+      '[DEFAULT]
+backend = systemd
+bantime = 1h
+findtime = 10m
+maxretry = 5
+
+[sshd]
+enabled = true
+' >/dev/null || true
+    systemctl enable fail2ban >/dev/null 2>&1 || true
+    systemctl restart fail2ban >/dev/null 2>&1 || warn_file "could not start fail2ban"
+  fi
+
+  # 3) Firewall: default-deny inbound, allow only SSH and the UI (plus 80/443
+  #    when the TLS front door is enabled).
+  if ! command -v ufw >/dev/null 2>&1; then
+    apt-get install -y ufw >/dev/null 2>&1 || warn_file "could not install ufw"
+  fi
+  if command -v ufw >/dev/null 2>&1; then
+    ufw --force default deny incoming >/dev/null 2>&1 || true
+    ufw --force default allow outgoing >/dev/null 2>&1 || true
+    ufw allow 22/tcp >/dev/null 2>&1 || true
+    ufw allow 8553/tcp >/dev/null 2>&1 || true
+    if grep -q '"tls_enabled"[[:space:]]*:[[:space:]]*true' "${CONFIG_FILE}" 2>/dev/null; then
+      ufw allow 80/tcp >/dev/null 2>&1 || true
+      ufw allow 443/tcp >/dev/null 2>&1 || true
+    fi
+    # Default-deny inbound assumes SSH is on port 22. An operator on a custom
+    # port must add it before the rule set takes effect at the next connection.
+    warn_file "enabling ufw (default-deny inbound; SSH assumed on 22, UI on 8553) — verify your SSH port"
+    ufw --force enable >/dev/null 2>&1 || warn_file "could not enable ufw"
+  fi
+
+  # 4) sysctl hardening drop-in.
+  write_if_changed /etc/sysctl.d/99-stack-stack.conf \
+    '# stack-stack hardening
+net.ipv4.conf.all.rp_filter = 1
+net.ipv4.conf.default.rp_filter = 1
+kernel.kptr_restrict = 2
+kernel.dmesg_restrict = 1
+kernel.yama.ptrace_scope = 1
+' >/dev/null || true
+  sysctl --system >/dev/null 2>&1 || warn_file "could not apply sysctl settings"
+}
+
 main() {
   require_root
   require_repo_root
@@ -484,6 +563,7 @@ main() {
 
   preflight_checks
   install_packages
+  harden_system
   ensure_rust
   backup_binary
   build_release

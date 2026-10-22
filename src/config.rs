@@ -20,6 +20,8 @@ pub const DEFAULT_CATALOG_PATH: &str = "/etc/stack-stack/catalog.json";
 /// `/var/lib` (not `/etc`) because these are mutable runtime deployments, like
 /// guests and images, not configuration documents.
 pub const DEFAULT_STACKS_DIR: &str = "/var/lib/stack-stack/stacks";
+/// Append-only audit trail for destructive operations.
+pub const DEFAULT_AUDIT_PATH: &str = "/var/log/stack-stack/audit.log";
 pub const DEFAULT_COMPOSE_TIMEOUT_S: u64 = 300;
 pub const DEFAULT_NETWORK_PATH: &str = "/etc/stack-stack/network.json";
 pub const DEFAULT_VIRT_PATH: &str = "/etc/stack-stack/virtualization.json";
@@ -80,6 +82,8 @@ pub struct Config {
     pub catalog_path: String,
     /// Where operator-authored compose stacks live, one directory per stack.
     pub stacks_dir: String,
+    /// Append-only audit trail for destructive operations.
+    pub audit_path: String,
     /// Hard limit on a single `docker compose` invocation (pull + up can be slow).
     pub compose_timeout_s: u64,
     /// Router/network configuration document (interfaces, firewall, DNS, …).
@@ -181,6 +185,7 @@ impl Default for Config {
             apps_dir: DEFAULT_APPS_DIR.to_string(),
             catalog_path: DEFAULT_CATALOG_PATH.to_string(),
             stacks_dir: DEFAULT_STACKS_DIR.to_string(),
+            audit_path: DEFAULT_AUDIT_PATH.to_string(),
             compose_timeout_s: DEFAULT_COMPOSE_TIMEOUT_S,
             network_path: DEFAULT_NETWORK_PATH.to_string(),
             virt_path: DEFAULT_VIRT_PATH.to_string(),

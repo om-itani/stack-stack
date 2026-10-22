@@ -62,6 +62,7 @@ pub async fn stop(
     Path(id): Path<String>,
 ) -> Result<Json<ActionResult>, ApiError> {
     state.docker.action(&id, ContainerAction::Stop).await?;
+    state.audit("container.stop", &id, "");
     Ok(Json(ActionResult { ok: true }))
 }
 
@@ -78,6 +79,7 @@ pub async fn remove(
     Path(id): Path<String>,
 ) -> Result<Json<ActionResult>, ApiError> {
     state.docker.remove(&id).await?;
+    state.audit("container.remove", &id, "");
     Ok(Json(ActionResult { ok: true }))
 }
 
@@ -100,9 +102,7 @@ pub struct CreateStackRequest {
 
 /// Every stack on disk with its compose text. Container status is derived on the
 /// client from the containers list (each container carries its `stack`).
-pub async fn list_stacks(
-    State(state): State<AppState>,
-) -> Result<Json<Vec<StackInfo>>, ApiError> {
+pub async fn list_stacks(State(state): State<AppState>) -> Result<Json<Vec<StackInfo>>, ApiError> {
     let config = state.config.clone();
     let stacks = tokio::task::spawn_blocking(move || store::stack_infos(&config))
         .await
@@ -115,17 +115,35 @@ pub async fn create_stack(
     Json(request): Json<CreateStackRequest>,
 ) -> Result<Json<StackResult>, ApiError> {
     let output = store::deploy_stack(&state.config, &request.name, &request.compose).await?;
+    state.audit("stack.deploy", &request.name, "compose up -d");
     Ok(Json(StackResult {
         ok: true,
         output: trim(&output),
     }))
 }
 
+#[derive(Deserialize)]
+pub struct RemoveStackQuery {
+    /// Remove the stack directory even if `docker compose down` failed.
+    pub force: Option<bool>,
+}
+
 pub async fn delete_stack(
     State(state): State<AppState>,
     Path(name): Path<String>,
+    Query(query): Query<RemoveStackQuery>,
 ) -> Result<Json<StackResult>, ApiError> {
-    let output = store::remove_stack(&state.config, &name).await?;
+    let force = query.force.unwrap_or(false);
+    let output = store::remove_stack(&state.config, &name, force).await?;
+    state.audit(
+        "stack.remove",
+        &name,
+        if force {
+            "force (down skipped)"
+        } else {
+            "compose down"
+        },
+    );
     Ok(Json(StackResult {
         ok: true,
         output: trim(&output),

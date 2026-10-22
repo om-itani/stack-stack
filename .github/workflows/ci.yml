@@ -18,9 +18,29 @@ jobs:
           sudo apt-get install -y -qq pkg-config libssl-dev
           sudo apt-get install -y -qq qemu-utils libvirt-daemon-system libvirt-clients
           sudo apt-get install -y -qq lsb-release ca-certificates curl gnupg
+      - name: Format check
+        run: cargo fmt --all -- --check
       - name: Build (checked)
         run: cargo build --release --locked
       - name: Lint
         run: cargo clippy --all-targets -- -D warnings
       - name: Test
         run: cargo test --locked
+
+  frontend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      # `npm run build` runs `tsc --noEmit && vite build`, so a type error or a
+      # broken Vite config fails here rather than at deploy time.
+      - name: Install dependencies
+        run: npm ci
+        working-directory: frontend
+      - name: Build (type-check + bundle)
+        run: npm run build
+        working-directory: frontend

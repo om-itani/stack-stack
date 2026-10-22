@@ -31,8 +31,29 @@ export function serviceName(repo: string): string {
   return cleaned || "app";
 }
 
-/** A minimal, valid compose document that runs one image. */
+/**
+ * Hardened defaults every *generated* service starts with. These are chosen to
+ * be non-breaking for ordinary images:
+ *
+ * - `no-new-privileges` stops setuid escalation without blocking normal work;
+ * - a bounded `json-file` log driver stops one chatty container filling the disk
+ *   (Docker's default is unlimited).
+ *
+ * Deliberately absent: `read_only` and `mem_limit`. Rewriting those into
+ * arbitrary images breaks databases and caches, so they are left to the operator
+ * rather than guessed at.
+ */
+export const HARDENING_FRAGMENT = `    security_opt:
+      - no-new-privileges:true
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+`;
+
+/** A minimal, valid, hardened compose document that runs one image. */
 export function composeForImage(repo: string): string {
   const name = serviceName(repo);
-  return `services:\n  ${name}:\n    image: ${repo}\n    restart: unless-stopped\n`;
+  return `services:\n  ${name}:\n    image: ${repo}\n    restart: unless-stopped\n${HARDENING_FRAGMENT}`;
 }

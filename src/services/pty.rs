@@ -81,8 +81,7 @@ impl HostShell {
                 };
                 let _ = libc::ioctl(0, libc::TIOCSWINSZ, &mut size);
 
-                let shell_path = std::env::var("SHELL")
-                    .unwrap_or_else(|_| "/bin/bash".to_string());
+                let shell_path = std::env::var("SHELL").unwrap_or_else(|_| "/bin/bash".to_string());
                 let shell_name = shell_path
                     .rsplit('/')
                     .next()
@@ -90,11 +89,8 @@ impl HostShell {
                     .to_string();
                 let program = std::ffi::CString::new(shell_path.clone()).unwrap();
                 let argv0 = std::ffi::CString::new(shell_name).unwrap();
-                let argv: [*const libc::c_char; 3] = [
-                    argv0.as_ptr(),
-                    c"-l".as_ptr(),
-                    std::ptr::null(),
-                ];
+                let argv: [*const libc::c_char; 3] =
+                    [argv0.as_ptr(), c"-l".as_ptr(), std::ptr::null()];
                 libc::execvp(program.as_ptr(), argv.as_ptr());
                 libc::_exit(127);
             }
@@ -168,7 +164,7 @@ impl HostShell {
 
     /// Non-blocking reap; `true` when the child has exited.
     pub fn poll_exit(&self) -> bool {
-        if self.exit_code() .is_some() {
+        if self.exit_code().is_some() {
             return true;
         }
         unsafe {

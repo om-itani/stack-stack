@@ -305,8 +305,13 @@ pub async fn deploy_stack(cfg: &Config, raw_name: &str, yaml: &str) -> Result<St
     Ok(output)
 }
 
-/// `docker compose down` for the stack, then delete its directory.
-pub async fn remove_stack(cfg: &Config, raw_name: &str) -> Result<String, ApiError> {
+/// Stop and remove a stack.
+///
+/// A failed `docker compose down` **leaves the stack directory in place**: the
+/// YAML is the record of what was deployed, and deleting it on a failed stop
+/// would strand running containers with no record of how to reach them. Pass
+/// `force` to remove the directory anyway after a best-effort `down`.
+pub async fn remove_stack(cfg: &Config, raw_name: &str, force: bool) -> Result<String, ApiError> {
     let name = sanitize_stack_name(raw_name)?.to_string();
     if !stack_compose_path(cfg, &name).is_file() {
         return Err(ApiError::not_found(format!("stack {name} does not exist")));
@@ -322,7 +327,19 @@ pub async fn remove_stack(cfg: &Config, raw_name: &str) -> Result<String, ApiErr
         "down".to_string(),
         "--remove-orphans".to_string(),
     ];
-    let output = run_compose_owned(&dir, args, cfg.compose_timeout_s).await?;
+
+    let output = match run_compose_owned(&dir, args, cfg.compose_timeout_s).await {
+        Ok(output) => output,
+        Err(err) if !force => {
+            // Keep the directory; the caller reports "failed to stop" and can
+            // retry, or force-remove, without losing the compose file.
+            return Err(err);
+        }
+        Err(err) => {
+            tracing::warn!(stack = %name, %err, "compose down failed; removing the stack anyway (force)");
+            err.to_string()
+        }
+    };
 
     let dir_for_remove = dir.clone();
     tokio::task::spawn_blocking(move || std::fs::remove_dir_all(&dir_for_remove))
@@ -330,7 +347,7 @@ pub async fn remove_stack(cfg: &Config, raw_name: &str) -> Result<String, ApiErr
         .map_err(|err| ApiError::internal(format!("remove task failed: {err}")))?
         .map_err(|err| ApiError::internal(format!("cannot remove {}: {err}", dir.display())))?;
 
-    tracing::info!(stack = %name, "compose stack removed");
+    tracing::info!(stack = %name, force, "compose stack removed");
     Ok(output)
 }
 
@@ -502,14 +519,39 @@ mod tests {
     }
 
     #[test]
-    fn stack_names_are_lowercase_path_components() {
-        for ok in ["web", "my-stack", "stack_2", "a1"] {
+    fn stack_names_match_the_strict_project_pattern() {
+        // ^[a-z0-9][a-z0-9_-]*$, with a 63-char cap (a Docker project-name rule).
+        for ok in ["a", "0", "web", "my-stack", "stack_2", "a-", "a_", "a1"] {
             assert!(sanitize_stack_name(ok).is_ok(), "{ok:?} must be accepted");
         }
-        for bad in ["", "..", "a/b", ".hidden", "-lead", "Upper", "a b", "a.b"] {
-            assert!(sanitize_stack_name(bad).is_err(), "{bad:?} must be rejected");
+        for bad in [
+            "",
+            ".",
+            "..",
+            "../evil",
+            "a/../../b",
+            "a/b",
+            ".hidden",
+            "-lead",
+            "_lead",
+            "Upper",
+            "a b",
+            "a.b",
+            "c:",
+            "a\\b",
+            "a\tb",
+            "café",
+        ] {
+            assert!(
+                sanitize_stack_name(bad).is_err(),
+                "{bad:?} must be rejected"
+            );
         }
+        // Length boundary: 63 fits, 64 does not.
+        assert!(sanitize_stack_name(&"x".repeat(63)).is_ok());
         assert!(sanitize_stack_name(&"x".repeat(64)).is_err());
+        // Surrounding whitespace is trimmed before validation.
+        assert_eq!(sanitize_stack_name("  web  ").expect("trimmed"), "web");
     }
 
     #[test]
@@ -548,7 +590,7 @@ mod tests {
     async fn remove_unknown_stack_is_not_found() {
         let cfg = temp_cfg("stacks-remove-missing");
         assert!(matches!(
-            remove_stack(&cfg, "ghost").await,
+            remove_stack(&cfg, "ghost", false).await,
             Err(ApiError::NotFound(_))
         ));
     }

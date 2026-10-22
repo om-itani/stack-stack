@@ -58,14 +58,32 @@ pub struct HubQuery {
     pub q: Option<String>,
 }
 
-/// Search Docker Hub for repositories. Cached in-process for five minutes so an
-/// operator typing a query does not burn the unauthenticated rate limit.
+#[derive(Serialize)]
+pub struct HubResults {
+    /// False when the transport (`curl`) is missing, so the UI disables the box.
+    pub available: bool,
+    pub results: Vec<HubRepo>,
+}
+
+/// Search Docker Hub for repositories. Cached in-process for five minutes and
+/// rate-limit aware, so an operator typing a query does not burn the unauth
+/// quota. A missing `curl` is reported as `available: false` rather than an
+/// error, so the UI can disable the box with a clear message.
 pub async fn hub_search(
     State(state): State<AppState>,
     Query(query): Query<HubQuery>,
-) -> Result<Json<Vec<HubRepo>>, ApiError> {
-    let repos = state.hub.search(query.q.as_deref().unwrap_or("")).await?;
-    Ok(Json(repos))
+) -> Result<Json<HubResults>, ApiError> {
+    if !state.hub.available() {
+        return Ok(Json(HubResults {
+            available: false,
+            results: Vec::new(),
+        }));
+    }
+    let results = state.hub.search(query.q.as_deref().unwrap_or("")).await?;
+    Ok(Json(HubResults {
+        available: true,
+        results,
+    }))
 }
 
 fn trim(output: &str) -> String {

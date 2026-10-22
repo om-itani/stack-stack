@@ -19,6 +19,8 @@ pub enum ApiError {
     NotFound(String),
     /// A dependency we need is not present: no Docker socket, no `nft` binary.
     Unavailable(String),
+    /// An upstream we proxy rate-limited us; the client should retry later.
+    TooManyRequests(String),
     /// Anything else; the message is safe to show but not something the caller
     /// can act on beyond retrying.
     Internal(String),
@@ -47,6 +49,10 @@ impl ApiError {
         Self::Unavailable(message.into())
     }
 
+    pub fn too_many_requests(message: impl Into<String>) -> Self {
+        Self::TooManyRequests(message.into())
+    }
+
     pub fn internal(message: impl Into<String>) -> Self {
         Self::Internal(message.into())
     }
@@ -57,6 +63,7 @@ impl ApiError {
             Self::Unauthorized(message) => (StatusCode::UNAUTHORIZED, message),
             Self::NotFound(message) => (StatusCode::NOT_FOUND, message),
             Self::Unavailable(message) => (StatusCode::SERVICE_UNAVAILABLE, message),
+            Self::TooManyRequests(message) => (StatusCode::TOO_MANY_REQUESTS, message),
             Self::Internal(message) => (StatusCode::INTERNAL_SERVER_ERROR, message),
         }
     }
@@ -124,6 +131,10 @@ mod tests {
         assert_eq!(
             ApiError::unavailable("x").parts().0,
             StatusCode::SERVICE_UNAVAILABLE
+        );
+        assert_eq!(
+            ApiError::too_many_requests("x").parts().0,
+            StatusCode::TOO_MANY_REQUESTS
         );
         assert_eq!(
             ApiError::internal("x").parts().0,

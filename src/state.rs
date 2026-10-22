@@ -11,7 +11,7 @@ use crate::auth::AuthContext;
 use crate::ca::CaContext;
 use crate::config::Config;
 use crate::containers::docker::DockerClient;
-use crate::containers::hub::HubSearch;
+use crate::containers::hub::{CurlHttp, HubSearch};
 use crate::files::FilesContext;
 use crate::networking::NetworkContext;
 use crate::notify::{NotificationCenter, Notifier};
@@ -84,7 +84,12 @@ impl AppState {
         let (telemetry, _) = broadcast::channel(TELEMETRY_BACKLOG);
         let (latest, _) = watch::channel(None);
         let docker = DockerClient::new(config.docker_socket.clone(), DOCKER_TIMEOUT_S);
-        let hub = HubSearch::new();
+        let hub = HubSearch::new(Arc::new(CurlHttp::new()));
+        if !hub.available() {
+            tracing::warn!(
+                "curl was not found on PATH; Docker Hub search in the App Store is disabled"
+            );
+        }
         let notify = Arc::new(NotificationCenter::new(
             std::path::PathBuf::from(&config.notify_path),
             Arc::new(SystemRunner::new(Duration::from_secs(15))),
@@ -186,5 +191,17 @@ impl AppState {
 
     pub fn uptime_s(&self) -> u64 {
         self.started_at.elapsed().as_secs()
+    }
+
+    /// Record a destructive operation in the audit trail. Fire-and-forget on the
+    /// blocking pool so the file write never slows a handler.
+    pub fn audit(&self, action: &str, target: &str, detail: &str) {
+        let path = self.config.audit_path.clone();
+        let (action, target, detail) = (action.to_string(), target.to_string(), detail.to_string());
+        // Detached: the handle is dropped on purpose so the write never gates the
+        // response.
+        drop(tokio::task::spawn_blocking(move || {
+            crate::audit::record(&path, "admin", &action, &target, &detail);
+        }));
     }
 }

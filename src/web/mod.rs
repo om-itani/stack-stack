@@ -8,6 +8,7 @@ pub mod backup;
 pub mod containers;
 pub mod ddns;
 pub mod files;
+pub mod layers;
 pub mod logs;
 pub mod network;
 pub mod notify;
@@ -30,6 +31,9 @@ use crate::containers::host;
 use crate::containers::model::HostIp;
 use crate::state::AppState;
 use crate::system::metrics::Snapshot;
+
+/// Maximum accepted size of a pasted compose document (1 MiB).
+const STACK_BODY_LIMIT: usize = 1024 * 1024;
 
 pub fn router(state: AppState) -> Router {
     Router::new()
@@ -58,7 +62,11 @@ pub fn router(state: AppState) -> Router {
         // so both can coexist.
         .route(
             "/api/containers/stacks",
-            get(containers::list_stacks).post(containers::create_stack),
+            get(containers::list_stacks)
+                .post(containers::create_stack)
+                // A pasted compose file is the only user body that can be large;
+                // cap it so an accidental multi-megabyte paste is refused early.
+                .layer(axum::extract::DefaultBodyLimit::max(STACK_BODY_LIMIT)),
         )
         .route(
             "/api/containers/stacks/{name}",
@@ -204,6 +212,9 @@ pub fn router(state: AppState) -> Router {
         // The login gate wraps the whole router: non-`/api/` paths (the SPA)
         // pass straight through, everything else is checked against a session.
         .layer(middleware::from_fn_with_state(state.clone(), auth::gate))
+        // Deadline is inside tracing so a timeout is still logged.
+        .layer(middleware::from_fn(layers::timeout_requests))
+        .layer(middleware::from_fn(layers::trace_requests))
         .with_state(state)
 }
 

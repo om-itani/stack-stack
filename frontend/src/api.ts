@@ -46,10 +46,11 @@ export const stacksApi = {
   list: () => request<StackInfo[]>("/api/containers/stacks"),
   create: (name: string, compose: string) =>
     jsonRequest<StackResult>("/api/containers/stacks", "POST", { name, compose }),
-  remove: (name: string) =>
-    request<StackResult>(`/api/containers/stacks/${encodeURIComponent(name)}`, {
-      method: "DELETE",
-    }),
+  remove: (name: string, force = false) =>
+    request<StackResult>(
+      `/api/containers/stacks/${encodeURIComponent(name)}${force ? "?force=true" : ""}`,
+      { method: "DELETE" },
+    ),
 };
 
 export interface AppPort {
@@ -122,11 +123,22 @@ function jsonRequest<T>(path: string, method: "POST" | "PUT", body: unknown): Pr
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const controller = new AbortController();
   const timer = window.setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+  // Fold a caller-supplied signal (used to cancel a superseded search) into the
+  // timeout signal, so an external abort and the deadline are distinguishable.
+  const external = init?.signal ?? null;
+  const signal = external ? AbortSignal.any([external, controller.signal]) : controller.signal;
 
   let response: Response;
   try {
-    response = await fetch(path, { ...init, signal: controller.signal });
+    response = await fetch(path, { ...init, signal });
   } catch (err) {
+    // A caller cancellation is reported as an AbortError so callers can ignore
+    // it; the internal deadline is a timeout; anything else is a network fault.
+    if (external?.aborted) {
+      const abort = new Error("aborted");
+      abort.name = "AbortError";
+      throw abort;
+    }
     throw new Error(
       err instanceof DOMException && err.name === "AbortError"
         ? "request timed out"
@@ -1220,9 +1232,15 @@ export interface HubRepo {
   is_official: boolean;
 }
 
+export interface HubResults {
+  /** False when the backend's transport (curl) is missing. */
+  available: boolean;
+  results: HubRepo[];
+}
+
 export const hubApi = {
-  search: (query: string) =>
-    request<HubRepo[]>(`/api/apps/hub-search?q=${encodeURIComponent(query)}`),
+  search: (query: string, signal?: AbortSignal) =>
+    request<HubResults>(`/api/apps/hub-search?q=${encodeURIComponent(query)}`, { signal }),
 };
 
 /** WebSocket URL with the current page's scheme (http -> ws, https -> wss). */
