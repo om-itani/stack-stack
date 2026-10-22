@@ -339,13 +339,15 @@ function startShell(): void {
   }
 
   function setLinkState(state: LinkState): void {
-    linkEl.textContent = state;
+    linkEl.textContent = state === "polling" ? "polling" : state;
     dotEl.className =
       state === "live"
         ? "inline-block size-2 rounded-full bg-emerald-400"
         : state === "connecting"
           ? "inline-block size-2 rounded-full bg-amber-400"
-          : "inline-block size-2 rounded-full bg-rose-500";
+          : state === "polling"
+            ? "inline-block size-2 rounded-full bg-amber-400"
+            : "inline-block size-2 rounded-full bg-rose-500";
   }
 
   tl.onSnapshot(renderHeader);

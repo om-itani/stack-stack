@@ -496,7 +496,8 @@ Hugepages_Free:       64
         assert!(caps.lxc.is_none());
         assert!(!caps.can_run_vms());
         assert!(!caps.can_run_containers());
-        assert_eq!(caps.bridges, vec!["user".to_string()]);
+        // `user` is always offered as a networking fallback, regardless of host.
+        assert!(caps.bridges.contains(&"user".to_string()));
     }
 
     #[test]

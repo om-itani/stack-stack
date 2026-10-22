@@ -33,6 +33,9 @@ export function createFilesPage(): PageHandle {
   let busy = false;
   let status = "";
   let loaded = false;
+  // The path whose listing failed, so the error renders inline next to the
+  // breadcrumbs instead of leaving a stale table on screen.
+  let loadError: string | null = null;
 
   const statusLine = el("span", { class: "tabular text-[11px] text-slate-500" });
   const hiddenToggle = el("input", {
@@ -106,6 +109,7 @@ export function createFilesPage(): PageHandle {
     if (busy) return;
     busy = true;
     status = "loading…";
+    loadError = null;
     renderChrome();
     try {
       state = await filesApi.state(path);
@@ -114,6 +118,11 @@ export function createFilesPage(): PageHandle {
       status = state.listing.truncated ? "listing truncated" : "";
     } catch (err) {
       status = errorText(err);
+      // Keep the attempted path so the banner says what failed, and drop the
+      // stale listing so the table cannot show a directory we are not in.
+      current = path;
+      loadError = errorText(err);
+      state = null;
     } finally {
       busy = false;
       loaded = true;
@@ -137,7 +146,15 @@ export function createFilesPage(): PageHandle {
       return;
     }
     if (!state) {
-      tableHost.append(emptyNote(status || "the file API is unavailable"));
+      // The listing failed: name the path and the reason rather than showing a
+      // bare empty directory.
+      const detail = loadError ?? status ?? "the file API is unavailable";
+      tableHost.append(
+        el("div", {
+          class: "border border-rose-800 bg-rose-950/40 px-3 py-2 text-[11px] text-rose-300",
+          text: `could not list ${current}: ${detail}`,
+        }),
+      );
       return;
     }
 

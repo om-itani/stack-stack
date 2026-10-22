@@ -12,7 +12,7 @@
  * or template selection) re-render.
  */
 
-import { virtApi, blankVm, blankCt } from "../api";
+import { virtApi, hostApi, blankVm, blankCt } from "../api";
 import type {
   ActionReport,
   ApiFailure,
@@ -43,6 +43,50 @@ import {
 export interface PageHandle {
   root: HTMLElement;
   onShow?: () => void;
+}
+
+/**
+ * The host's LAN network in `<a.b.c>.` form, used as the placeholder prefix for a
+ * guest's static address so the form never suggests the wrong subnet (a
+ * hardcoded `192.168.1.0/24` is wrong on a `192.168.0.0/24` host).
+ *
+ * Fetched once and cached; `null` until it resolves so callers fall back to a
+ * generic hint rather than guessing a network.
+ */
+let lanPrefix: string | null = null;
+let lanPrefixRequested = false;
+
+function lanAddressPrefix(): string | null {
+  if (lanPrefix !== null || lanPrefixRequested) {
+    return lanPrefix;
+  }
+  lanPrefixRequested = true;
+  void hostApi
+    .ip()
+    .then((host) => {
+      const octets = host.ip.trim().split(".");
+      if (octets.length === 4 && octets.every((o) => o !== "" && Number.isInteger(Number(o)))) {
+        lanPrefix = `${octets[0]}.${octets[1]}.${octets[2]}.`;
+      }
+    })
+    .catch(() => {
+      // Leave the prefix null: the placeholder falls back to a neutral hint.
+      lanPrefixRequested = false;
+    });
+  return lanPrefix;
+}
+
+/** `192.168.0.50/24` shaped hint from the host's own network, else a generic one. */
+function addressHint(): string {
+  return `${lanAddressPrefix() ?? "192.168.?.?"}.50/24`;
+}
+
+/** The address/gateway/DNS rows only apply to a static guest. */
+function staticOnly(dependent: HTMLElement[], mode: string): void {
+  const show = mode === "static";
+  for (const node of dependent) {
+    node.style.display = show ? "" : "none";
+  }
 }
 
 type Tab = { id: string; label: string; build: () => HTMLElement };
@@ -175,7 +219,8 @@ export function createVirtualizationPage(): PageHandle {
         host.kvm ? "kvm" : "no-kvm",
         host.qemu ? "qemu" : "no-qemu",
         host.lxc ? "lxc" : "no-lxc",
-        `hp:${host.hugepages_2m_free}`,
+        // Spelled out rather than `hp:0`, which reads like an error code.
+        host.hugepages_2m_free > 0 ? `${host.hugepages_2m_free} hugepages` : "no hugepages",
       ].join(" · ");
     }
 
@@ -386,7 +431,12 @@ export function createVirtualizationPage(): PageHandle {
     );
 
     const toggles = el("div", { class: "col-span-full flex flex-wrap gap-4" }, [
-      checkbox(vm.hugepages, (value) => { vm.hugepages = value; }, "hugepages"),
+      checkbox(
+        vm.hugepages,
+        (value) => { vm.hugepages = value; },
+        "hugepages",
+        !state?.host.hugepages_2m_free,
+      ),
       checkbox(vm.discard, (value) => { vm.discard = value; }, "TRIM/discard"),
       checkbox(vm.multiqueue, (value) => { vm.multiqueue = value; }, "multiqueue net"),
       checkbox(vm.vnc_enabled, (value) => { vm.vnc_enabled = value; }, "VNC"),
@@ -400,19 +450,34 @@ export function createVirtualizationPage(): PageHandle {
     form.append(sectionTitle("provisioning (cloud-init)"));
     const ci = vm.cloud_init;
     const ciGrid = el("div", { class: "grid grid-cols-2 gap-2 p-3 xl:grid-cols-4" });
+    const vmAddressField = field(
+      "address (cidr)",
+      nullableText(ci.address, (value) => { ci.address = value; }, { placeholder: addressHint() }),
+    );
+    const vmGatewayField = field("gateway", textInput(ci.gateway, (value) => { ci.gateway = value; }));
+    const vmDnsField = field("DNS servers", listInput(ci.dns, (values) => { ci.dns = values; }));
+    const vmStaticFields = [vmAddressField, vmGatewayField, vmDnsField];
+    const vmIpField = field(
+      "IP mode",
+      select(ci.ip_mode, IP_MODE_OPTIONS, (value) => {
+        ci.ip_mode = value as CloudInitIpMode;
+        staticOnly(vmStaticFields, ci.ip_mode);
+      }),
+    );
+    staticOnly(vmStaticFields, ci.ip_mode);
     ciGrid.append(
       el("div", { class: "col-span-full" }, [
         checkbox(ci.enabled, (value) => { ci.enabled = value; }, "enable cloud-init seed"),
       ]),
       field("username", textInput(ci.username, (value) => { ci.username = value; })),
       field("password", textInput(ci.password, (value) => { ci.password = value; }, { type: "password" })),
-      field(
-        "IP mode",
-        select(ci.ip_mode, IP_MODE_OPTIONS, (value) => { ci.ip_mode = value as CloudInitIpMode; }),
-      ),
-      field("address (cidr)", nullableText(ci.address, (value) => { ci.address = value; }, { placeholder: "192.168.1.50/24" })),
-      field("gateway", textInput(ci.gateway, (value) => { ci.gateway = value; })),
-      field("DNS servers", listInput(ci.dns, (values) => { ci.dns = values; })),
+      vmIpField,
+      // Address, gateway and DNS only make sense for a static guest; they are
+      // hidden until the operator picks `static`, and the placeholder is derived
+      // from this host's own subnet so it never suggests the wrong network.
+      vmAddressField,
+      vmGatewayField,
+      vmDnsField,
       field("SSH keys", listInput(ci.ssh_keys, (values) => { ci.ssh_keys = values; }, { placeholder: "ssh-ed25519 AAAA…" })),
     );
     form.append(ciGrid);
@@ -492,6 +557,22 @@ export function createVirtualizationPage(): PageHandle {
     const grid = el("div", { class: "grid grid-cols-2 gap-2 p-3 xl:grid-cols-4" });
     const bridges = bridgeOptions();
 
+    const ctAddressField = field(
+      "address (cidr)",
+      nullableText(ct.address, (value) => { ct.address = value; }, { placeholder: addressHint() }),
+    );
+    const ctGatewayField = field("gateway", textInput(ct.gateway, (value) => { ct.gateway = value; }));
+    const ctDnsField = field("DNS servers", listInput(ct.dns, (values) => { ct.dns = values; }));
+    const ctStaticFields = [ctAddressField, ctGatewayField, ctDnsField];
+    const ctIpField = field(
+      "IP mode",
+      select(ct.ip_mode, IP_MODE_OPTIONS, (value) => {
+        ct.ip_mode = value as CloudInitIpMode;
+        staticOnly(ctStaticFields, ct.ip_mode);
+      }),
+    );
+    staticOnly(ctStaticFields, ct.ip_mode);
+
     grid.append(
       field("id", textInput(ct.id, (value) => { ct.id = value; })),
       field("hostname", textInput(ct.hostname, (value) => { ct.hostname = value; })),
@@ -501,13 +582,11 @@ export function createVirtualizationPage(): PageHandle {
       field("memory MiB", numberInput(ct.memory_mb, (value) => { ct.memory_mb = value; }, { min: 32 })),
       field("swap MiB", numberInput(ct.swap_mb, (value) => { ct.swap_mb = value; }, { min: 0 })),
       field("rootfs GiB", numberInput(ct.rootfs_gb, (value) => { ct.rootfs_gb = value; }, { min: 1 })),
-      field(
-        "IP mode",
-        select(ct.ip_mode, IP_MODE_OPTIONS, (value) => { ct.ip_mode = value as CloudInitIpMode; }),
-      ),
-      field("address (cidr)", nullableText(ct.address, (value) => { ct.address = value; }, { placeholder: "192.168.1.50/24" })),
-      field("gateway", textInput(ct.gateway, (value) => { ct.gateway = value; })),
-      field("DNS servers", listInput(ct.dns, (values) => { ct.dns = values; })),
+      ctIpField,
+      // Same rule as the VM form: the address rows only apply to a static guest.
+      ctAddressField,
+      ctGatewayField,
+      ctDnsField,
       field("root password", textInput(ct.password, (value) => { ct.password = value; }, { type: "password" })),
       field("SSH keys", listInput(ct.ssh_keys, (values) => { ct.ssh_keys = values; }, { placeholder: "ssh-ed25519 AAAA…" })),
     );
@@ -617,6 +696,16 @@ export function createVirtualizationPage(): PageHandle {
       el("span", { class: "font-semibold text-slate-200", text: image.name }),
       el("span", { class: "tabular ml-auto text-[10px] text-slate-600", text: image.category }),
     );
+    // A rolling release cannot be checksum-pinned, so it is badged as unverified
+    // rather than failing the download with a checksum it can never match.
+    if (image.verified === false) {
+      top.append(
+        el("span", {
+          class: "border border-amber-700 px-1 text-[9px] text-amber-500",
+          text: "unverified",
+        }),
+      );
+    }
     card.append(
       top,
       el("span", { class: "text-[10px] text-slate-500", text: image.description }),

@@ -16,6 +16,8 @@ jobs:
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y -qq pkg-config libssl-dev
+          sudo apt-get install -y -qq qemu-utils libvirt-daemon-system libvirt-clients
+          sudo apt-get install -y -qq lsb-release ca-certificates curl gnupg
       - name: Build (checked)
         run: cargo build --release --locked
       - name: Lint

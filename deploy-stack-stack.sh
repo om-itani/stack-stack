@@ -66,6 +66,7 @@ APT_PACKAGES=(
   qemu-system-x86
   qemu-utils
   qemu-kvm
+  ovmf
   lxc
   lm-sensors
   libvirt-daemon-system
@@ -232,6 +233,10 @@ install_packages() {
   # tc is provided by iproute2, not a separate package — verify the binary exists.
   command -v tc >/dev/null 2>&1 || warn_file "tc missing (iproute2 not installed?); SQM feature will be unavailable"
 
+  # Unprivileged LXC containers need a subordinate UID/GID range for root.
+  grep -q '^root:' /etc/subuid 2>/dev/null || echo 'root:100000:65536' >> /etc/subuid
+  grep -q '^root:' /etc/subgid 2>/dev/null || echo 'root:100000:65536' >> /etc/subgid
+
   # Enable and start Docker
   systemctl enable docker >/dev/null 2>&1 || true
   systemctl start docker >/dev/null 2>&1 || warn_file "could not start docker service"
@@ -290,8 +295,10 @@ create_directories() {
   install -d -m 0750 "${STATE_DIR}/images"
   install -d -m 0755 "${BACKUP_DIR}"
   # The systemd unit references /run/libvirt; create it now so the first deploy
-  # works even before libvirtd has ever started (it is /run, so tmpfs-recreated).
+  # works even before libvirtd has ever run (it is /run, so tmpfs-recreated).
   install -d -m 0755 /run/libvirt
+  # LXC needs /run/lxc/lock to create containers.
+  install -d -m 0755 /run/lxc /run/lxc/lock
 }
 
 write_default_config() {
@@ -336,7 +343,7 @@ StartLimitIntervalSec=0
 NoNewPrivileges=false
 PrivateTmp=true
 ProtectSystem=strict
-ReadWritePaths=/etc/stack-stack /var/lib/stack-stack /run/docker.sock -/run/libvirt
+ReadWritePaths=/etc/stack-stack /var/lib/stack-stack /run/docker.sock -/run/libvirt -/run/lxc
 CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_RAW CAP_SYS_ADMIN CAP_DAC_OVERRIDE CAP_CHOWN CAP_FOWNER CAP_SYS_RESOURCE
 
 [Install]

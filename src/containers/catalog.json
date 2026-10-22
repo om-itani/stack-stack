@@ -1,88 +1,628 @@
 [
-  {
-    "id": "jellyfin",
-    "name": "Jellyfin",
-    "description": "Free software media server for films, series, music and photos.",
-    "category": "media",
-    "tags": ["media", "streaming", "video", "music"],
-    "icon": "🎬",
-    "web_port": 8096,
-    "ports": [{ "container": 8096, "host": 8096, "protocol": "tcp" }],
-    "compose": "services:\n  jellyfin:\n    image: jellyfin/jellyfin:latest\n    container_name: jellyfin\n    restart: unless-stopped\n    labels:\n      - stack-stack.app=jellyfin\n    ports:\n      - \"8096:8096\"\n    volumes:\n      - jellyfin-config:/config\n      - jellyfin-cache:/cache\n      - /srv/media:/media:ro\nvolumes:\n  jellyfin-config:\n  jellyfin-cache:\n"
-  },
-  {
-    "id": "qbittorrent",
-    "name": "qBittorrent",
-    "description": "BitTorrent client with a full web UI and no ads.",
-    "category": "media",
-    "tags": ["media", "torrent", "download"],
-    "icon": "🌊",
-    "web_port": 8080,
-    "ports": [
-      { "container": 8080, "host": 8080, "protocol": "tcp" },
-      { "container": 6881, "host": 6881, "protocol": "tcp" },
-      { "container": 6881, "host": 6881, "protocol": "udp" }
-    ],
-    "compose": "services:\n  qbittorrent:\n    image: lscr.io/linuxserver/qbittorrent:latest\n    container_name: qbittorrent\n    restart: unless-stopped\n    labels:\n      - stack-stack.app=qbittorrent\n    environment:\n      - PUID=1000\n      - PGID=1000\n      - TZ=UTC\n      - WEBUI_PORT=8080\n    ports:\n      - \"8080:8080\"\n      - \"6881:6881\"\n      - \"6881:6881/udp\"\n    volumes:\n      - qbittorrent-config:/config\n      - /srv/downloads:/downloads\nvolumes:\n  qbittorrent-config:\n"
-  },
-  {
-    "id": "sonarr",
-    "name": "Sonarr",
-    "description": "PVR for TV series: monitors, grabs and organises episodes.",
-    "category": "media",
-    "tags": ["media", "tv", "pvr", "automation"],
-    "icon": "📺",
-    "web_port": 8989,
-    "ports": [{ "container": 8989, "host": 8989, "protocol": "tcp" }],
-    "compose": "services:\n  sonarr:\n    image: lscr.io/linuxserver/sonarr:latest\n    container_name: sonarr\n    restart: unless-stopped\n    labels:\n      - stack-stack.app=sonarr\n    environment:\n      - PUID=1000\n      - PGID=1000\n      - TZ=UTC\n    ports:\n      - \"8989:8989\"\n    volumes:\n      - sonarr-config:/config\n      - /srv/media:/media\n      - /srv/downloads:/downloads\nvolumes:\n  sonarr-config:\n"
-  },
-  {
-    "id": "radarr",
-    "name": "Radarr",
-    "description": "Movie collection manager: monitors, grabs and organises films.",
-    "category": "media",
-    "tags": ["media", "movies", "pvr", "automation"],
-    "icon": "🎥",
-    "web_port": 7878,
-    "ports": [{ "container": 7878, "host": 7878, "protocol": "tcp" }],
-    "compose": "services:\n  radarr:\n    image: lscr.io/linuxserver/radarr:latest\n    container_name: radarr\n    restart: unless-stopped\n    labels:\n      - stack-stack.app=radarr\n    environment:\n      - PUID=1000\n      - PGID=1000\n      - TZ=UTC\n    ports:\n      - \"7878:7878\"\n    volumes:\n      - radarr-config:/config\n      - /srv/media:/media\n      - /srv/downloads:/downloads\nvolumes:\n  radarr-config:\n"
-  },
-  {
-    "id": "adguard",
-    "name": "AdGuard Home",
-    "description": "Network-wide DNS sinkhole for ads and trackers, with a web dashboard.",
-    "category": "networking",
-    "tags": ["networking", "dns", "ads", "privacy"],
-    "icon": "🛡️",
-    "web_port": 3000,
-    "ports": [
-      { "container": 53, "host": 53, "protocol": "tcp" },
-      { "container": 53, "host": 53, "protocol": "udp" },
-      { "container": 3000, "host": 3000, "protocol": "tcp" },
-      { "container": 80, "host": 8081, "protocol": "tcp" }
-    ],
-    "compose": "services:\n  adguardhome:\n    image: adguard/adguardhome:latest\n    container_name: adguardhome\n    restart: unless-stopped\n    labels:\n      - stack-stack.app=adguard\n    ports:\n      - \"53:53/tcp\"\n      - \"53:53/udp\"\n      - \"3000:3000\"\n      - \"8081:80\"\n    volumes:\n      - adguard-work:/opt/adguardhome/work\n      - adguard-conf:/opt/adguardhome/conf\nvolumes:\n  adguard-work:\n  adguard-conf:\n"
-  },
-  {
-    "id": "home-assistant",
-    "name": "Home Assistant",
-    "description": "Local home-automation hub that integrates thousands of devices.",
-    "category": "home-automation",
-    "tags": ["home-automation", "iot", "dashboard"],
-    "icon": "🏠",
-    "web_port": 8123,
-    "ports": [{ "container": 8123, "host": 8123, "protocol": "tcp" }],
-    "compose": "services:\n  homeassistant:\n    image: ghcr.io/home-assistant/home-assistant:stable\n    container_name: homeassistant\n    restart: unless-stopped\n    labels:\n      - stack-stack.app=home-assistant\n    environment:\n      - TZ=UTC\n    ports:\n      - \"8123:8123\"\n    volumes:\n      - homeassistant-config:/config\nvolumes:\n  homeassistant-config:\n"
-  },
-  {
-    "id": "paperless-ngx",
-    "name": "Paperless-ngx",
-    "description": "Scan, index and search your paper documents with OCR.",
-    "category": "utilities",
-    "tags": ["utilities", "documents", "ocr", "archive"],
-    "icon": "📄",
-    "web_port": 8000,
-    "ports": [{ "container": 8000, "host": 8000, "protocol": "tcp" }],
-    "compose": "services:\n  paperless:\n    image: ghcr.io/paperless-ngx/paperless-ngx:latest\n    container_name: paperless\n    restart: unless-stopped\n    labels:\n      - stack-stack.app=paperless-ngx\n    depends_on:\n      - db\n      - broker\n    ports:\n      - \"8000:8000\"\n    environment:\n      - PAPERLESS_REDIS=redis://broker:6379\n      - PAPERLESS_DBHOST=db\n      - PAPERLESS_DBNAME=paperless\n      - PAPERLESS_DBUSER=paperless\n      - PAPERLESS_DBPASS=paperless\n      - PAPERLESS_URL=http://localhost:8000\n      - PAPERLESS_SECRET_KEY=change-me-before-exposing-this-app\n    volumes:\n      - paperless-data:/usr/src/paperless/data\n      - paperless-media:/usr/src/paperless/media\n      - paperless-consume:/usr/src/paperless/consume\n  db:\n    image: postgres:16-alpine\n    container_name: paperless-db\n    restart: unless-stopped\n    environment:\n      - POSTGRES_DB=paperless\n      - POSTGRES_USER=paperless\n      - POSTGRES_PASSWORD=paperless\n    volumes:\n      - paperless-db:/var/lib/postgresql/data\n  broker:\n    image: redis:7-alpine\n    container_name: paperless-broker\n    restart: unless-stopped\n    volumes:\n      - paperless-redis:/data\nvolumes:\n  paperless-data:\n  paperless-media:\n  paperless-consume:\n  paperless-db:\n  paperless-redis:\n"
-  }
+    {
+        "id":  "jellyfin",
+        "name":  "Jellyfin",
+        "description":  "Free software media server for films, series, music and photos.",
+        "category":  "media",
+        "tags":  [
+                     "media"
+                 ],
+        "icon":  "🎬",
+        "web_port":  8096,
+        "ports":  [
+                      {
+                          "container":  8096,
+                          "host":  8096,
+                          "protocol":  "tcp"
+                      }
+                  ],
+        "compose":  "services:\r\n  jellyfin:\r\n    image: jellyfin/jellyfin:10.10.7\r\n    container_name: jellyfin\r\n    restart: unless-stopped\r\n    labels:\r\n      - stack-stack.app=jellyfin\r\n    ports:\r\n      - \"8096:8096\"\r\n    volumes:\r\n      - jellyfin-config:/config\r\n      - jellyfin-cache:/cache\r\n      - /srv/media:/media:ro\r\nvolumes:\r\n  jellyfin-config:\r\n  jellyfin-cache:\r\n"
+    },
+    {
+        "id":  "sonarr",
+        "name":  "Sonarr",
+        "description":  "TV series PVR that downloads and manages episodes.",
+        "category":  "media",
+        "tags":  [
+                     "media"
+                 ],
+        "icon":  "📺",
+        "web_port":  8989,
+        "ports":  [
+                      {
+                          "container":  8989,
+                          "host":  8989,
+                          "protocol":  "tcp"
+                      }
+                  ],
+        "compose":  "services:\r\n  sonarr:\r\n    image: linuxserver/sonarr:4.0.14\r\n    container_name: sonarr\r\n    restart: unless-stopped\r\n    labels:\r\n      - stack-stack.app=sonarr\r\n    ports:\r\n      - \"8989:8989\"\r\n    volumes:\r\n      - sonarr-config:/config\r\n      - /srv/media:/media\r\nvolumes:\r\n  sonarr-config:\r\n"
+    },
+    {
+        "id":  "radarr",
+        "name":  "Radarr",
+        "description":  "Movie collection manager that finds and grabs releases.",
+        "category":  "media",
+        "tags":  [
+                     "media"
+                 ],
+        "icon":  "🎥",
+        "web_port":  7878,
+        "ports":  [
+                      {
+                          "container":  7878,
+                          "host":  7878,
+                          "protocol":  "tcp"
+                      }
+                  ],
+        "compose":  "services:\r\n  radarr:\r\n    image: linuxserver/radarr:5.20.2\r\n    container_name: radarr\r\n    restart: unless-stopped\r\n    labels:\r\n      - stack-stack.app=radarr\r\n    ports:\r\n      - \"7878:7878\"\r\n    volumes:\r\n      - radarr-config:/config\r\n      - /srv/media:/media\r\nvolumes:\r\n  radarr-config:\r\n"
+    },
+    {
+        "id":  "qbittorrent",
+        "name":  "qBittorrent",
+        "description":  "BitTorrent client with a web UI and queue management.",
+        "category":  "downloads",
+        "tags":  [
+                     "downloads"
+                 ],
+        "icon":  "⬇️",
+        "web_port":  8080,
+        "ports":  [
+                      {
+                          "container":  8080,
+                          "host":  8080,
+                          "protocol":  "tcp"
+                      }
+                  ],
+        "compose":  "services:\r\n  qbittorrent:\r\n    image: linuxserver/qbittorrent:5.0.4\r\n    container_name: qbittorrent\r\n    restart: unless-stopped\r\n    labels:\r\n      - stack-stack.app=qbittorrent\r\n    ports:\r\n      - \"8080:8080\"\r\n    volumes:\r\n      - qb-config:/config\r\n      - /srv/downloads:/downloads\r\nvolumes:\r\n  qb-config:\r\n"
+    },
+    {
+        "id":  "paperless-ngx",
+        "name":  "Paperless-ngx",
+        "description":  "Document management: scan, index and archive paperwork.",
+        "category":  "productivity",
+        "tags":  [
+                     "productivity"
+                 ],
+        "icon":  "📄",
+        "web_port":  8000,
+        "ports":  [
+                      {
+                          "container":  8000,
+                          "host":  8000,
+                          "protocol":  "tcp"
+                      }
+                  ],
+        "compose":  "services:\r\n  paperless-ngx:\r\n    image: ghcr.io/paperless-ngx/paperless-ngx:2.16.0\r\n    container_name: paperless-ngx\r\n    restart: unless-stopped\r\n    labels:\r\n      - stack-stack.app=paperless-ngx\r\n    environment:\r\n      - PAPERLESS_REDIS=redis://paperless-redis:6379\r\n    ports:\r\n      - \"8000:8000\"\r\n    volumes:\r\n      - paperless-data:/usr/src/paperless/data\r\n      - paperless-media:/usr/src/paperless/media\r\n      - /srv/docs:/consume\r\nvolumes:\r\n  paperless-data:\r\n  paperless-media:\r\n"
+    },
+    {
+        "id":  "adguard",
+        "name":  "AdGuard Home",
+        "description":  "Network-wide DNS ad and tracker blocking.",
+        "category":  "network",
+        "tags":  [
+                     "network"
+                 ],
+        "icon":  "🛡️",
+        "web_port":  3000,
+        "ports":  [
+                      {
+                          "container":  3000,
+                          "host":  3000,
+                          "protocol":  "tcp"
+                      },
+                      {
+                          "container":  53,
+                          "host":  53,
+                          "protocol":  "tcp"
+                      }
+                  ],
+        "compose":  "services:\r\n  adguardhome:\r\n    image: adguard/adguardhome:v0.107.59\r\n    container_name: adguardhome\r\n    restart: unless-stopped\r\n    labels:\r\n      - stack-stack.app=adguard\r\n    ports:\r\n      - \"3000:3000\"\r\n      - \"53:53/tcp\"\r\n      - \"53:53/udp\"\r\n    volumes:\r\n      - adguard-work:/opt/adguardhome/work\r\n      - adguard-conf:/opt/adguardhome/conf\r\nvolumes:\r\n  adguard-work:\r\n  adguard-conf:\r\n"
+    },
+    {
+        "id":  "home-assistant",
+        "name":  "Home Assistant",
+        "description":  "Open-source home automation hub.",
+        "category":  "home-automation",
+        "tags":  [
+                     "home-automation"
+                 ],
+        "icon":  "🏠",
+        "web_port":  8123,
+        "ports":  [
+                      {
+                          "container":  8123,
+                          "host":  8123,
+                          "protocol":  "tcp"
+                      }
+                  ],
+        "compose":  "services:\r\n  homeassistant:\r\n    image: ghcr.io/home-assistant/home-assistant:2025.6.0\r\n    container_name: homeassistant\r\n    restart: unless-stopped\r\n    labels:\r\n      - stack-stack.app=home-assistant\r\n    ports:\r\n      - \"8123:8123\"\r\n    volumes:\r\n      - ha-config:/config\r\nvolumes:\r\n  ha-config:\r\n"
+    },
+    {
+        "id":  "plex",
+        "name":  "Plex",
+        "description":  "Media server with clients, sharing and DVR.",
+        "category":  "media",
+        "tags":  [
+                     "media"
+                 ],
+        "icon":  "📀",
+        "web_port":  32400,
+        "ports":  [
+                      {
+                          "container":  32400,
+                          "host":  32400,
+                          "protocol":  "tcp"
+                      }
+                  ],
+        "compose":  "services:\r\n  plex:\r\n    image: linuxserver/plex:1.41.3\r\n    container_name: plex\r\n    restart: unless-stopped\r\n    labels:\r\n      - stack-stack.app=plex\r\n    ports:\r\n      - \"32400:32400\"\r\n    volumes:\r\n      - plex-config:/config\r\n      - /srv/media:/media\r\nvolumes:\r\n  plex-config:\r\n"
+    },
+    {
+        "id":  "navidrome",
+        "name":  "Navidrome",
+        "description":  "Self-hosted music server with Subsonic support.",
+        "category":  "media",
+        "tags":  [
+                     "media"
+                 ],
+        "icon":  "🎵",
+        "web_port":  4533,
+        "ports":  [
+                      {
+                          "container":  4533,
+                          "host":  4533,
+                          "protocol":  "tcp"
+                      }
+                  ],
+        "compose":  "services:\r\n  navidrome:\r\n    image: deluan/navidrome:0.56.0\r\n    container_name: navidrome\r\n    restart: unless-stopped\r\n    labels:\r\n      - stack-stack.app=navidrome\r\n    ports:\r\n      - \"4533:4533\"\r\n    volumes:\r\n      - navidrome-data:/data\r\n      - /srv/music:/music:ro\r\nvolumes:\r\n  navidrome-data:\r\n"
+    },
+    {
+        "id":  "audiobookshelf",
+        "name":  "Audiobookshelf",
+        "description":  "Audiobook and podcast server with progress sync.",
+        "category":  "media",
+        "tags":  [
+                     "media"
+                 ],
+        "icon":  "🎧",
+        "web_port":  13378,
+        "ports":  [
+                      {
+                          "container":  13378,
+                          "host":  13378,
+                          "protocol":  "tcp"
+                      }
+                  ],
+        "compose":  "services:\r\n  audiobookshelf:\r\n    image: ghcr.io/advplyr/audiobookshelf:2.18.0\r\n    container_name: audiobookshelf\r\n    restart: unless-stopped\r\n    labels:\r\n      - stack-stack.app=audiobookshelf\r\n    ports:\r\n      - \"13378:13378\"\r\n    volumes:\r\n      - abs-config:/config\r\n      - abs-metadata:/metadata\r\n      - /srv/audiobooks:/audiobooks\r\n      - /srv/podcasts:/podcasts\r\nvolumes:\r\n  abs-config:\r\n  abs-metadata:\r\n"
+    },
+    {
+        "id":  "immich",
+        "name":  "Immich",
+        "description":  "Self-hosted photo and video backup with face search.",
+        "category":  "media",
+        "tags":  [
+                     "media"
+                 ],
+        "icon":  "📸",
+        "web_port":  2283,
+        "ports":  [
+                      {
+                          "container":  2283,
+                          "host":  2283,
+                          "protocol":  "tcp"
+                      }
+                  ],
+        "compose":  "services:\r\n  immich-server:\r\n    image: ghcr.io/immich-app/immich-server:v1.136.0\r\n    container_name: immich-server\r\n    restart: unless-stopped\r\n    labels:\r\n      - stack-stack.app=immich\r\n    ports:\r\n      - \"2283:2283\"\r\n    volumes:\r\n      - immich-upload:/usr/src/app/upload\r\n      - /srv/photos:/usr/src/app/external\r\nvolumes:\r\n  immich-upload:\r\n"
+    },
+    {
+        "id":  "calibre-web",
+        "name":  "Calibre-Web",
+        "description":  "Ebook library with a reader and metadata editor.",
+        "category":  "media",
+        "tags":  [
+                     "media"
+                 ],
+        "icon":  "📚",
+        "web_port":  8083,
+        "ports":  [
+                      {
+                          "container":  8083,
+                          "host":  8083,
+                          "protocol":  "tcp"
+                      }
+                  ],
+        "compose":  "services:\r\n  calibre-web:\r\n    image: linuxserver/calibre-web:0.6.24\r\n    container_name: calibre-web\r\n    restart: unless-stopped\r\n    labels:\r\n      - stack-stack.app=calibre-web\r\n    ports:\r\n      - \"8083:8083\"\r\n    volumes:\r\n      - calibre-config:/config\r\n      - /srv/books:/books\r\nvolumes:\r\n  calibre-config:\r\n"
+    },
+    {
+        "id":  "nextcloud",
+        "name":  "Nextcloud",
+        "description":  "File sync and sharing with calendars and contacts.",
+        "category":  "productivity",
+        "tags":  [
+                     "productivity"
+                 ],
+        "icon":  "☁️",
+        "web_port":  80,
+        "ports":  [
+                      {
+                          "container":  80,
+                          "host":  8081,
+                          "protocol":  "tcp"
+                      }
+                  ],
+        "compose":  "services:\r\n  nextcloud:\r\n    image: nextcloud:31.0.2-apache\r\n    container_name: nextcloud\r\n    restart: unless-stopped\r\n    labels:\r\n      - stack-stack.app=nextcloud\r\n    ports:\r\n      - \"8081:80\"\r\n    volumes:\r\n      - nextcloud-html:/var/www/html\r\n      - /srv/nextcloud:/var/www/html/data\r\nvolumes:\r\n  nextcloud-html:\r\n"
+    },
+    {
+        "id":  "vikunja",
+        "name":  "Vikunja",
+        "description":  "Task and project manager with lists and Kanban.",
+        "category":  "productivity",
+        "tags":  [
+                     "productivity"
+                 ],
+        "icon":  "✅",
+        "web_port":  3456,
+        "ports":  [
+                      {
+                          "container":  3456,
+                          "host":  3456,
+                          "protocol":  "tcp"
+                      }
+                  ],
+        "compose":  "services:\r\n  vikunja:\r\n    image: vikunja/vikunja:0.24.6\r\n    container_name: vikunja\r\n    restart: unless-stopped\r\n    labels:\r\n      - stack-stack.app=vikunja\r\n    ports:\r\n      - \"3456:3456\"\r\n    volumes:\r\n      - vikunja-files:/app/vikunja/files\r\nvolumes:\r\n  vikunja-files:\r\n"
+    },
+    {
+        "id":  "actual-budget",
+        "name":  "Actual Budget",
+        "description":  "Local-first personal budgeting and envelope tracking.",
+        "category":  "productivity",
+        "tags":  [
+                     "productivity"
+                 ],
+        "icon":  "💰",
+        "web_port":  5006,
+        "ports":  [
+                      {
+                          "container":  5006,
+                          "host":  5006,
+                          "protocol":  "tcp"
+                      }
+                  ],
+        "compose":  "services:\r\n  actual-budget:\r\n    image: actualbudget/actual-server:25.6.0\r\n    container_name: actual-budget\r\n    restart: unless-stopped\r\n    labels:\r\n      - stack-stack.app=actual-budget\r\n    ports:\r\n      - \"5006:5006\"\r\n    volumes:\r\n      - actual-data:/data\r\nvolumes:\r\n  actual-data:\r\n"
+    },
+    {
+        "id":  "memos",
+        "name":  "Memos",
+        "description":  "Lightweight note-taking with markdown and tags.",
+        "category":  "productivity",
+        "tags":  [
+                     "productivity"
+                 ],
+        "icon":  "📝",
+        "web_port":  5230,
+        "ports":  [
+                      {
+                          "container":  5230,
+                          "host":  5230,
+                          "protocol":  "tcp"
+                      }
+                  ],
+        "compose":  "services:\r\n  memos:\r\n    image: neosmemo/memos:0.24.3\r\n    container_name: memos\r\n    restart: unless-stopped\r\n    labels:\r\n      - stack-stack.app=memos\r\n    ports:\r\n      - \"5230:5230\"\r\n    volumes:\r\n      - memos-data:/var/opt/memos\r\nvolumes:\r\n  memos-data:\r\n"
+    },
+    {
+        "id":  "linkding",
+        "name":  "Linkding",
+        "description":  "Bookmark manager with tags and full-text search.",
+        "category":  "productivity",
+        "tags":  [
+                     "productivity"
+                 ],
+        "icon":  "🔖",
+        "web_port":  9090,
+        "ports":  [
+                      {
+                          "container":  9090,
+                          "host":  9090,
+                          "protocol":  "tcp"
+                      }
+                  ],
+        "compose":  "services:\r\n  linkding:\r\n    image: sisssou/linkding:1.42.0\r\n    container_name: linkding\r\n    restart: unless-stopped\r\n    labels:\r\n      - stack-stack.app=linkding\r\n    ports:\r\n      - \"9090:9090\"\r\n    volumes:\r\n      - linkding-data:/etc/linkding/data\r\nvolumes:\r\n  linkding-data:\r\n"
+    },
+    {
+        "id":  "node-red",
+        "name":  "Node-RED",
+        "description":  "Flow-based wiring for devices, APIs and services.",
+        "category":  "home-automation",
+        "tags":  [
+                     "home-automation"
+                 ],
+        "icon":  "🔗",
+        "web_port":  1880,
+        "ports":  [
+                      {
+                          "container":  1880,
+                          "host":  1880,
+                          "protocol":  "tcp"
+                      }
+                  ],
+        "compose":  "services:\r\n  node-red:\r\n    image: nodered/node-red:4.1.3\r\n    container_name: node-red\r\n    restart: unless-stopped\r\n    labels:\r\n      - stack-stack.app=node-red\r\n    ports:\r\n      - \"1880:1880\"\r\n    volumes:\r\n      - nodered-data:/data\r\nvolumes:\r\n  nodered-data:\r\n"
+    },
+    {
+        "id":  "zigbee2mqtt",
+        "name":  "Zigbee2MQTT",
+        "description":  "Zigbee gateway bridge without vendor cloud.",
+        "category":  "home-automation",
+        "tags":  [
+                     "home-automation"
+                 ],
+        "icon":  "📡",
+        "web_port":  8082,
+        "ports":  [
+                      {
+                          "container":  8082,
+                          "host":  8082,
+                          "protocol":  "tcp"
+                      }
+                  ],
+        "compose":  "services:\r\n  zigbee2mqtt:\r\n    image: koenkk/zigbee2mqtt:1.41.0\r\n    container_name: zigbee2mqtt\r\n    restart: unless-stopped\r\n    labels:\r\n      - stack-stack.app=zigbee2mqtt\r\n    ports:\r\n      - \"8082:8082\"\r\n    volumes:\r\n      - z2m-data:/app/data\r\nvolumes:\r\n  z2m-data:\r\n"
+    },
+    {
+        "id":  "mosquitto",
+        "name":  "Mosquitto",
+        "description":  "Lightweight MQTT broker for sensors and automation.",
+        "category":  "home-automation",
+        "tags":  [
+                     "home-automation"
+                 ],
+        "icon":  "📨",
+        "ports":  [
+                      {
+                          "container":  1883,
+                          "host":  1883,
+                          "protocol":  "tcp"
+                      }
+                  ],
+        "compose":  "services:\r\n  mosquitto:\r\n    image: eclipse-mosquitto:2.0.20\r\n    container_name: mosquitto\r\n    restart: unless-stopped\r\n    labels:\r\n      - stack-stack.app=mosquitto\r\n    ports:\r\n      - \"1883:1883\"\r\n    volumes:\r\n      - mosquitto-config:/mosquitto/config\r\n      - mosquitto-data:/mosquitto/data\r\nvolumes:\r\n  mosquitto-config:\r\n  mosquitto-data:\r\n"
+    },
+    {
+        "id":  "uptime-kuma",
+        "name":  "Uptime Kuma",
+        "description":  "Self-hosted uptime and latency monitoring with alerts.",
+        "category":  "monitoring",
+        "tags":  [
+                     "monitoring"
+                 ],
+        "icon":  "📈",
+        "web_port":  3001,
+        "ports":  [
+                      {
+                          "container":  3001,
+                          "host":  3001,
+                          "protocol":  "tcp"
+                      }
+                  ],
+        "compose":  "services:\r\n  uptime-kuma:\r\n    image: louislam/uptime-kuma:1.23.15\r\n    container_name: uptime-kuma\r\n    restart: unless-stopped\r\n    labels:\r\n      - stack-stack.app=uptime-kuma\r\n    ports:\r\n      - \"3001:3001\"\r\n    volumes:\r\n      - uptime-kuma-data:/app/data\r\nvolumes:\r\n  uptime-kuma-data:\r\n"
+    },
+    {
+        "id":  "grafana",
+        "name":  "Grafana",
+        "description":  "Dashboards and graphs for metrics and logs.",
+        "category":  "monitoring",
+        "tags":  [
+                     "monitoring"
+                 ],
+        "icon":  "📊",
+        "web_port":  3000,
+        "ports":  [
+                      {
+                          "container":  3000,
+                          "host":  3002,
+                          "protocol":  "tcp"
+                      }
+                  ],
+        "compose":  "services:\r\n  grafana:\r\n    image: grafana/grafana:11.6.0\r\n    container_name: grafana\r\n    restart: unless-stopped\r\n    labels:\r\n      - stack-stack.app=grafana\r\n    ports:\r\n      - \"3002:3000\"\r\n    volumes:\r\n      - grafana-data:/var/lib/grafana\r\nvolumes:\r\n  grafana-data:\r\n"
+    },
+    {
+        "id":  "prometheus",
+        "name":  "Prometheus",
+        "description":  "Metrics collection and alerting with PromQL.",
+        "category":  "monitoring",
+        "tags":  [
+                     "monitoring"
+                 ],
+        "icon":  "🔥",
+        "web_port":  9090,
+        "ports":  [
+                      {
+                          "container":  9090,
+                          "host":  9091,
+                          "protocol":  "tcp"
+                      }
+                  ],
+        "compose":  "services:\r\n  prometheus:\r\n    image: prom/prometheus:v3.4.1\r\n    container_name: prometheus\r\n    restart: unless-stopped\r\n    labels:\r\n      - stack-stack.app=prometheus\r\n    ports:\r\n      - \"9091:9090\"\r\n    volumes:\r\n      - prometheus-data:/prometheus\r\nvolumes:\r\n  prometheus-data:\r\n"
+    },
+    {
+        "id":  "netdata",
+        "name":  "Netdata",
+        "description":  "Per-second system and application metrics.",
+        "category":  "monitoring",
+        "tags":  [
+                     "monitoring"
+                 ],
+        "icon":  "🩺",
+        "web_port":  19999,
+        "ports":  [
+                      {
+                          "container":  19999,
+                          "host":  19999,
+                          "protocol":  "tcp"
+                      }
+                  ],
+        "compose":  "services:\r\n  netdata:\r\n    image: netdata/netdata:v2.4.3\r\n    container_name: netdata\r\n    restart: unless-stopped\r\n    labels:\r\n      - stack-stack.app=netdata\r\n    ports:\r\n      - \"19999:19999\"\r\n    volumes:\r\n      - netdata-lib:/etc/netdata\r\n      - netdata-cache:/var/cache/netdata\r\nvolumes:\r\n  netdata-lib:\r\n  netdata-cache:\r\n"
+    },
+    {
+        "id":  "dozzle",
+        "name":  "Dozzle",
+        "description":  "Live log viewer for Docker containers.",
+        "category":  "monitoring",
+        "tags":  [
+                     "monitoring"
+                 ],
+        "icon":  "📜",
+        "web_port":  8080,
+        "ports":  [
+                      {
+                          "container":  8080,
+                          "host":  8084,
+                          "protocol":  "tcp"
+                      }
+                  ],
+        "compose":  "services:\r\n  dozzle:\r\n    image: amir20/dozzle:v8.1.3\r\n    container_name: dozzle\r\n    restart: unless-stopped\r\n    labels:\r\n      - stack-stack.app=dozzle\r\n    ports:\r\n      - \"8084:8080\"\r\n    volumes:\r\n      - dozzle-data:/data\r\nvolumes:\r\n  dozzle-data:\r\n"
+    },
+    {
+        "id":  "gitea",
+        "name":  "Gitea",
+        "description":  "Self-hosted Git service with pull requests and CI.",
+        "category":  "dev",
+        "tags":  [
+                     "dev"
+                 ],
+        "icon":  "🦊",
+        "web_port":  3000,
+        "ports":  [
+                      {
+                          "container":  3000,
+                          "host":  3003,
+                          "protocol":  "tcp"
+                      },
+                      {
+                          "container":  22,
+                          "host":  2222,
+                          "protocol":  "tcp"
+                      }
+                  ],
+        "compose":  "services:\r\n  gitea:\r\n    image: gitea/gitea:1.23.7\r\n    container_name: gitea\r\n    restart: unless-stopped\r\n    labels:\r\n      - stack-stack.app=gitea\r\n    ports:\r\n      - \"3003:3000\"\r\n      - \"2222:22\"\r\n    volumes:\r\n      - gitea-data:/data\r\n      - /etc/timezone:/etc/timezone:ro\r\n      - /etc/localtime:/etc/localtime:ro\r\nvolumes:\r\n  gitea-data:\r\n"
+    },
+    {
+        "id":  "code-server",
+        "name":  "code-server",
+        "description":  "VS Code in the browser on this server.",
+        "category":  "dev",
+        "tags":  [
+                     "dev"
+                 ],
+        "icon":  "🧑‍💻",
+        "web_port":  8443,
+        "ports":  [
+                      {
+                          "container":  8443,
+                          "host":  8443,
+                          "protocol":  "tcp"
+                      }
+                  ],
+        "compose":  "services:\r\n  code-server:\r\n    image: linuxserver/code-server:4.98.1\r\n    container_name: code-server\r\n    restart: unless-stopped\r\n    labels:\r\n      - stack-stack.app=code-server\r\n    ports:\r\n      - \"8443:8443\"\r\n    volumes:\r\n      - codeserver-config:/config\r\n      - /srv/projects:/config/workspace\r\nvolumes:\r\n  codeserver-config:\r\n"
+    },
+    {
+        "id":  "filebrowser",
+        "name":  "Filebrowser",
+        "description":  "Browse, edit and share files through a web UI.",
+        "category":  "files",
+        "tags":  [
+                     "files"
+                 ],
+        "icon":  "🗂️",
+        "web_port":  80,
+        "ports":  [
+                      {
+                          "container":  80,
+                          "host":  8085,
+                          "protocol":  "tcp"
+                      }
+                  ],
+        "compose":  "services:\r\n  filebrowser:\r\n    image: filebrowser/filebrowser:v2.32.3\r\n    container_name: filebrowser\r\n    restart: unless-stopped\r\n    labels:\r\n      - stack-stack.app=filebrowser\r\n    ports:\r\n      - \"8085:80\"\r\n    volumes:\r\n      - filebrowser-data:/srv\r\n      - filebrowser-db:/database\r\nvolumes:\r\n  filebrowser-data:\r\n  filebrowser-db:\r\n"
+    },
+    {
+        "id":  "syncthing",
+        "name":  "Syncthing",
+        "description":  "Continuous peer-to-peer file synchronisation.",
+        "category":  "files",
+        "tags":  [
+                     "files"
+                 ],
+        "icon":  "🔄",
+        "web_port":  8384,
+        "ports":  [
+                      {
+                          "container":  8384,
+                          "host":  8384,
+                          "protocol":  "tcp"
+                      }
+                  ],
+        "compose":  "services:\r\n  syncthing:\r\n    image: syncthing/syncthing:1.29.7\r\n    container_name: syncthing\r\n    restart: unless-stopped\r\n    labels:\r\n      - stack-stack.app=syncthing\r\n    ports:\r\n      - \"8384:8384\"\r\n    volumes:\r\n      - syncthing-config:/var/syncthing/config\r\n      - /srv/sync:/var/syncthing/data\r\nvolumes:\r\n  syncthing-config:\r\n"
+    },
+    {
+        "id":  "vaultwarden",
+        "name":  "Vaultwarden",
+        "description":  "Bitwarden-compatible password manager server.",
+        "category":  "security",
+        "tags":  [
+                     "security"
+                 ],
+        "icon":  "🔐",
+        "web_port":  80,
+        "ports":  [
+                      {
+                          "container":  80,
+                          "host":  8086,
+                          "protocol":  "tcp"
+                      }
+                  ],
+        "compose":  "services:\r\n  vaultwarden:\r\n    image: vaultwarden/server:1.33.3\r\n    container_name: vaultwarden\r\n    restart: unless-stopped\r\n    labels:\r\n      - stack-stack.app=vaultwarden\r\n    ports:\r\n      - \"8086:80\"\r\n    volumes:\r\n      - vaultwarden-data:/data\r\nvolumes:\r\n  vaultwarden-data:\r\n"
+    },
+    {
+        "id":  "watchtower",
+        "name":  "Watchtower",
+        "description":  "Automatic container image updates with cleanup.",
+        "category":  "utilities",
+        "tags":  [
+                     "utilities"
+                 ],
+        "icon":  "👁️",
+        "ports":  [
+
+                  ],
+        "compose":  "services:\r\n  watchtower:\r\n    image: containrrr/watchtower:1.7.1\r\n    container_name: watchtower\r\n    restart: unless-stopped\r\n    labels:\r\n      - stack-stack.app=watchtower\r\n"
+    },
+    {
+        "id":  "diun",
+        "name":  "Diun",
+        "description":  "Notifies when a new image tag is available.",
+        "category":  "utilities",
+        "tags":  [
+                     "utilities"
+                 ],
+        "icon":  "📣",
+        "ports":  [
+
+                  ],
+        "compose":  "services:\r\n  diun:\r\n    image: crazymax/diun:4.32.0\r\n    container_name: diun\r\n    restart: unless-stopped\r\n    labels:\r\n      - stack-stack.app=diun\r\n    volumes:\r\n      - diun-data:/data\r\nvolumes:\r\n  diun-data:\r\n"
+    },
+    {
+        "id":  "it-tools",
+        "name":  "IT-Tools",
+        "description":  "Collection of developer and sysadmin utilities.",
+        "category":  "utilities",
+        "tags":  [
+                     "utilities"
+                 ],
+        "icon":  "🧰",
+        "web_port":  80,
+        "ports":  [
+                      {
+                          "container":  80,
+                          "host":  8087,
+                          "protocol":  "tcp"
+                      }
+                  ],
+        "compose":  "services:\r\n  it-tools:\r\n    image: corentinth/it-tools:2024.10.16\r\n    container_name: it-tools\r\n    restart: unless-stopped\r\n    labels:\r\n      - stack-stack.app=it-tools\r\n    ports:\r\n      - \"8087:80\"\r\n"
+    }
 ]

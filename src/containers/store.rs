@@ -353,7 +353,11 @@ mod tests {
     #[test]
     fn embedded_catalog_parses_with_unique_ids() {
         let apps: Vec<App> = serde_json::from_str(SEED_CATALOG).expect("seed catalog must parse");
-        assert_eq!(apps.len(), 7, "seed catalog ships 7 apps");
+        assert!(
+            apps.len() >= 20,
+            "seed catalog ships the full app store, got {}",
+            apps.len()
+        );
         let mut ids: Vec<&str> = apps.iter().map(|app| app.id.as_str()).collect();
         ids.sort_unstable();
         let count = ids.len();
@@ -369,6 +373,23 @@ mod tests {
             assert!(
                 app.compose.contains(&format!("stack-stack.app={}", app.id)),
                 "{} compose must carry the app label",
+                app.id
+            );
+            // A pinned tag is what makes an install reproducible and lets a
+            // checksum be added later; `:latest` would silently drift.
+            let image = app
+                .compose
+                .lines()
+                .find_map(|line| {
+                    line.trim()
+                        .strip_prefix("image:")
+                        .map(str::trim)
+                        .filter(|tag| !tag.is_empty())
+                })
+                .unwrap_or_else(|| panic!("{} has no image", app.id));
+            assert!(
+                !image.ends_with(":latest") && image.contains(':'),
+                "{} image {image:?} must be pinned to a tag",
                 app.id
             );
         }
@@ -403,7 +424,11 @@ mod tests {
             .expect("mkdir");
         std::fs::write(&cfg.catalog_path, "{ not json").expect("write");
         let apps = catalog(&cfg);
-        assert_eq!(apps.len(), 7, "falls back to the seed catalog");
+        assert!(
+            apps.len() >= 20,
+            "falls back to the seed catalog, got {}",
+            apps.len()
+        );
     }
 
     #[test]

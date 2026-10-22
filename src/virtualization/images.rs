@@ -67,6 +67,15 @@ pub struct GuestImage {
     /// Runtime-only: the image has already been fetched into the images dir.
     #[serde(default, skip_deserializing)]
     pub cached: bool,
+    /// `true` when the download URL has a pinned SHA-256 in the catalog and
+    /// every fetch is checksum-verified. Rolling-release images that cannot be
+    /// pinned are `false` and badged as unverified in the UI.
+    #[serde(default = "default_verified")]
+    pub verified: bool,
+}
+
+fn default_verified() -> bool {
+    true
 }
 
 pub fn default_arch() -> String {

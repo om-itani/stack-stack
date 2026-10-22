@@ -162,10 +162,12 @@ export function checkbox(
   checked: boolean,
   onChange: (value: boolean) => void,
   label = "",
+  disabled = false,
 ): HTMLLabelElement {
   const box = document.createElement("input");
   box.type = "checkbox";
   box.checked = checked;
+  box.disabled = disabled;
   box.addEventListener("change", () => onChange(box.checked));
   const wrapper = document.createElement("label");
   wrapper.className = "inline-flex items-center gap-1 text-[11px] text-slate-400";

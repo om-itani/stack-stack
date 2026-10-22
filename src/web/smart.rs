@@ -130,6 +130,25 @@ async fn collect(state: &AppState) -> SmartState {
 /// Run due SMART self-tests every minute for the life of the process.
 pub fn spawn_scheduler(state: AppState) {
     tokio::spawn(async move {
+        // A fresh install has no schedule at all, which means no self-tests ever
+        // run — the silent-failure risk. Discover the disks once and schedule the
+        // default weekly-short/monthly-long pair for each of them. This is a
+        // no-op once the document names any device, so an opt-out survives.
+        if state.smart.available() {
+            let scheduled = tokio::task::spawn_blocking({
+                let smart = state.smart.clone();
+                move || smart.ensure_default_schedule()
+            })
+            .await
+            .unwrap_or_default();
+            if !scheduled.is_empty() {
+                tracing::info!(
+                    devices = scheduled.len(),
+                    "scheduled default SMART self-tests for every detected disk"
+                );
+            }
+        }
+
         // key "device:kind" -> the time the schedule was last considered.
         let mut last: HashMap<String, u64> = HashMap::new();
         let mut ticker = tokio::time::interval(std::time::Duration::from_secs(60));

@@ -33,16 +33,26 @@ fn is_exempt(path: &str) -> bool {
 /// login screen itself can load; the API is what is protected.
 pub async fn gate(State(state): State<AppState>, request: Request, next: Next) -> Response {
     let path = request.uri().path().to_string();
+    let is_upgrade = request.headers().get("upgrade").is_some();
     if !path.starts_with("/api/") || is_exempt(&path) {
+        if is_upgrade {
+            tracing::debug!(path, "websocket upgrade exempt from auth gate");
+        }
         return next.run(request).await;
     }
 
     if let Some(token) = cookie_value(request.headers(), COOKIE_NAME)
         && state.auth.validate_token(&token)
     {
+        if is_upgrade {
+            tracing::debug!(path, "websocket upgrade authenticated via session cookie");
+        }
         return next.run(request).await;
     }
 
+    if is_upgrade {
+        tracing::warn!(path, "websocket upgrade rejected by auth gate (no valid session cookie)");
+    }
     let status = state.auth.status(false);
     let message = if status.setup_required {
         "setup required"

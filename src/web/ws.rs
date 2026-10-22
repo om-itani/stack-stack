@@ -76,6 +76,7 @@ pub fn spawn_sampler(state: AppState, cfg: Config) {
 }
 
 pub async fn telemetry_ws(ws: WebSocketUpgrade, State(state): State<AppState>) -> Response {
+    tracing::debug!("telemetry_ws upgrade request received");
     let stream = state.telemetry.subscribe();
     let initial = state.latest_snapshot();
     ws.on_upgrade(move |socket| handler(socket, stream, initial))

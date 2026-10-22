@@ -157,6 +157,19 @@ pub fn save(path: &std::path::Path, config: &SmartConfig) -> Result<(), ApiError
         .map_err(|err| ApiError::internal(format!("cannot write {}: {err}", path.display())))
 }
 
+/// Device paths from `smartctl --scan-open` output. Each line looks like
+/// `/dev/sda -d scsi # /dev/sda, SCSI device`; only the first field matters, and
+/// comments or blank lines carry nothing.
+pub fn parse_scan(output: &str) -> Vec<String> {
+    output
+        .lines()
+        .filter_map(|line| {
+            let first = line.split_whitespace().next()?;
+            first.starts_with("/dev/").then(|| first.to_string())
+        })
+        .collect()
+}
+
 /// One remembered test result.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct TestRecord {
@@ -204,6 +217,45 @@ impl SmartContext {
     /// True when `smartctl` is installed.
     pub fn available(&self) -> bool {
         self.runner.available("smartctl", &["--version"])
+    }
+
+    /// Every device `smartctl` can talk to, so a fresh install can schedule
+    /// self-tests for all of them without the operator naming each disk.
+    pub fn detect_devices(&self) -> Vec<String> {
+        let output = match self.runner.call("smartctl", &["--scan-open"]) {
+            Ok(output) if output.success() => output.stdout,
+            _ => return Vec::new(),
+        };
+        parse_scan(&output)
+    }
+
+    /// Add every detected disk to the schedule when the document has no entries
+    /// yet. Returns the devices that were added. The operator's own document is
+    /// never rewritten: once a device list exists, discovery is skipped so an
+    /// opt-out is not undone by the next boot.
+    pub fn ensure_default_schedule(&self) -> Vec<DevicePlan> {
+        let (config, _) = load(&self.config_path);
+        if !config.devices.is_empty() {
+            return Vec::new();
+        }
+        let devices = self.detect_devices();
+        if devices.is_empty() {
+            return Vec::new();
+        }
+        let plans: Vec<DevicePlan> = devices
+            .into_iter()
+            .map(|device| DevicePlan {
+                device,
+                ..DevicePlan::default()
+            })
+            .collect();
+        let next = SmartConfig {
+            devices: plans.clone(),
+        };
+        if next.validate().is_empty() {
+            let _ = save(&self.config_path, &next);
+        }
+        plans
     }
 
     /// Start a self-test and remember the outcome.

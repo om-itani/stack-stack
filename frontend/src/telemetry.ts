@@ -66,11 +66,13 @@ export interface Snapshot {
   smart: Smart[];
 }
 
-export type LinkState = "connecting" | "live" | "down";
+export type LinkState = "connecting" | "live" | "down" | "polling";
 export type SnapshotHandler = (snapshot: Snapshot) => void;
 
 /** A hung backend must not wedge the first paint or the version tag forever. */
 const FETCH_TIMEOUT_MS = 5000;
+/** Poll cadence used only while the socket is down, so telemetry never freezes. */
+const POLL_MS = 3000;
 
 /**
  * Shallow shape check. `JSON.parse` only proves the frame is valid JSON, not that
@@ -116,6 +118,7 @@ export class Telemetry {
   private socket: WebSocket | null = null;
   private retries = 0;
   private stopped = false;
+  private pollTimer: number | null = null;
 
   constructor(private readonly onState: (state: LinkState) => void) {}
 
@@ -130,6 +133,35 @@ export class Telemetry {
   stop(): void {
     this.stopped = true;
     this.socket?.close();
+    if (this.pollTimer !== null) {
+      window.clearInterval(this.pollTimer);
+      this.pollTimer = null;
+    }
+  }
+
+  /** Polling fallback, used only while the socket is down so the panel keeps
+   * showing live-enough data instead of freezing on the first frame. */
+  private startPolling(): void {
+    if (this.pollTimer !== null || this.stopped) {
+      return;
+    }
+    this.pollTimer = window.setInterval(() => {
+      void this.currentSnapshot().then((snapshot) => {
+        if (snapshot === null || this.stopped) {
+          return;
+        }
+        for (const handler of this.handlers) {
+          handler(snapshot);
+        }
+      });
+    }, POLL_MS);
+  }
+
+  private stopPolling(): void {
+    if (this.pollTimer !== null) {
+      window.clearInterval(this.pollTimer);
+      this.pollTimer = null;
+    }
   }
 
   /** One-shot fetch so the first paint does not wait for a socket round trip. */
@@ -150,7 +182,14 @@ export class Telemetry {
     if (this.stopped) {
       return;
     }
-    this.onState(this.retries === 0 ? "connecting" : "down");
+    // The header says what the client is actually doing: a live socket, a
+    // polling fallback, or a broken link. Never claim "live" while polling.
+    if (this.retries === 0) {
+      this.onState("connecting");
+    } else {
+      this.onState("polling");
+      this.startPolling();
+    }
 
     const scheme = location.protocol === "https:" ? "wss" : "ws";
     const socket = new WebSocket(`${scheme}://${location.host}/api/ws/telemetry`);
@@ -158,6 +197,7 @@ export class Telemetry {
 
     socket.onopen = () => {
       this.retries = 0;
+      this.stopPolling();
       this.onState("live");
     };
 
@@ -179,13 +219,25 @@ export class Telemetry {
       }
     };
 
-    socket.onclose = () => {
-      this.onState("down");
+    socket.onclose = (event: CloseEvent) => {
+      // The socket is gone; polling keeps the numbers moving until it returns.
+      this.onState("polling");
+      // Diagnose: a 4-digit code from the server (e.g. 4401 for 401) means the
+      // auth gate rejected the upgrade; a blank code means a network/runtime error.
+      if (event.code !== 1000 && event.code !== 1001) {
+        console.warn(
+          `[telemetry] websocket closed unexpectedly: code=${event.code} reason="${event.reason}"`,
+        );
+      }
       this.scheduleReconnect();
     };
 
-    // onerror is always followed by onclose; closing here just speeds it up.
-    socket.onerror = () => socket.close();
+    // onerror is always followed by onclose; just speed up the teardown. Log the
+    // event so WS upgrade failures (401, CORS, etc.) are visible in the console.
+    socket.onerror = (event: Event) => {
+      console.warn("[telemetry] websocket error", event);
+      socket.close();
+    };
   }
 
   private scheduleReconnect(): void {

@@ -802,7 +802,7 @@ export const backupApi = {
     request<Snapshot[]>(`/api/backup/jobs/${encodeURIComponent(id)}/snapshots`),
   browse: (id: string, snapshot: string, path: string) =>
     request<LsEntry[]>(
-      `/api/backup/jobs/${encodeURIComponent(id)}/snapshots/${encodeURIComponent(snapshot)}/ls?path=${encodeURIComponent(path)}`,
+      `/api/backup/jobs/${encodeURIComponent(id)}/snapshots/${encodeURIComponent(snapshot)}/ls?path=${encodePathSegment(path)}`,
     ),
   restore: (id: string, snapshot: string, target: string, include: string | null) =>
     jsonRequest<OkDetail>(`/api/backup/jobs/${encodeURIComponent(id)}/restore`, "POST", {
@@ -811,7 +811,7 @@ export const backupApi = {
       include,
     }),
   downloadUrl: (id: string, snapshot: string, path: string) =>
-    `/api/backup/jobs/${encodeURIComponent(id)}/download?snapshot=${encodeURIComponent(snapshot)}&path=${encodeURIComponent(path)}`,
+    `/api/backup/jobs/${encodeURIComponent(id)}/download?snapshot=${encodeURIComponent(snapshot)}&path=${encodePathSegment(path)}`,
 };
 
 // ---------------------------------------------------------------------------
@@ -914,6 +914,13 @@ export const nfsApi = {
     jsonRequest<SharesReport<NfsState>>("/api/nfs/apply", "POST", config),
 };
 
+/** Encode a path for use in a query string, preserving forward slashes. Unlike
+ * encodeURIComponent, this does not turn "/" into "%2F" — some HTTP stacks reject
+ * encoded slashes in query strings, and "/" is a legal sub-delim there. */
+export function encodePathSegment(path: string): string {
+  return encodeURIComponent(path).replace(/%2F/g, "/").replace(/%2f/g, "/");
+}
+
 // ---------------------------------------------------------------------------
 // File manager
 // ---------------------------------------------------------------------------
@@ -969,9 +976,9 @@ export interface Accounts {
 
 export const filesApi = {
   state: (path = "") =>
-    request<FilesState>(`/api/files?path=${encodeURIComponent(path)}`),
+    request<FilesState>(`/api/files?path=${encodePathSegment(path)}`),
   read: (path: string) =>
-    request<FileText>(`/api/files/read?path=${encodeURIComponent(path)}`),
+    request<FileText>(`/api/files/read?path=${encodePathSegment(path)}`),
   save: (path: string, content: string) =>
     jsonRequest<ActionResult>("/api/files/save", "POST", { path, content }),
   mkdir: (path: string) => jsonRequest<ActionResult>("/api/files/mkdir", "POST", { path }),
@@ -990,9 +997,9 @@ export const filesApi = {
   accounts: () => request<Accounts>("/api/files/accounts"),
   saveConfig: (config: FilesConfig) =>
     jsonRequest<{ ok: boolean; roots: string[] }>("/api/files/config", "PUT", config),
-  downloadUrl: (path: string) => `/api/files/download?path=${encodeURIComponent(path)}`,
-  archiveUrl: (path: string) => `/api/files/archive?path=${encodeURIComponent(path)}`,
-  uploadUrl: (dir: string) => `/api/files/upload?path=${encodeURIComponent(dir)}`,
+  downloadUrl: (path: string) => `/api/files/download?path=${encodePathSegment(path)}`,
+  archiveUrl: (path: string) => `/api/files/archive?path=${encodePathSegment(path)}`,
+  uploadUrl: (dir: string) => `/api/files/upload?path=${encodePathSegment(dir)}`,
 };
 
 // ---------------------------------------------------------------------------
@@ -1156,6 +1163,15 @@ export const notifyApi = {
   test: () => post<TestResult>("/api/notifications/test"),
 };
 
+export interface HostIp {
+  ip: string;
+}
+
+export const hostApi = {
+  /** Primary IPv4 of this host; used to pre-fill guest address placeholders. */
+  ip: () => request<HostIp>("/api/host/ip"),
+};
+
 export const api = {
   containers: () => request<Container[]>("/api/containers"),
 
@@ -1211,6 +1227,7 @@ export interface GuestImage {
   icon: string;
   tags: string[];
   cached: boolean;
+  verified: boolean;
 }
 
 export interface CloudInitConfig {

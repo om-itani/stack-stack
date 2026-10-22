@@ -81,16 +81,21 @@ impl HostShell {
                 };
                 let _ = libc::ioctl(0, libc::TIOCSWINSZ, &mut size);
 
-                let program = b"/bin/bash\0";
-                let arg0 = b"bash\0";
-                let arg1 = b"-l\0";
-                let argv: [*const libc::c_char; 4] = [
-                    program.as_ptr().cast(),
-                    arg0.as_ptr().cast(),
-                    arg1.as_ptr().cast(),
+                let shell_path = std::env::var("SHELL")
+                    .unwrap_or_else(|_| "/bin/bash".to_string());
+                let shell_name = shell_path
+                    .rsplit('/')
+                    .next()
+                    .unwrap_or(&shell_path)
+                    .to_string();
+                let program = std::ffi::CString::new(shell_path.clone()).unwrap();
+                let argv0 = std::ffi::CString::new(shell_name).unwrap();
+                let argv: [*const libc::c_char; 3] = [
+                    argv0.as_ptr(),
+                    b"-l\0".as_ptr().cast(),
                     std::ptr::null(),
                 ];
-                libc::execvp(program.as_ptr().cast(), argv.as_ptr());
+                libc::execvp(program.as_ptr(), argv.as_ptr());
                 libc::_exit(127);
             }
 
