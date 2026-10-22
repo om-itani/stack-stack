@@ -203,6 +203,146 @@ pub async fn remove(cfg: &Config, raw_id: &str) -> Result<String, ApiError> {
     Ok(output)
 }
 
+// ---------------------------------------------------------------------------
+// Operator-authored stacks
+// ---------------------------------------------------------------------------
+
+/// Compose project names are lower-case and become both a directory name and a
+/// `docker compose -p` value, so the accepted set is deliberately narrow:
+/// `[a-z0-9]` first, then `[a-z0-9_-]`. Upper case is rejected because Compose
+/// itself refuses it, and `/`, `.` and `..` are structurally impossible.
+pub fn sanitize_stack_name(raw: &str) -> Result<&str, ApiError> {
+    let raw = raw.trim();
+    if raw.is_empty() || raw.len() > 63 {
+        return Err(ApiError::bad_request(
+            "stack name must be 1..=63 characters",
+        ));
+    }
+    let mut chars = raw.chars();
+    let first_ok = chars
+        .next()
+        .is_some_and(|c| c.is_ascii_lowercase() || c.is_ascii_digit());
+    let rest_ok = raw
+        .chars()
+        .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-' || c == '_');
+    if first_ok && rest_ok {
+        Ok(raw)
+    } else {
+        Err(ApiError::bad_request(format!(
+            "invalid stack name {raw:?}: use lower-case letters, digits, '-' and '_', starting with a letter or digit"
+        )))
+    }
+}
+
+pub fn stack_dir(cfg: &Config, name: &str) -> PathBuf {
+    Path::new(&cfg.stacks_dir).join(name)
+}
+
+pub fn stack_compose_path(cfg: &Config, name: &str) -> PathBuf {
+    stack_dir(cfg, name).join(COMPOSE_FILE)
+}
+
+/// Stack names that have a compose file on disk, sorted.
+pub fn installed_stacks(cfg: &Config) -> Vec<String> {
+    let dir = Path::new(&cfg.stacks_dir);
+    let entries = match std::fs::read_dir(dir) {
+        Ok(entries) => entries,
+        Err(_) => return Vec::new(),
+    };
+    let mut names: Vec<String> = entries
+        .flatten()
+        .filter(|entry| entry.path().join(COMPOSE_FILE).is_file())
+        .filter_map(|entry| entry.file_name().into_string().ok())
+        .collect();
+    names.sort();
+    names
+}
+
+/// Every stack with its compose text, for the UI. A stack whose file cannot be
+/// read is skipped rather than failing the whole listing.
+pub fn stack_infos(cfg: &Config) -> Vec<crate::containers::model::StackInfo> {
+    installed_stacks(cfg)
+        .into_iter()
+        .filter_map(|name| {
+            let compose = std::fs::read_to_string(stack_compose_path(cfg, &name)).ok()?;
+            Some(crate::containers::model::StackInfo { name, compose })
+        })
+        .collect()
+}
+
+/// Write the stack's compose file and bring it up with an explicit project name.
+/// Returns the compose output.
+pub async fn deploy_stack(cfg: &Config, raw_name: &str, yaml: &str) -> Result<String, ApiError> {
+    let name = sanitize_stack_name(raw_name)?.to_string();
+    if yaml.trim().is_empty() {
+        return Err(ApiError::bad_request("compose document must not be empty"));
+    }
+    if !looks_like_compose(yaml) {
+        return Err(ApiError::bad_request(
+            "compose document does not look like a YAML `services:` document",
+        ));
+    }
+
+    let dir = stack_dir(cfg, &name);
+    let dir_for_write = dir.clone();
+    let body = yaml.as_bytes().to_vec();
+    tokio::task::spawn_blocking(move || write_compose(&dir_for_write, &body))
+        .await
+        .map_err(|err| ApiError::internal(format!("stack task failed: {err}")))??;
+
+    let compose_file = stack_compose_path(cfg, &name);
+    let args = vec![
+        "-p".to_string(),
+        name.clone(),
+        "-f".to_string(),
+        compose_file.to_string_lossy().into_owned(),
+        "up".to_string(),
+        "-d".to_string(),
+        "--remove-orphans".to_string(),
+    ];
+    let output = run_compose_owned(&dir, args, cfg.compose_timeout_s).await?;
+    tracing::info!(stack = %name, "compose stack deployed");
+    Ok(output)
+}
+
+/// `docker compose down` for the stack, then delete its directory.
+pub async fn remove_stack(cfg: &Config, raw_name: &str) -> Result<String, ApiError> {
+    let name = sanitize_stack_name(raw_name)?.to_string();
+    if !stack_compose_path(cfg, &name).is_file() {
+        return Err(ApiError::not_found(format!("stack {name} does not exist")));
+    }
+
+    let dir = stack_dir(cfg, &name);
+    let compose_file = stack_compose_path(cfg, &name);
+    let args = vec![
+        "-p".to_string(),
+        name.clone(),
+        "-f".to_string(),
+        compose_file.to_string_lossy().into_owned(),
+        "down".to_string(),
+        "--remove-orphans".to_string(),
+    ];
+    let output = run_compose_owned(&dir, args, cfg.compose_timeout_s).await?;
+
+    let dir_for_remove = dir.clone();
+    tokio::task::spawn_blocking(move || std::fs::remove_dir_all(&dir_for_remove))
+        .await
+        .map_err(|err| ApiError::internal(format!("remove task failed: {err}")))?
+        .map_err(|err| ApiError::internal(format!("cannot remove {}: {err}", dir.display())))?;
+
+    tracing::info!(stack = %name, "compose stack removed");
+    Ok(output)
+}
+
+/// Cheap sanity check that the pasted document is compose-shaped. It only looks
+/// for a top-level `services:` key so it cannot reject a valid-but-unusual file,
+/// but it catches the common "pasted the wrong thing" mistake before we shell
+/// out to Docker and surface a nine-line YAML parse error.
+fn looks_like_compose(yaml: &str) -> bool {
+    // `services:` is always a top-level key, so it must sit at column zero.
+    yaml.lines().any(|line| line.starts_with("services:"))
+}
+
 /// Temp file in the same directory, then rename: a half-written compose file is
 /// never visible to a concurrent `up`.
 fn write_compose(dir: &Path, bytes: &[u8]) -> Result<(), ApiError> {
@@ -276,14 +416,24 @@ fn command_succeeds(program: &str, args: &[&str]) -> bool {
 }
 
 async fn run_compose(dir: &Path, args: &[&str], timeout_s: u64) -> Result<String, ApiError> {
+    let owned: Vec<String> = args.iter().map(|arg| (*arg).to_string()).collect();
+    run_compose_owned(dir, owned, timeout_s).await
+}
+
+/// Like [`run_compose`] but with pre-built owned arguments, needed when an
+/// argument (a stack name or compose path) is computed at runtime.
+async fn run_compose_owned(
+    dir: &Path,
+    args: Vec<String>,
+    timeout_s: u64,
+) -> Result<String, ApiError> {
     let dir = dir.to_path_buf();
-    let owned_args: Vec<String> = args.iter().map(|arg| arg.to_string()).collect();
     let timeout = Duration::from_secs(timeout_s.clamp(30, 1800));
 
     tokio::task::spawn_blocking(move || {
         let cli = compose_cli();
         let mut full = cli.prefix.clone();
-        full.extend(owned_args);
+        full.extend(args);
         run_blocking(&cli.program, &full, &dir, timeout)
     })
     .await
@@ -346,8 +496,79 @@ mod tests {
         Config {
             apps_dir: dir.join("apps").to_string_lossy().into_owned(),
             catalog_path: dir.join("catalog.json").to_string_lossy().into_owned(),
+            stacks_dir: dir.join("stacks").to_string_lossy().into_owned(),
             ..Config::default()
         }
+    }
+
+    #[test]
+    fn stack_names_are_lowercase_path_components() {
+        for ok in ["web", "my-stack", "stack_2", "a1"] {
+            assert!(sanitize_stack_name(ok).is_ok(), "{ok:?} must be accepted");
+        }
+        for bad in ["", "..", "a/b", ".hidden", "-lead", "Upper", "a b", "a.b"] {
+            assert!(sanitize_stack_name(bad).is_err(), "{bad:?} must be rejected");
+        }
+        assert!(sanitize_stack_name(&"x".repeat(64)).is_err());
+    }
+
+    #[test]
+    fn compose_shape_check_requires_top_level_services() {
+        assert!(looks_like_compose("services:\n  web:\n    image: nginx\n"));
+        assert!(looks_like_compose("# a comment\nservices:\n  a:\n"));
+        // An indented `services:` is not a top-level key.
+        assert!(!looks_like_compose("  services:\n    x:\n"));
+        assert!(!looks_like_compose("version: '3'\nweb:\n  image: nginx\n"));
+    }
+
+    #[tokio::test]
+    async fn deploy_stack_rejects_bad_input_before_reaching_docker() {
+        let cfg = temp_cfg("stacks-validate");
+
+        // Bad name.
+        assert!(matches!(
+            deploy_stack(&cfg, "Bad Name", "services:\n  a:\n").await,
+            Err(ApiError::BadRequest(_))
+        ));
+        // Empty document.
+        assert!(matches!(
+            deploy_stack(&cfg, "web", "   \n").await,
+            Err(ApiError::BadRequest(_))
+        ));
+        // Not a compose document.
+        assert!(matches!(
+            deploy_stack(&cfg, "web", "version: '3'\n").await,
+            Err(ApiError::BadRequest(_))
+        ));
+        // None of the rejected calls may have written anything.
+        assert!(!stack_compose_path(&cfg, "web").exists());
+    }
+
+    #[tokio::test]
+    async fn remove_unknown_stack_is_not_found() {
+        let cfg = temp_cfg("stacks-remove-missing");
+        assert!(matches!(
+            remove_stack(&cfg, "ghost").await,
+            Err(ApiError::NotFound(_))
+        ));
+    }
+
+    #[test]
+    fn installed_stacks_lists_directories_with_a_compose_file() {
+        let cfg = temp_cfg("stacks-list");
+        let dir = stack_dir(&cfg, "web");
+        std::fs::create_dir_all(&dir).expect("mkdir");
+        std::fs::write(dir.join("docker-compose.yml"), "services:\n  web:\n").expect("write");
+        // An empty directory with no compose file must be ignored.
+        std::fs::create_dir_all(stack_dir(&cfg, "empty")).expect("mkdir empty");
+
+        let names = installed_stacks(&cfg);
+        assert_eq!(names, vec!["web".to_string()]);
+
+        let infos = stack_infos(&cfg);
+        assert_eq!(infos.len(), 1);
+        assert_eq!(infos[0].name, "web");
+        assert!(infos[0].compose.contains("services:"));
     }
 
     #[test]

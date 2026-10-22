@@ -4,9 +4,10 @@
 //! they are pushed onto the blocking pool; the async runtime is never blocked.
 
 use axum::Json;
-use axum::extract::{Path, State};
-use serde::Serialize;
+use axum::extract::{Path, Query, State};
+use serde::{Deserialize, Serialize};
 
+use crate::containers::hub::HubRepo;
 use crate::containers::model::App;
 use crate::containers::store;
 use crate::error::ApiError;
@@ -50,6 +51,21 @@ pub async fn remove(
         ok: true,
         output: trim(&output),
     }))
+}
+
+#[derive(Deserialize)]
+pub struct HubQuery {
+    pub q: Option<String>,
+}
+
+/// Search Docker Hub for repositories. Cached in-process for five minutes so an
+/// operator typing a query does not burn the unauthenticated rate limit.
+pub async fn hub_search(
+    State(state): State<AppState>,
+    Query(query): Query<HubQuery>,
+) -> Result<Json<Vec<HubRepo>>, ApiError> {
+    let repos = state.hub.search(query.q.as_deref().unwrap_or("")).await?;
+    Ok(Json(repos))
 }
 
 fn trim(output: &str) -> String {

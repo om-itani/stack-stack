@@ -42,8 +42,21 @@ pub struct Container {
     pub source: ContainerSource,
     /// App id when `source == AppStore`.
     pub app_id: Option<String>,
+    /// Docker Compose project this container belongs to, from the
+    /// `com.docker.compose.project` label. Set for app-store apps and for
+    /// operator-authored stacks, so the UI can group containers by stack.
+    #[serde(default)]
+    pub stack: Option<String>,
     /// Ready-to-click URLs for published TCP ports, already host-qualified.
     pub web_urls: Vec<String>,
+}
+
+/// One operator-authored compose stack: the project name and the exact YAML on
+/// disk. Container status is read from the containers list (they carry `stack`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct StackInfo {
+    pub name: String,
+    pub compose: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

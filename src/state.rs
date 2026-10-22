@@ -11,6 +11,7 @@ use crate::auth::AuthContext;
 use crate::ca::CaContext;
 use crate::config::Config;
 use crate::containers::docker::DockerClient;
+use crate::containers::hub::HubSearch;
 use crate::files::FilesContext;
 use crate::networking::NetworkContext;
 use crate::notify::{NotificationCenter, Notifier};
@@ -47,6 +48,8 @@ pub struct AppState {
     pub config: Config,
     /// Lazily-connected Docker daemon client.
     pub docker: DockerClient,
+    /// Docker Hub search with a process-wide result cache.
+    pub hub: HubSearch,
     /// Router state: config document, apply manager and command runner.
     pub network: NetworkContext,
     /// Virtualization state: guest document, catalog and lifecycle lock.
@@ -81,6 +84,7 @@ impl AppState {
         let (telemetry, _) = broadcast::channel(TELEMETRY_BACKLOG);
         let (latest, _) = watch::channel(None);
         let docker = DockerClient::new(config.docker_socket.clone(), DOCKER_TIMEOUT_S);
+        let hub = HubSearch::new();
         let notify = Arc::new(NotificationCenter::new(
             std::path::PathBuf::from(&config.notify_path),
             Arc::new(SystemRunner::new(Duration::from_secs(15))),
@@ -159,6 +163,7 @@ impl AppState {
             latest,
             config,
             docker,
+            hub,
             network,
             virt,
             auth,

@@ -17,10 +17,13 @@ use serde::{Deserialize, Serialize};
 use tokio::io::AsyncWriteExt;
 
 use crate::containers::docker::{ContainerAction, ExecSession};
-use crate::containers::model::{Container, ExecClientMessage, ExecServerMessage};
+use crate::containers::model::{Container, ExecClientMessage, ExecServerMessage, StackInfo};
 use crate::containers::{host, store};
 use crate::error::ApiError;
 use crate::state::AppState;
+
+/// How much compose output is echoed back to the browser.
+const MAX_OUTPUT: usize = 4000;
 
 /// Server-side keepalive, matching the telemetry socket.
 const HEARTBEAT: Duration = Duration::from_secs(30);
@@ -76,6 +79,70 @@ pub async fn remove(
 ) -> Result<Json<ActionResult>, ApiError> {
     state.docker.remove(&id).await?;
     Ok(Json(ActionResult { ok: true }))
+}
+
+// ---------------------------------------------------------------------------
+// Operator-authored stacks
+// ---------------------------------------------------------------------------
+
+#[derive(Serialize)]
+pub struct StackResult {
+    pub ok: bool,
+    /// Trimmed compose output, useful when an image pull takes a while.
+    pub output: String,
+}
+
+#[derive(Deserialize)]
+pub struct CreateStackRequest {
+    pub name: String,
+    pub compose: String,
+}
+
+/// Every stack on disk with its compose text. Container status is derived on the
+/// client from the containers list (each container carries its `stack`).
+pub async fn list_stacks(
+    State(state): State<AppState>,
+) -> Result<Json<Vec<StackInfo>>, ApiError> {
+    let config = state.config.clone();
+    let stacks = tokio::task::spawn_blocking(move || store::stack_infos(&config))
+        .await
+        .map_err(|err| ApiError::internal(format!("stack task failed: {err}")))?;
+    Ok(Json(stacks))
+}
+
+pub async fn create_stack(
+    State(state): State<AppState>,
+    Json(request): Json<CreateStackRequest>,
+) -> Result<Json<StackResult>, ApiError> {
+    let output = store::deploy_stack(&state.config, &request.name, &request.compose).await?;
+    Ok(Json(StackResult {
+        ok: true,
+        output: trim(&output),
+    }))
+}
+
+pub async fn delete_stack(
+    State(state): State<AppState>,
+    Path(name): Path<String>,
+) -> Result<Json<StackResult>, ApiError> {
+    let output = store::remove_stack(&state.config, &name).await?;
+    Ok(Json(StackResult {
+        ok: true,
+        output: trim(&output),
+    }))
+}
+
+/// Bound the compose output echoed to the browser, cutting on a char boundary.
+fn trim(output: &str) -> String {
+    let trimmed = output.trim();
+    if trimmed.len() <= MAX_OUTPUT {
+        return trimmed.to_string();
+    }
+    let mut start = trimmed.len() - MAX_OUTPUT;
+    while start < trimmed.len() && !trimmed.is_char_boundary(start) {
+        start += 1;
+    }
+    trimmed[start..].to_string()
 }
 
 // ---------------------------------------------------------------------------

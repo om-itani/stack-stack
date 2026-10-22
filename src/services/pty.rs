@@ -92,7 +92,7 @@ impl HostShell {
                 let argv0 = std::ffi::CString::new(shell_name).unwrap();
                 let argv: [*const libc::c_char; 3] = [
                     argv0.as_ptr(),
-                    b"-l\0".as_ptr().cast(),
+                    c"-l".as_ptr(),
                     std::ptr::null(),
                 ];
                 libc::execvp(program.as_ptr(), argv.as_ptr());

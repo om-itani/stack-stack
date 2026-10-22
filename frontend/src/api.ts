@@ -26,8 +26,31 @@ export interface Container {
   ports: ContainerPort[];
   source: ContainerSource;
   app_id: string | null;
+  /** Compose project this container belongs to, when Docker reports one. */
+  stack: string | null;
   web_urls: string[];
 }
+
+/** An operator-authored compose stack and the exact YAML on disk. */
+export interface StackInfo {
+  name: string;
+  compose: string;
+}
+
+export interface StackResult {
+  ok: boolean;
+  output: string;
+}
+
+export const stacksApi = {
+  list: () => request<StackInfo[]>("/api/containers/stacks"),
+  create: (name: string, compose: string) =>
+    jsonRequest<StackResult>("/api/containers/stacks", "POST", { name, compose }),
+  remove: (name: string) =>
+    request<StackResult>(`/api/containers/stacks/${encodeURIComponent(name)}`, {
+      method: "DELETE",
+    }),
+};
 
 export interface AppPort {
   container: number;
@@ -1186,6 +1209,20 @@ export const api = {
     request<OpResult>(`/api/apps/${encodeURIComponent(id)}/install`, { method: "POST" }),
   uninstall: (id: string) =>
     request<OpResult>(`/api/apps/${encodeURIComponent(id)}`, { method: "DELETE" }),
+};
+
+/** A Docker Hub repository search result. */
+export interface HubRepo {
+  name: string;
+  description: string;
+  star_count: number;
+  pull_count: number;
+  is_official: boolean;
+}
+
+export const hubApi = {
+  search: (query: string) =>
+    request<HubRepo[]>(`/api/apps/hub-search?q=${encodeURIComponent(query)}`),
 };
 
 /** WebSocket URL with the current page's scheme (http -> ws, https -> wss). */

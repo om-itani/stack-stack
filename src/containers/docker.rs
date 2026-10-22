@@ -32,6 +32,10 @@ use crate::error::ApiError;
 /// Docker label that marks a container as belonging to an app-store template.
 pub const APP_LABEL: &str = "stack-stack.app";
 
+/// Docker Compose's own project label. Present on every container raised by
+/// `docker compose`, which is how a stack's containers are identified.
+pub const COMPOSE_PROJECT_LABEL: &str = "com.docker.compose.project";
+
 /// Grace period before `stop`/`restart` escalates to SIGKILL.
 const STOP_GRACE_S: i32 = 10;
 
@@ -307,6 +311,11 @@ fn summary_to_container(
     } else {
         ContainerSource::Manual
     };
+    let stack = labels
+        .get(COMPOSE_PROJECT_LABEL)
+        .map(|project| project.trim())
+        .filter(|project| !project.is_empty())
+        .map(str::to_string);
 
     let app_web_port = app_id
         .as_deref()
@@ -325,6 +334,7 @@ fn summary_to_container(
         ports,
         source,
         app_id,
+        stack,
         web_urls,
     }
 }

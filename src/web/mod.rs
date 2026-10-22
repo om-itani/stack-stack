@@ -54,7 +54,18 @@ pub fn router(state: AppState) -> Router {
         .route("/api/containers/{id}", delete(containers::remove))
         .route("/api/containers/{id}/logs/ws", get(containers::logs_ws))
         .route("/api/containers/{id}/exec/ws", get(containers::exec_ws))
+        // Static `stacks` wins over the `{id}` parameter route above in matchit,
+        // so both can coexist.
+        .route(
+            "/api/containers/stacks",
+            get(containers::list_stacks).post(containers::create_stack),
+        )
+        .route(
+            "/api/containers/stacks/{name}",
+            delete(containers::delete_stack),
+        )
         .route("/api/apps/catalog", get(apps::catalog))
+        .route("/api/apps/hub-search", get(apps::hub_search))
         .route("/api/apps/{app}/install", post(apps::install))
         .route("/api/apps/{app}", delete(apps::remove))
         .route(
@@ -241,4 +252,19 @@ async fn health(State(state): State<AppState>) -> Json<Health> {
 /// deep-cloning the snapshot: `Arc<Snapshot>` serialises transparently.
 async fn system_snapshot(State(state): State<AppState>) -> Json<Option<Arc<Snapshot>>> {
     Json(state.latest_snapshot())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::Config;
+
+    /// Building the router registers every path with `matchit`, which panics on
+    /// a conflicting route (e.g. a static segment colliding with a parameter at
+    /// the same position). This test fails loudly if that ever happens, instead
+    /// of the process aborting on boot.
+    #[test]
+    fn router_registers_all_routes_without_conflict() {
+        let _router = router(AppState::new(Config::default()));
+    }
 }

@@ -16,6 +16,10 @@ pub const DEFAULT_SAMPLE_INTERVAL_MS: u64 = 1000;
 pub const DEFAULT_DOCKER_SOCKET: &str = "/var/run/docker.sock";
 pub const DEFAULT_APPS_DIR: &str = "/etc/stack-stack/apps";
 pub const DEFAULT_CATALOG_PATH: &str = "/etc/stack-stack/catalog.json";
+/// Operator-authored compose stacks, one directory per stack name. Kept under
+/// `/var/lib` (not `/etc`) because these are mutable runtime deployments, like
+/// guests and images, not configuration documents.
+pub const DEFAULT_STACKS_DIR: &str = "/var/lib/stack-stack/stacks";
 pub const DEFAULT_COMPOSE_TIMEOUT_S: u64 = 300;
 pub const DEFAULT_NETWORK_PATH: &str = "/etc/stack-stack/network.json";
 pub const DEFAULT_VIRT_PATH: &str = "/etc/stack-stack/virtualization.json";
@@ -74,6 +78,8 @@ pub struct Config {
     pub apps_dir: String,
     /// Optional catalog override merged over the embedded seed catalog.
     pub catalog_path: String,
+    /// Where operator-authored compose stacks live, one directory per stack.
+    pub stacks_dir: String,
     /// Hard limit on a single `docker compose` invocation (pull + up can be slow).
     pub compose_timeout_s: u64,
     /// Router/network configuration document (interfaces, firewall, DNS, …).
@@ -174,6 +180,7 @@ impl Default for Config {
             docker_socket: DEFAULT_DOCKER_SOCKET.to_string(),
             apps_dir: DEFAULT_APPS_DIR.to_string(),
             catalog_path: DEFAULT_CATALOG_PATH.to_string(),
+            stacks_dir: DEFAULT_STACKS_DIR.to_string(),
             compose_timeout_s: DEFAULT_COMPOSE_TIMEOUT_S,
             network_path: DEFAULT_NETWORK_PATH.to_string(),
             virt_path: DEFAULT_VIRT_PATH.to_string(),

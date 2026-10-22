@@ -293,6 +293,8 @@ create_directories() {
   install -d -m 0755 "${STATE_DIR}"
   install -d -m 0750 "${STATE_DIR}/guests"
   install -d -m 0750 "${STATE_DIR}/images"
+  # Operator-authored compose stacks (see the "Create Stack" UI).
+  install -d -m 0750 "${STATE_DIR}/stacks"
   install -d -m 0755 "${BACKUP_DIR}"
   # The systemd unit references /run/libvirt; create it now so the first deploy
   # works even before libvirtd has ever run (it is /run, so tmpfs-recreated).

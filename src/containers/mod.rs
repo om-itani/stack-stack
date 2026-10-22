@@ -6,5 +6,6 @@
 
 pub mod docker;
 pub mod host;
+pub mod hub;
 pub mod model;
 pub mod store;
