@@ -38,7 +38,7 @@ export function buildSmartPanel(): HTMLElement {
   let busy = false;
   let status = "";
 
-  const statusLine = el("span", { class: "text-[10px] text-slate-500" });
+  const statusLine = el("span", { class: "text-[10px] text-neutral-500" });
   const refresh = button("refresh", "", () => void load());
   const add = button("add device", "", () => {
     if (!state) return;
@@ -132,9 +132,9 @@ export function buildSmartPanel(): HTMLElement {
       body.append(
         el("div", { class: "flex flex-col gap-0.5" }, [
           el("div", { class: "flex items-baseline gap-2" }, [
-            el("span", { class: "text-slate-300", text: device.device }),
+            el("span", { class: "text-neutral-300", text: device.device }),
             el("span", {
-              class: device.running ? "text-amber-400" : "text-slate-500",
+              class: device.running ? "text-amber-400" : "text-neutral-500",
               text: running,
             }),
             el("span", { class: "ml-auto" }),
@@ -142,7 +142,7 @@ export function buildSmartPanel(): HTMLElement {
             button("long", "ml-1 text-[10px]", () => void start(device.device, "long")),
           ]),
           el("div", {
-            class: "text-slate-500",
+            class: "text-neutral-500",
             text: `last: ${device.last_result ?? "unknown"}${device.last_percent ? ` (${device.last_percent} life)` : ""}`,
           }),
         ]),
@@ -154,9 +154,9 @@ export function buildSmartPanel(): HTMLElement {
       table.append(
         el("thead", {}, [
           el("tr", {}, [
-            el("th", { class: "px-1 py-0.5 text-left text-[10px] uppercase text-slate-600", text: "device" }),
-            el("th", { class: "px-1 py-0.5 text-left text-[10px] uppercase text-slate-600", text: "short" }),
-            el("th", { class: "px-1 py-0.5 text-left text-[10px] uppercase text-slate-600", text: "long" }),
+            el("th", { class: "px-1 py-0.5 text-left text-[10px] uppercase text-neutral-600", text: "device" }),
+            el("th", { class: "px-1 py-0.5 text-left text-[10px] uppercase text-neutral-600", text: "short" }),
+            el("th", { class: "px-1 py-0.5 text-left text-[10px] uppercase text-neutral-600", text: "long" }),
             el("th", { class: "px-1 py-0.5" }),
           ]),
         ]),
@@ -164,7 +164,7 @@ export function buildSmartPanel(): HTMLElement {
       const tbody = el("tbody");
       state.config.devices.forEach((plan, index) => {
         const weekdaySelect = el("select", {
-          class: "border border-[#1e2733] bg-[#0b0f14] px-1 py-0.5 text-slate-200",
+          class: "border border-white/5 bg-black/40 px-1 py-0.5 text-neutral-200",
         }) as HTMLSelectElement;
         weekdaySelect.append(
           el("option", { value: "", text: "off" }),
@@ -180,7 +180,7 @@ export function buildSmartPanel(): HTMLElement {
         }, { class: "w-10" });
 
         tbody.append(
-          el("tr", { class: "border-b border-[#161d27]" }, [
+          el("tr", { class: "border-b border-white/5" }, [
             el("td", { class: "px-1 py-0.5", text: plan.device }),
             el("td", { class: "px-1 py-0.5" }, [weekdaySelect]),
             el("td", { class: "px-1 py-0.5" }, [dayInput]),
@@ -194,11 +194,11 @@ export function buildSmartPanel(): HTMLElement {
         );
       });
       table.append(tbody);
-      body.append(el("div", { class: "text-[10px] uppercase tracking-wide text-slate-600", text: "schedule (weekly short / monthly long, day of month)" }), table);
+      body.append(el("div", { class: "text-[10px] uppercase tracking-wide text-neutral-600", text: "schedule (weekly short / monthly long, day of month)" }), table);
     }
 
     if (state.history.length > 0) {
-      const history = el("div", { class: "flex flex-col gap-0.5 text-slate-500" });
+      const history = el("div", { class: "flex flex-col gap-0.5 text-neutral-500" });
       for (const record of state.history.slice(0, 5)) {
         history.append(
           el("div", {

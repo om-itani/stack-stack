@@ -82,12 +82,12 @@ async function boot(): Promise<void> {
 function gateCard(title: string, subtitle: string): { card: HTMLElement; body: HTMLElement } {
   const card = el("div", {
     class:
-      "mx-auto mt-[12vh] w-full max-w-md border border-[#1e2733] bg-[#0d131b] p-6 shadow-lg",
+      "mx-auto mt-[12vh] w-full max-w-md border border-white/5 bg-[#0e0e0e] p-6 shadow-lg",
   });
   card.append(
     el("div", { class: "mb-1 text-lg font-bold tracking-[0.2em] text-emerald-400", text: "STACK-STACK" }),
-    el("div", { class: "mb-4 text-sm text-slate-300", text: title }),
-    el("div", { class: "mb-4 text-xs text-slate-500", text: subtitle }),
+    el("div", { class: "mb-4 text-sm text-neutral-300", text: title }),
+    el("div", { class: "mb-4 text-xs text-neutral-500", text: subtitle }),
   );
   const body = el("div", { class: "flex flex-col gap-3" });
   card.append(body);
@@ -188,6 +188,11 @@ function renderGateMessage(title: string, detail: string): void {
 // Shell
 // ---------------------------------------------------------------------------
 
+/** Top-nav item styling. The active state is a soft press, not a glowing pill. */
+const NAV_IDLE =
+  "shrink-0 rounded-md px-2.5 py-1 text-neutral-400 transition-colors duration-150 hover:bg-white/5 hover:text-neutral-100";
+const NAV_ACTIVE = "shrink-0 rounded-md bg-white/10 px-2.5 py-1 font-medium text-white";
+
 function startShell(): void {
   if (shellStarted) {
     return;
@@ -196,23 +201,22 @@ function startShell(): void {
 
   app.innerHTML = `
 <div class="flex h-screen flex-col">
-  <header class="flex flex-wrap items-center gap-x-4 gap-y-1 border-b border-white/10 bg-slate-900/50 px-4 py-2 backdrop-blur">
-    <span class="font-bold tracking-[0.25em] text-emerald-400">STACK-STACK</span>
-    <span data-ref="host" class="text-slate-300">—</span>
-    <span data-ref="uptime" class="tabular text-slate-500">up —</span>
-    <span data-ref="load" class="tabular text-slate-500">load —</span>
-    <span data-ref="actions" class="ml-auto flex items-center gap-2">
-      <span data-ref="frame" class="tabular text-slate-600"></span>
-      <span data-ref="version" class="text-slate-600"></span>
-      <span data-ref="dot" class="inline-block size-2 rounded-full bg-slate-600"></span>
-      <span data-ref="link" class="text-slate-400">connecting</span>
-      <button data-ref="logout" type="button" class="rounded-lg border border-white/10 bg-white/5 px-2 py-0.5 text-slate-400 transition-all duration-200 hover:border-rose-500/50 hover:text-rose-400">sign out</button>
+  <header class="z-20 flex items-center gap-x-3 border-b border-white/5 bg-[#0e0e0e] px-4 py-2">
+    <span class="shrink-0 text-sm font-semibold tracking-[0.2em] text-white">STACK-STACK</span>
+    <nav data-ref="nav" class="flex min-w-0 flex-1 items-center gap-0.5 overflow-x-auto px-1"></nav>
+    <span data-ref="host" class="text-neutral-300">—</span>
+    <span data-ref="uptime" class="tabular text-neutral-500">up —</span>
+    <span data-ref="load" class="tabular text-neutral-500">load —</span>
+    <span data-ref="actions" class="ml-auto flex shrink-0 items-center gap-3">
+      <span data-ref="clock" class="tabular text-[11px] text-neutral-500"></span>
+      <span data-ref="frame" class="tabular text-neutral-600"></span>
+      <span data-ref="version" class="text-neutral-600"></span>
+      <span data-ref="dot" class="inline-block size-2 rounded-full bg-neutral-600"></span>
+      <span data-ref="link" class="text-neutral-400">connecting</span>
+      <button data-ref="logout" type="button" class="rounded-lg border border-white/10 bg-white/5 px-2 py-0.5 text-neutral-400 transition-all duration-200 hover:border-rose-500/50 hover:text-rose-400">sign out</button>
     </span>
   </header>
-  <div class="flex min-h-0 flex-1">
-    <nav data-ref="nav" class="flex w-40 shrink-0 flex-col overflow-y-auto border-r border-white/10 bg-slate-900/30 p-2 pb-4"></nav>
-    <div data-ref="view" class="min-h-0 flex-1 overflow-auto"></div>
-  </div>
+  <main data-ref="view" class="min-h-0 flex-1 overflow-auto"></main>
 </div>
 `;
 
@@ -231,6 +235,18 @@ function startShell(): void {
   const viewEl = ref<HTMLElement>("view");
   const logoutEl = ref<HTMLButtonElement>("logout");
   const actionsEl = ref<HTMLElement>("actions");
+
+  // A wall clock in the global header, the way an OS menu bar has one.
+  const clockEl = ref<HTMLElement>("clock");
+  const tickClock = (): void => {
+    clockEl.textContent = new Date().toLocaleTimeString([], {
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+    });
+  };
+  tickClock();
+  window.setInterval(tickClock, 1000);
 
   bell = createBell();
   actionsEl.insertBefore(bell.root, logoutEl);
@@ -263,26 +279,23 @@ function startShell(): void {
   const navButtons = new Map<string, HTMLButtonElement>();
   let activeId = "";
 
-  // Grouped navigation: twelve flat entries stopped fitting.
+  // Horizontal navigation: groups are separated by a hairline, the way Netflix
+  // separates "TV Shows | Movies" rather than labelling the groups.
   const groups = [...new Set(pages.map((page) => page.group))];
-  for (const group of groups) {
-    navEl.append(
-      el("div", {
-        class: "px-2 pt-2 pb-0.5 text-[9px] uppercase tracking-wider text-slate-600",
-        text: group,
-      }),
-    );
+  groups.forEach((group, index) => {
+    if (index > 0) {
+      navEl.append(el("span", { class: "mx-1 h-4 w-px shrink-0 bg-white/10" }));
+    }
     for (const def of pages.filter((page) => page.group === group)) {
       const navButton = document.createElement("button");
       navButton.type = "button";
       navButton.textContent = def.label;
-      navButton.className =
-        "rounded-lg px-2 py-1 text-left text-slate-400 transition-all duration-200 hover:bg-white/5 hover:text-slate-200";
+      navButton.className = NAV_IDLE;
       navButton.addEventListener("click", () => show(def.id));
       navEl.append(navButton);
       navButtons.set(def.id, navButton);
     }
-  }
+  });
 
   function show(id: string, updateHash = true): void {
     const resolved = pages.some((page) => page.id === id) ? id : pages[0].id;
@@ -314,9 +327,7 @@ function startShell(): void {
 
       const navButton = navButtons.get(def.id);
       if (navButton) {
-        navButton.className = isActive
-          ? "rounded-lg bg-white/10 px-2 py-1 text-left font-medium text-emerald-400 shadow-[inset_2px_0_0_0_rgb(16_185_129)]"
-          : "rounded-lg px-2 py-1 text-left text-slate-400 transition-all duration-200 hover:bg-white/5 hover:text-slate-200";
+        navButton.className = isActive ? NAV_ACTIVE : NAV_IDLE;
       }
     }
 

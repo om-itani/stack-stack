@@ -369,6 +369,17 @@ install_unit() {
   if [[ "${unit_changed}" -eq 1 ]]; then
     systemctl enable "${SERVICE_NAME}" >/dev/null 2>&1 || warn_file "could not enable ${SERVICE_NAME}"
   fi
+  # Verify the installed unit. This is exactly what catches a key systemd will
+  # silently ignore because it sits in the wrong section (e.g. StartLimit* under
+  # [Service]), so it fails at deploy time instead of flooding the journal.
+  if command -v systemd-analyze >/dev/null 2>&1; then
+    local verify
+    verify="$(systemd-analyze verify "${UNIT_FILE}" 2>&1 || true)"
+    if [[ -n "${verify}" ]]; then
+      warn_file "systemd-analyze reported problems with ${UNIT_FILE}:"
+      printf '%s\n' "${verify}" >&2
+    fi
+  fi
 }
 
 restart_service() {

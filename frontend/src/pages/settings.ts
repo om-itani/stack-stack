@@ -37,7 +37,7 @@ function passwordCard(): HTMLElement {
   const { root: card, body: cardBody } = panel("admin password");
   cardBody.className = "flex flex-col gap-2 px-3 py-2";
 
-  const status = el("div", { class: "text-[11px] text-slate-500" });
+  const status = el("div", { class: "text-[11px] text-neutral-500" });
   let current = "";
   let next = "";
   let confirm = "";
@@ -80,7 +80,7 @@ function passwordCard(): HTMLElement {
 
   cardBody.append(
     el("div", {
-      class: "text-[11px] text-slate-500",
+      class: "text-[11px] text-neutral-500",
       text: "Changing the password signs out every other session, including other tabs.",
     }),
     field("current password", currentInput),
@@ -101,8 +101,8 @@ function ddnsCard(): HTMLElement {
   cardBody.className = "flex flex-col gap-2 px-3 py-2 text-[11px]";
 
   let state: DdnsState | null = null;
-  const status = el("div", { class: "text-slate-500" });
-  const info = el("div", { class: "flex flex-col gap-0.5 text-slate-500" });
+  const status = el("div", { class: "text-neutral-500" });
+  const info = el("div", { class: "flex flex-col gap-0.5 text-neutral-500" });
 
   const load = async (): Promise<void> => {
     try {
@@ -225,7 +225,7 @@ function notificationsCard(): HTMLElement {
   const { root: card, body: cardBody } = panel("notifications");
   cardBody.className = "flex flex-col gap-2 px-3 py-2 text-[11px]";
 
-  const status = el("div", { class: "text-slate-500" });
+  const status = el("div", { class: "text-neutral-500" });
   const load = async (): Promise<void> => {
     try {
       const feed = await notifyApi.feed();

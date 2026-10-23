@@ -35,7 +35,7 @@ const STATE_STYLES: Record<string, string> = {
   paused: "text-amber-400",
   restarting: "text-amber-400",
   created: "text-sky-400",
-  exited: "text-slate-500",
+  exited: "text-neutral-500",
   dead: "text-rose-500",
   removing: "text-rose-500",
   stopping: "text-amber-400",
@@ -65,14 +65,14 @@ export function createContainersPage(): PageHandle {
   const bar = document.createElement("div");
   bar.className = "flex flex-wrap items-center gap-3";
   const heading = document.createElement("span");
-  heading.className = "text-slate-300";
+  heading.className = "text-neutral-300";
   heading.textContent = "containers";
   const count = document.createElement("span");
-  count.className = "tabular text-[11px] text-slate-600";
+  count.className = "tabular text-[11px] text-neutral-600";
   const reload = button("refresh");
   const createStack = button("create stack", "text-emerald-400 hover:border-emerald-500");
   const status = document.createElement("span");
-  status.className = "tabular truncate text-[11px] text-slate-500";
+  status.className = "tabular truncate text-[11px] text-neutral-500";
   bar.append(heading, count, createStack, reload, status);
 
   const stacksHost = document.createElement("div");
@@ -93,7 +93,7 @@ export function createContainersPage(): PageHandle {
         ? "tabular truncate text-[11px] text-rose-400"
         : tone === "ok"
           ? "tabular truncate text-[11px] text-emerald-400"
-          : "tabular truncate text-[11px] text-slate-500";
+          : "tabular truncate text-[11px] text-neutral-500";
   }
 
   function errorText(err: unknown): string {
@@ -191,15 +191,15 @@ export function createContainersPage(): PageHandle {
 
       const head = document.createElement("div");
       head.className =
-        "flex flex-wrap items-baseline gap-3 border-b border-[#1e2733] px-3 py-1.5";
+        "flex flex-wrap items-baseline gap-3 border-b border-white/5 px-3 py-1.5";
       const title = document.createElement("span");
-      title.className = "font-semibold text-slate-200";
+      title.className = "font-semibold text-neutral-200";
       title.textContent = stack.name;
       // A stack on disk with no containers is shown, not hidden: the operator
       // needs to see that it exists and is down, and be able to bring it up.
       const running = members.length > 0;
       const kind = document.createElement("span");
-      kind.className = `tabular text-[10px] ${running ? "text-slate-600" : "text-amber-500"}`;
+      kind.className = `tabular text-[10px] ${running ? "text-neutral-600" : "text-amber-500"}`;
       kind.textContent = running
         ? `stack · ${members.length} container${members.length === 1 ? "" : "s"}`
         : "stack · not running";
@@ -253,7 +253,7 @@ export function createContainersPage(): PageHandle {
       } else {
         for (const member of members) {
           const dot = el("span", {
-            class: `uppercase ${STATE_STYLES[member.state] ?? "text-slate-500"}`,
+            class: `uppercase ${STATE_STYLES[member.state] ?? "text-neutral-500"}`,
             text: `${member.name}: ${member.state}`,
           });
           body.append(dot);
@@ -270,19 +270,19 @@ export function createContainersPage(): PageHandle {
     el.className = "panel flex flex-col";
 
     const head = document.createElement("div");
-    head.className = "flex items-baseline justify-between gap-3 border-b border-[#1e2733] px-3 py-1.5";
+    head.className = "flex items-baseline justify-between gap-3 border-b border-white/5 px-3 py-1.5";
     const name = document.createElement("span");
-    name.className = "truncate font-semibold text-slate-200";
+    name.className = "truncate font-semibold text-neutral-200";
     name.textContent = container.name || container.id.slice(0, 12);
     head.append(name, badge(container.state, STATE_TONES[container.state] ?? "muted"));
 
     const meta = document.createElement("div");
-    meta.className = "tabular flex flex-wrap items-baseline gap-x-3 px-3 py-1 text-[10px] text-slate-600";
+    meta.className = "tabular flex flex-wrap items-baseline gap-x-3 px-3 py-1 text-[10px] text-neutral-600";
     const image = document.createElement("span");
     image.className = "truncate";
     image.textContent = container.image || "—";
     const source = document.createElement("span");
-    source.className = container.source === "app-store" ? "text-emerald-600" : "text-slate-600";
+    source.className = container.source === "app-store" ? "text-emerald-600" : "text-neutral-600";
     source.textContent = container.source === "app-store" ? `app:${container.app_id ?? "?"}` : "manual";
     meta.append(image, source);
     if (container.stack) {
@@ -293,7 +293,7 @@ export function createContainersPage(): PageHandle {
     }
 
     const body = document.createElement("div");
-    body.className = "flex-1 px-3 py-2 text-[11px] text-slate-500";
+    body.className = "flex-1 px-3 py-2 text-[11px] text-neutral-500";
     const statusLine = document.createElement("div");
     statusLine.className = "truncate";
     statusLine.textContent = container.status || container.id.slice(0, 12);
@@ -301,7 +301,7 @@ export function createContainersPage(): PageHandle {
 
     if (container.ports.length > 0) {
       const ports = document.createElement("div");
-      ports.className = "tabular mt-1 flex flex-wrap gap-x-3 text-[10px] text-slate-600";
+      ports.className = "tabular mt-1 flex flex-wrap gap-x-3 text-[10px] text-neutral-600";
       for (const port of container.ports) {
         const span = document.createElement("span");
         span.textContent = port.public
@@ -326,7 +326,7 @@ export function createContainersPage(): PageHandle {
     }
 
     const actions = document.createElement("div");
-    actions.className = "flex flex-wrap gap-2 border-t border-[#161d27] px-3 py-2";
+    actions.className = "flex flex-wrap gap-2 border-t border-white/5 px-3 py-2";
 
     const running = container.state === "running";
     const startBtn = button("start");
@@ -437,7 +437,7 @@ function openStackEditor(deps: StackEditorDeps, prefill: StackEditorPrefill = {}
   });
 
   const heading = el("div", {
-    class: "text-slate-300",
+    class: "text-neutral-300",
     text: prefill.name ? `edit stack · ${prefill.name}` : "create stack",
   });
 
@@ -454,14 +454,14 @@ function openStackEditor(deps: StackEditorDeps, prefill: StackEditorPrefill = {}
 
   const area = document.createElement("textarea");
   area.className =
-    "h-72 w-full resize-y border border-[#1e2733] bg-[#0b0f14] p-2 font-mono text-[11px] text-slate-300 outline-none focus:border-slate-500";
+    "h-72 w-full resize-y border border-white/5 bg-black/40 p-2 font-mono text-[11px] text-neutral-300 outline-none focus:border-neutral-500";
   area.spellcheck = false;
   area.value = compose;
   area.addEventListener("input", () => {
     compose = area.value;
   });
 
-  const feedback = el("div", { class: "tabular text-[11px] text-slate-500" });
+  const feedback = el("div", { class: "tabular text-[11px] text-neutral-500" });
   feedback.textContent = "runs docker compose -p <name> up -d";
 
   const deployBtn = button("deploy", "text-emerald-400 hover:border-emerald-500");
@@ -495,7 +495,7 @@ function openStackEditor(deps: StackEditorDeps, prefill: StackEditorPrefill = {}
     }
     deps.setBusy(true);
     deployBtn.disabled = true;
-    feedback.className = "tabular text-[11px] text-slate-500";
+    feedback.className = "tabular text-[11px] text-neutral-500";
     feedback.textContent = "deploying…";
     try {
       const result = await stacksApi.create(name, compose);
@@ -517,7 +517,7 @@ function openStackEditor(deps: StackEditorDeps, prefill: StackEditorPrefill = {}
   });
 
   const hint = el("div", {
-    class: "text-[10px] text-slate-600",
+    class: "text-[10px] text-neutral-600",
     text: "generated files include hardened defaults (no-new-privileges, 10m x 3 log rotation); pasted YAML is used verbatim",
   });
   modal.append(heading, field("name", nameInput), field("compose (yaml)", area), hint, actions);

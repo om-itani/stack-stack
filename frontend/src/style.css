@@ -1,29 +1,32 @@
 @import "tailwindcss";
 
 /*
- * Soft dark theme.
+ * Cinematic dark theme.
  *
- * One set of tokens drives both this file and the Tailwind utilities the pages
- * use inline, so the "premium dark" look is adjusted in one place. Layout
- * (sidebar, grids, page structure) is untouched.
+ * Neutral greys only: no blue or purple tint in the surfaces. Cards are flat
+ * solid surfaces with a hairline border and a tight shadow rather than
+ * gradients and glows, so hierarchy comes from spacing and contrast.
  */
 :root {
   color-scheme: dark;
 
-  --bg: #020617; /* slate-950 */
-  --surface: #0f172a; /* slate-900 */
-  --line: rgb(255 255 255 / 0.07);
-  --line-strong: rgb(255 255 255 / 0.18);
+  --bg: #0a0a0a; /* near-black canvas */
+  --surface: #161616; /* cards */
+  --surface-hover: #1f1f1f; /* hover wash */
+  --line: rgb(255 255 255 / 0.05); /* hairline */
+  --line-strong: rgb(255 255 255 / 0.12);
 
-  --text: #e2e8f0; /* slate-200 */
-  --text-dim: #94a3b8; /* slate-400 */
+  --text: #fafafa;
+  --text-dim: #888888;
 
-  --accent: #10b981; /* emerald-500 */
-  --accent-blue: #3b82f6; /* blue-500 */
+  --accent: #10b981;
 
-  --radius-card: 12px;
+  --radius-card: 10px;
   --radius-control: 8px;
-  --shadow-card: 0 4px 20px -2px rgb(0 0 0 / 0.5);
+  --shadow-card: 0 1px 2px rgb(0 0 0 / 0.6);
+
+  /* Ease-out, shared by every transition so motion feels consistent. */
+  --ease: cubic-bezier(0.25, 1, 0.5, 1);
 
   --ui-font: Inter, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
   --mono-font: "JetBrains Mono", "Fira Code", ui-monospace, SFMono-Regular, Menlo, Consolas,
@@ -37,14 +40,11 @@ body {
 
 body {
   margin: 0;
-  /* A very faint top glow keeps the flat slate from looking dead. */
-  background:
-    radial-gradient(1100px 520px at 50% -12%, rgb(16 185 129 / 0.07), transparent 62%),
-    var(--bg);
+  background: var(--bg);
   color: var(--text);
   font-family: var(--ui-font);
   font-size: 13px;
-  line-height: 1.45;
+  line-height: 1.5;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
@@ -55,21 +55,28 @@ body {
   font-variant-numeric: tabular-nums;
 }
 
+/* A headline figure: stark white, large, tight tracking. */
+.stat {
+  color: #ffffff;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
 /* ------------------------------------------------------------------------- */
 /* Surfaces                                                                  */
 /* ------------------------------------------------------------------------- */
 
 .panel {
-  background: linear-gradient(180deg, rgb(255 255 255 / 0.022), transparent 42%), var(--surface);
+  background: var(--surface);
   border: 1px solid var(--line);
   border-radius: var(--radius-card);
   box-shadow: var(--shadow-card);
   transition:
-    border-color 200ms ease-in-out,
-    box-shadow 200ms ease-in-out,
-    transform 200ms ease-in-out;
+    border-color 160ms var(--ease),
+    background-color 160ms var(--ease);
 }
 
+/* No lift: only the border and surface brighten, the way a real app behaves. */
 .panel:hover {
   border-color: var(--line-strong);
 }
@@ -90,12 +97,9 @@ select,
 textarea {
   border-radius: var(--radius-control);
   transition:
-    background-color 200ms ease-in-out,
-    border-color 200ms ease-in-out,
-    color 200ms ease-in-out,
-    filter 200ms ease-in-out,
-    box-shadow 200ms ease-in-out,
-    transform 200ms ease-in-out;
+    background-color 160ms var(--ease),
+    border-color 160ms var(--ease),
+    color 160ms var(--ease);
 }
 
 button:not(:disabled) {
@@ -103,15 +107,11 @@ button:not(:disabled) {
 }
 
 button:not(:disabled):hover {
-  filter: brightness(1.12);
-}
-
-button:not(:disabled):active {
-  transform: translateY(0.5px) scale(0.995);
+  background-color: rgb(255 255 255 / 0.06);
 }
 
 :focus-visible {
-  outline: 2px solid rgb(16 185 129 / 0.55);
+  outline: 2px solid rgb(16 185 129 / 0.5);
   outline-offset: 1px;
 }
 
@@ -134,35 +134,36 @@ button:not(:disabled):active {
 .badge-ok {
   background: rgb(16 185 129 / 0.12);
   color: #34d399;
-  border-color: rgb(16 185 129 / 0.25);
+  border-color: rgb(16 185 129 / 0.22);
 }
 
 .badge-warn {
   background: rgb(245 158 11 / 0.12);
   color: #fbbf24;
-  border-color: rgb(245 158 11 / 0.25);
+  border-color: rgb(245 158 11 / 0.22);
 }
 
 .badge-err {
   background: rgb(239 68 68 / 0.12);
   color: #f87171;
-  border-color: rgb(239 68 68 / 0.25);
+  border-color: rgb(239 68 68 / 0.22);
 }
 
 .badge-muted {
-  background: rgb(148 163 184 / 0.1);
-  color: #94a3b8;
-  border-color: rgb(148 163 184 / 0.2);
+  background: rgb(255 255 255 / 0.06);
+  color: var(--text-dim);
+  border-color: rgb(255 255 255 / 0.08);
 }
 
 /* ------------------------------------------------------------------------- */
 /* Motion                                                                    */
 /* ------------------------------------------------------------------------- */
 
+/* Crossfade with a short rise; no bounce. */
 @keyframes page-in {
   from {
     opacity: 0;
-    transform: translateY(6px);
+    transform: translateY(4px);
   }
   to {
     opacity: 1;
@@ -171,7 +172,7 @@ button:not(:disabled):active {
 }
 
 .page-enter {
-  animation: page-in 260ms cubic-bezier(0.22, 1, 0.36, 1);
+  animation: page-in 240ms var(--ease);
 }
 
 @keyframes shimmer {
@@ -187,28 +188,12 @@ button:not(:disabled):active {
   background: linear-gradient(
     90deg,
     rgb(255 255 255 / 0.04) 25%,
-    rgb(255 255 255 / 0.09) 37%,
+    rgb(255 255 255 / 0.08) 37%,
     rgb(255 255 255 / 0.04) 63%
   );
   background-size: 200% 100%;
   animation: shimmer 1.4s linear infinite;
   border-radius: var(--radius-control);
-}
-
-/* Paginated-list fade used by the live tables. */
-@keyframes row-in {
-  from {
-    opacity: 0;
-    transform: translateY(3px);
-  }
-  to {
-    opacity: 1;
-    transform: none;
-  }
-}
-
-.row-enter {
-  animation: row-in 180ms ease-out;
 }
 
 @media (prefers-reduced-motion: reduce) {

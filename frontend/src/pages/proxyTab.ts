@@ -41,7 +41,7 @@ export function buildProxyTab(): HTMLElement {
   let report: StepResult[] | null = null;
   let loaded = false;
 
-  const statusLine = el("span", { class: "tabular text-[11px] text-slate-500" });
+  const statusLine = el("span", { class: "tabular text-[11px] text-neutral-500" });
   const runningBadge = el("span", { class: "tabular text-[10px]" });
   const body = el("div", { class: "flex flex-col gap-2" });
 
@@ -55,7 +55,7 @@ export function buildProxyTab(): HTMLElement {
   });
 
   const header = el("div", { class: "flex flex-wrap items-center gap-2" }, [
-    el("span", { class: "text-slate-300", text: "reverse proxy" }),
+    el("span", { class: "text-neutral-300", text: "reverse proxy" }),
     runningBadge,
     refreshButton,
     preflightButton,
@@ -159,7 +159,7 @@ export function buildProxyTab(): HTMLElement {
       runningBadge.textContent = state.running ? "on" : "off";
       runningBadge.className = state.running
         ? "tabular text-[10px] text-emerald-400"
-        : "tabular text-[10px] text-slate-500";
+        : "tabular text-[10px] text-neutral-500";
       toggleButton.textContent = state.running ? "stop :80/:443" : "start :80/:443";
       toggleButton.disabled = busy;
     }
@@ -189,7 +189,7 @@ export function buildProxyTab(): HTMLElement {
 
     cardBody.append(
       el("div", {
-        class: "flex flex-wrap gap-x-4 gap-y-1 text-slate-400",
+        class: "flex flex-wrap gap-x-4 gap-y-1 text-neutral-400",
         text: `admin host: ${state!.admin_hostname}   ·   http :${state!.http_port}   ·   https :${state!.https_port}   ·   certs loaded: ${state!.tls_ready ? "yes" : "no"}`,
       }),
     );
@@ -211,7 +211,7 @@ export function buildProxyTab(): HTMLElement {
 
     if (!info?.configured) {
       cardBody.append(
-        el("div", { class: "text-slate-400", text: "No internal CA yet." }),
+        el("div", { class: "text-neutral-400", text: "No internal CA yet." }),
         button("create CA", "", () => void initCa()),
       );
       if (info?.error) {
@@ -222,7 +222,7 @@ export function buildProxyTab(): HTMLElement {
 
     cardBody.append(
       el("div", {
-        class: "text-slate-400",
+        class: "text-neutral-400",
         text: `${info.subject ?? "CA"} · expires ${info.not_after ?? "unknown"} (${info.days_remaining ?? "?"} days)`,
       }),
     );
@@ -235,13 +235,13 @@ export function buildProxyTab(): HTMLElement {
 
     if (ca?.trust.length) {
       const details = document.createElement("details");
-      details.className = "text-slate-400";
+      details.className = "text-neutral-400";
       details.append(el("summary", { text: "trust instructions" }));
       for (const entry of ca.trust) {
         const block = el("div", { class: "mt-1" });
-        block.append(el("div", { class: "text-slate-300", text: entry.os }));
+        block.append(el("div", { class: "text-neutral-300", text: entry.os }));
         for (const line of entry.steps) {
-          block.append(el("div", { class: "pl-3 text-slate-500", text: `• ${line}` }));
+          block.append(el("div", { class: "pl-3 text-neutral-500", text: `• ${line}` }));
         }
         details.append(block);
       }
@@ -294,10 +294,10 @@ export function buildProxyTab(): HTMLElement {
 
     const table = el("table", { class: "w-full text-[11px]" });
     const head = el("tr", {}, [
-      el("th", { class: "px-2 py-1 text-left text-[10px] uppercase text-slate-600", text: "hostname" }),
-      el("th", { class: "px-2 py-1 text-left text-[10px] uppercase text-slate-600", text: "upstream" }),
-      el("th", { class: "px-2 py-1 text-left text-[10px] uppercase text-slate-600", text: "tls" }),
-      el("th", { class: "px-2 py-1 text-left text-[10px] uppercase text-slate-600", text: "cert" }),
+      el("th", { class: "px-2 py-1 text-left text-[10px] uppercase text-neutral-600", text: "hostname" }),
+      el("th", { class: "px-2 py-1 text-left text-[10px] uppercase text-neutral-600", text: "upstream" }),
+      el("th", { class: "px-2 py-1 text-left text-[10px] uppercase text-neutral-600", text: "tls" }),
+      el("th", { class: "px-2 py-1 text-left text-[10px] uppercase text-neutral-600", text: "cert" }),
       el("th", { class: "px-2 py-1" }),
     ]);
     table.append(el("thead", {}, [head]));
@@ -319,11 +319,11 @@ export function buildProxyTab(): HTMLElement {
 
       const openUrl = `${route.tls === "off" ? "http" : "https"}://${route.hostname}`;
       const row = el("tr", {}, [
-        el("td", { class: "px-2 py-1 text-slate-300", text: route.hostname }),
-        el("td", { class: "px-2 py-1 text-slate-500", text: upstream }),
-        el("td", { class: "px-2 py-1 text-slate-500", text: `${route.tls}${route.enabled ? "" : " (off)"}` }),
+        el("td", { class: "px-2 py-1 text-neutral-300", text: route.hostname }),
+        el("td", { class: "px-2 py-1 text-neutral-500", text: upstream }),
+        el("td", { class: "px-2 py-1 text-neutral-500", text: `${route.tls}${route.enabled ? "" : " (off)"}` }),
         el("td", {
-          class: leaf?.needs_renewal ? "px-2 py-1 text-amber-400" : "px-2 py-1 text-slate-500",
+          class: leaf?.needs_renewal ? "px-2 py-1 text-amber-400" : "px-2 py-1 text-neutral-500",
           text: certText,
         }),
         el("td", { class: "px-2 py-1 text-right" }, [

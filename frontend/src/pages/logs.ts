@@ -21,9 +21,9 @@ const LEVEL_CLASS: Record<number, string> = {
   2: "text-rose-400",
   3: "text-rose-400",
   4: "text-amber-400",
-  5: "text-slate-400",
-  6: "text-slate-400",
-  7: "text-slate-600",
+  5: "text-neutral-400",
+  6: "text-neutral-400",
+  7: "text-neutral-600",
 };
 
 function errorText(err: unknown): string {
@@ -49,9 +49,9 @@ export function createLogsPage(): PageHandle {
   let loaded = false;
   let socket: WebSocket | null = null;
 
-  const statusLine = el("span", { class: "tabular text-[11px] text-slate-500" });
+  const statusLine = el("span", { class: "tabular text-[11px] text-neutral-500" });
   const unitSelect = el("select", {
-    class: "border border-[#1e2733] bg-[#0b0f14] px-1.5 py-0.5 text-slate-200 max-w-56",
+    class: "border border-white/5 bg-black/40 px-1.5 py-0.5 text-neutral-200 max-w-56",
   }) as HTMLSelectElement;
   unitSelect.append(el("option", { value: "", text: "all units" }));
   unitSelect.addEventListener("change", () => {
@@ -93,7 +93,7 @@ export function createLogsPage(): PageHandle {
   const refreshButton = button("refresh", "", () => void tail());
 
   const header = el("div", { class: "flex flex-wrap items-end gap-2" }, [
-    el("span", { class: "text-slate-300", text: "logs" }),
+    el("span", { class: "text-neutral-300", text: "logs" }),
     field("unit", unitSelect),
     field("severity", prioritySelect),
     field("lines", linesSelect),
@@ -109,9 +109,9 @@ export function createLogsPage(): PageHandle {
   table.append(
     el("thead", {}, [
       el("tr", {}, [
-        el("th", { class: "px-2 py-1 text-left text-[10px] uppercase text-slate-600", text: "time" }),
-        el("th", { class: "px-2 py-1 text-left text-[10px] uppercase text-slate-600", text: "unit" }),
-        el("th", { class: "px-2 py-1 text-left text-[10px] uppercase text-slate-600", text: "msg" }),
+        el("th", { class: "px-2 py-1 text-left text-[10px] uppercase text-neutral-600", text: "time" }),
+        el("th", { class: "px-2 py-1 text-left text-[10px] uppercase text-neutral-600", text: "unit" }),
+        el("th", { class: "px-2 py-1 text-left text-[10px] uppercase text-neutral-600", text: "msg" }),
       ]),
     ]),
     tableBody,
@@ -178,7 +178,7 @@ export function createLogsPage(): PageHandle {
   function renderTable(): void {
     tableBody.replaceChildren();
     if (!loaded) {
-      tableBody.append(el("tr", {}, [el("td", { class: "px-2 py-2 text-slate-600", text: "loading…" })]));
+      tableBody.append(el("tr", {}, [el("td", { class: "px-2 py-2 text-neutral-600", text: "loading…" })]));
       return;
     }
     const visible = entries.filter((entry) =>
@@ -195,11 +195,11 @@ export function createLogsPage(): PageHandle {
     }
     for (const entry of visible) {
       tableBody.append(
-        el("tr", { class: "border-b border-[#161d27]" }, [
-          el("td", { class: "tabular px-2 py-0.5 whitespace-nowrap text-slate-600", text: formatTime(entry.ts_ms) }),
-          el("td", { class: "px-2 py-0.5 whitespace-nowrap text-slate-500", text: entry.unit }),
+        el("tr", { class: "border-b border-white/5" }, [
+          el("td", { class: "tabular px-2 py-0.5 whitespace-nowrap text-neutral-600", text: formatTime(entry.ts_ms) }),
+          el("td", { class: "px-2 py-0.5 whitespace-nowrap text-neutral-500", text: entry.unit }),
           el("td", {
-            class: `px-2 py-0.5 break-all ${LEVEL_CLASS[entry.priority] ?? "text-slate-400"}`,
+            class: `px-2 py-0.5 break-all ${LEVEL_CLASS[entry.priority] ?? "text-neutral-400"}`,
             text: entry.message,
           }),
         ]),

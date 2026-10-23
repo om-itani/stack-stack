@@ -37,15 +37,15 @@ export function createFilesPage(): PageHandle {
   // breadcrumbs instead of leaving a stale table on screen.
   let loadError: string | null = null;
 
-  const statusLine = el("span", { class: "tabular text-[11px] text-slate-500" });
+  const statusLine = el("span", { class: "tabular text-[11px] text-neutral-500" });
   const hiddenToggle = el("input", {
     type: "checkbox",
-    class: "accent-slate-500",
+    class: "accent-neutral-500",
   }) as HTMLInputElement;
   const uploadInput = el("input", { type: "file", multiple: true, class: "hidden" }) as HTMLInputElement;
 
-  const crumbs = el("div", { class: "flex flex-wrap items-center gap-1 text-[11px] text-slate-400" });
-  const sidebar = el("div", { class: "flex w-48 shrink-0 flex-col gap-0.5 overflow-y-auto border-r border-[#1e2733] pr-2" });
+  const crumbs = el("div", { class: "flex flex-wrap items-center gap-1 text-[11px] text-neutral-400" });
+  const sidebar = el("div", { class: "flex w-48 shrink-0 flex-col gap-0.5 overflow-y-auto border-r border-white/5 pr-2" });
   const tableHost = el("div", { class: "min-h-0 flex-1 overflow-auto" });
 
   const upButton = button("up", "", () => {
@@ -75,14 +75,14 @@ export function createFilesPage(): PageHandle {
   });
 
   const toolbar = el("div", { class: "flex flex-wrap items-center gap-2" }, [
-    el("span", { class: "text-slate-300", text: "files" }),
+    el("span", { class: "text-neutral-300", text: "files" }),
     upButton,
     refreshButton,
     newFolder,
     newFile,
     uploadButton,
     archiveButton,
-    el("label", { class: "flex items-center gap-1 text-[11px] text-slate-400" }, [hiddenToggle, "hidden"]),
+    el("label", { class: "flex items-center gap-1 text-[11px] text-neutral-400" }, [hiddenToggle, "hidden"]),
     el("span", { class: "ml-auto" }, [statusLine]),
     uploadInput,
   ]);
@@ -176,7 +176,7 @@ export function createFilesPage(): PageHandle {
     for (const part of parts) {
       accumulated += `/${part}`;
       const target = accumulated;
-      crumbs.append(el("span", { class: "text-slate-600", text: "/" }));
+      crumbs.append(el("span", { class: "text-neutral-600", text: "/" }));
       crumbs.append(button(part, "text-[11px]", () => void load(target)));
     }
   }
@@ -190,11 +190,11 @@ export function createFilesPage(): PageHandle {
 
     const table = el("table", { class: "w-full text-[11px]" });
     const head = el("tr", {}, [
-      el("th", { class: "px-2 py-1 text-left text-[10px] uppercase text-slate-600", text: "name" }),
-      el("th", { class: "px-2 py-1 text-right text-[10px] uppercase text-slate-600", text: "size" }),
-      el("th", { class: "px-2 py-1 text-left text-[10px] uppercase text-slate-600", text: "modified" }),
-      el("th", { class: "px-2 py-1 text-left text-[10px] uppercase text-slate-600", text: "mode" }),
-      el("th", { class: "px-2 py-1 text-left text-[10px] uppercase text-slate-600", text: "owner" }),
+      el("th", { class: "px-2 py-1 text-left text-[10px] uppercase text-neutral-600", text: "name" }),
+      el("th", { class: "px-2 py-1 text-right text-[10px] uppercase text-neutral-600", text: "size" }),
+      el("th", { class: "px-2 py-1 text-left text-[10px] uppercase text-neutral-600", text: "modified" }),
+      el("th", { class: "px-2 py-1 text-left text-[10px] uppercase text-neutral-600", text: "mode" }),
+      el("th", { class: "px-2 py-1 text-left text-[10px] uppercase text-neutral-600", text: "owner" }),
       el("th", { class: "px-2 py-1" }),
     ]);
     table.append(el("thead", {}, [head]));
@@ -210,12 +210,12 @@ export function createFilesPage(): PageHandle {
   function row(entry: FileEntry): HTMLElement {
     const nameCell = el("td", { class: "px-2 py-1" });
     const nameLabel = el("span", {
-      class: entry.kind === "dir" ? "text-emerald-400" : "text-slate-300",
+      class: entry.kind === "dir" ? "text-emerald-400" : "text-neutral-300",
       text: entry.kind === "dir" ? `${entry.name}/` : entry.name,
     });
     nameCell.append(nameLabel);
     if (entry.symlink_target) {
-      nameCell.append(el("span", { class: "ml-2 text-slate-600", text: `→ ${entry.symlink_target}` }));
+      nameCell.append(el("span", { class: "ml-2 text-neutral-600", text: `→ ${entry.symlink_target}` }));
     }
     nameCell.addEventListener("dblclick", () => {
       if (entry.kind === "dir") void load(entry.path);
@@ -248,12 +248,12 @@ export function createFilesPage(): PageHandle {
       button("delete", "text-[10px] text-rose-400 hover:border-rose-500", () => void removeEntry(entry)),
     );
 
-    return el("tr", { class: "border-b border-[#161d27]" }, [
+    return el("tr", { class: "border-b border-white/5" }, [
       nameCell,
-      el("td", { class: "tabular px-2 py-1 text-right text-slate-500", text: entry.kind === "dir" ? "—" : bytes(entry.size) }),
-      el("td", { class: "px-2 py-1 text-slate-500", text: formatTime(entry.modified_ms) }),
-      el("td", { class: "tabular px-2 py-1 text-slate-500", text: entry.mode ?? "—" }),
-      el("td", { class: "px-2 py-1 text-slate-500", text: owner }),
+      el("td", { class: "tabular px-2 py-1 text-right text-neutral-500", text: entry.kind === "dir" ? "—" : bytes(entry.size) }),
+      el("td", { class: "px-2 py-1 text-neutral-500", text: formatTime(entry.modified_ms) }),
+      el("td", { class: "tabular px-2 py-1 text-neutral-500", text: entry.mode ?? "—" }),
+      el("td", { class: "px-2 py-1 text-neutral-500", text: owner }),
       actions,
     ]);
   }
@@ -326,11 +326,11 @@ export function createFilesPage(): PageHandle {
       class: "fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4",
     });
     const panel = el("div", {
-      class: "flex w-full max-w-lg flex-col gap-2 border border-[#1e2733] bg-[#0d131b] p-3",
+      class: "flex w-full max-w-lg flex-col gap-2 border border-white/5 bg-[#0e0e0e] p-3",
     });
     const close = (): void => overlay.remove();
     const bar = el("div", { class: "flex items-center gap-2" }, [
-      el("span", { class: "text-slate-300", text: title }),
+      el("span", { class: "text-neutral-300", text: title }),
       el("span", { class: "ml-auto" }),
       button("close", "text-[10px]", close),
     ]);
@@ -422,10 +422,10 @@ export function createFilesPage(): PageHandle {
     }
     const area = document.createElement("textarea");
     area.className =
-      "h-80 w-full border border-[#1e2733] bg-[#0b0f14] p-2 font-mono text-[11px] text-slate-200 outline-none";
+      "h-80 w-full border border-white/5 bg-black/40 p-2 font-mono text-[11px] text-neutral-200 outline-none";
     area.value = file.content;
     const note = el("div", {
-      class: "text-[10px] text-slate-600",
+      class: "text-[10px] text-neutral-600",
       text: `${file.mime} · ${bytes(file.size)}${file.truncated ? " · truncated for editing" : ""}`,
     });
     const error = el("div", { class: "min-h-4 text-[11px] text-rose-400" });

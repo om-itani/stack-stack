@@ -45,7 +45,7 @@ export function createVpnPage(): PageHandle {
   let status = "";
   let loaded = false;
 
-  const statusLine = el("span", { class: "tabular text-[11px] text-slate-500" });
+  const statusLine = el("span", { class: "tabular text-[11px] text-neutral-500" });
   const refreshButton = button("refresh", "", () => void load());
   const keyButton = button("generate server key", "text-amber-400 hover:border-amber-500", () =>
     void generateServerKey(),
@@ -56,7 +56,7 @@ export function createVpnPage(): PageHandle {
   const addPeerButton = button("add peer", "", () => void addPeer());
 
   const header = el("div", { class: "flex flex-wrap items-center gap-2" }, [
-    el("span", { class: "text-slate-300", text: "vpn · wireguard" }),
+    el("span", { class: "text-neutral-300", text: "vpn · wireguard" }),
     refreshButton,
     keyButton,
     addPeerButton,
@@ -162,13 +162,13 @@ export function createVpnPage(): PageHandle {
     if (state!.has_key) {
       keyState.append(el("div", { class: "text-emerald-400", text: "server key: present" }));
       if (state!.public_key) {
-        keyState.append(el("div", { class: "text-slate-500", text: `public: ${state!.public_key}` }));
+        keyState.append(el("div", { class: "text-neutral-500", text: `public: ${state!.public_key}` }));
       }
       if (state!.public_key_error) {
         keyState.append(el("div", { class: "text-amber-400", text: state!.public_key_error }));
       }
       if (state!.endpoint) {
-        keyState.append(el("div", { class: "text-slate-500", text: `endpoint: ${state!.endpoint}` }));
+        keyState.append(el("div", { class: "text-neutral-500", text: `endpoint: ${state!.endpoint}` }));
       }
     } else {
       keyState.append(el("div", { class: "text-amber-400", text: "no server key yet — generate one" }));
@@ -186,7 +186,7 @@ export function createVpnPage(): PageHandle {
       for (const peer of state!.status.peers) {
         live.append(
           el("div", {
-            class: "text-slate-500",
+            class: "text-neutral-500",
             text: `peer ${peer.public_key.slice(0, 8)}… handshake ${handshake(peer.latest_handshake)} · rx ${bytes(peer.rx_bytes)} tx ${bytes(peer.tx_bytes)}`,
           }),
         );
@@ -248,7 +248,7 @@ export function createVpnPage(): PageHandle {
     const { root: card, body: cardBody } = panel(`${state!.config.interface}.conf`);
     cardBody.append(
       el("pre", {
-        class: "max-h-56 overflow-auto px-3 py-2 font-mono text-[10px] text-slate-400",
+        class: "max-h-56 overflow-auto px-3 py-2 font-mono text-[10px] text-neutral-400",
         text: state!.preview,
       }),
     );
@@ -325,12 +325,12 @@ export function createVpnPage(): PageHandle {
       class: "fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4",
     });
     const card = el("div", {
-      class: "flex max-h-[85vh] w-full max-w-2xl flex-col gap-2 overflow-auto border border-[#1e2733] bg-[#0d131b] p-3",
+      class: "flex max-h-[85vh] w-full max-w-2xl flex-col gap-2 overflow-auto border border-white/5 bg-[#0e0e0e] p-3",
     });
     const close = (): void => overlay.remove();
     card.append(
       el("div", { class: "flex items-center gap-2" }, [
-        el("span", { class: "text-slate-300", text: `client configuration — ${name}` }),
+        el("span", { class: "text-neutral-300", text: `client configuration — ${name}` }),
         el("span", { class: "ml-auto" }),
         button("close", "text-[10px]", close),
       ]),
@@ -339,14 +339,14 @@ export function createVpnPage(): PageHandle {
         text: "The private key below is shown once and is not stored. Copy it now.",
       }),
       el("pre", {
-        class: "overflow-auto border border-[#1e2733] bg-[#0b0f14] p-2 font-mono text-[10px] text-slate-300",
+        class: "overflow-auto border border-white/5 bg-black/40 p-2 font-mono text-[10px] text-neutral-300",
         text: exported.config,
       }),
     );
     if (exported.qr) {
       card.append(el("pre", { class: "font-mono text-[8px] leading-3 text-emerald-400", text: exported.qr }));
     } else if (exported.qr_error) {
-      card.append(el("div", { class: "text-[10px] text-slate-600", text: `qr unavailable: ${exported.qr_error}` }));
+      card.append(el("div", { class: "text-[10px] text-neutral-600", text: `qr unavailable: ${exported.qr_error}` }));
     }
     overlay.append(card);
     overlay.addEventListener("mousedown", (event) => {

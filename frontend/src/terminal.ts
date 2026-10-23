@@ -42,26 +42,26 @@ function buildShell(): Shell {
   overlay.style.display = "none";
 
   const panel = document.createElement("div");
-  panel.className = "flex h-[70vh] w-full max-w-4xl flex-col border border-[#1e2733] bg-[#0d131b]";
+  panel.className = "flex h-[70vh] w-full max-w-4xl flex-col border border-white/5 bg-[#0e0e0e]";
 
   const bar = document.createElement("div");
-  bar.className = "flex items-center gap-3 border-b border-[#1e2733] px-3 py-1.5";
+  bar.className = "flex items-center gap-3 border-b border-white/5 px-3 py-1.5";
 
   const title = document.createElement("span");
   title.className = "font-semibold text-emerald-400";
   const subtitle = document.createElement("span");
-  subtitle.className = "truncate text-slate-500";
+  subtitle.className = "truncate text-neutral-500";
   const spacer = document.createElement("span");
   spacer.className = "ml-auto";
   const close = document.createElement("button");
   close.type = "button";
   close.textContent = "close";
   close.className =
-    "border border-[#1e2733] px-2 py-0.5 text-slate-400 hover:border-rose-500 hover:text-rose-400";
+    "border border-white/5 px-2 py-0.5 text-neutral-400 hover:border-rose-500 hover:text-rose-400";
   bar.append(title, subtitle, spacer, close);
 
   const mount = document.createElement("div");
-  mount.className = "min-h-0 flex-1 overflow-hidden bg-[#0b0f14] p-1";
+  mount.className = "min-h-0 flex-1 overflow-hidden bg-black/40 p-1";
 
   panel.append(bar, mount);
   overlay.append(panel);

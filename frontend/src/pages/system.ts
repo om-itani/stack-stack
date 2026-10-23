@@ -9,23 +9,28 @@
 import { Sparkline } from "../spark";
 import type { Telemetry } from "../telemetry";
 import type { Disk, Network, Smart, Snapshot } from "../telemetry";
-import { bytes, emptyNote, fill, must, percent, rate } from "../ui";
+import { animateNumber, bytes, emptyNote, fill, must, percent, rate } from "../ui";
 import { buildSmartPanel } from "./smartPanel";
 
 const EMERALD = "#34d399";
 const SKY = "#38bdf8";
 
 const MARKUP = `
+  <section class="panel col-span-full">
+    <div class="panel-title border-b border-white/5 px-3 py-1.5 text-[10px]">network</div>
+    <div data-ref="nets"></div>
+  </section>
+
   <section class="panel">
-    <div class="panel-title flex items-baseline justify-between gap-4 border-b border-[#1e2733] px-3 py-1.5 text-[10px]">
+    <div class="panel-title flex items-baseline justify-between gap-4 border-b border-white/5 px-3 py-1.5 text-[10px]">
       <span>cpu</span>
-      <span data-ref="cpu-model" class="truncate text-[10px] normal-case tracking-normal text-slate-600"></span>
+      <span data-ref="cpu-model" class="truncate text-[10px] normal-case tracking-normal text-neutral-600"></span>
     </div>
     <div class="flex items-center gap-4 px-3 py-2">
-      <div data-ref="cpu-total" class="tabular text-3xl text-slate-100">—</div>
+      <div data-ref="cpu-total" class="tabular stat text-3xl">—</div>
       <div class="min-w-0 flex-1">
         <div data-ref="cpu-spark"></div>
-        <div class="tabular mt-1 flex justify-between text-[10px] text-slate-500">
+        <div class="tabular mt-1 flex justify-between text-[10px] text-neutral-500">
           <span data-ref="cpu-user">usr —</span>
           <span data-ref="cpu-sys">sys —</span>
           <span data-ref="cpu-io">io —</span>
@@ -37,14 +42,14 @@ const MARKUP = `
   </section>
 
   <section class="panel">
-    <div class="panel-title border-b border-[#1e2733] px-3 py-1.5 text-[10px]">memory</div>
+    <div class="panel-title border-b border-white/5 px-3 py-1.5 text-[10px]">memory</div>
     <div class="px-3 py-2">
       <div class="flex items-baseline justify-between">
-        <span data-ref="mem-used" class="tabular text-2xl text-slate-100">—</span>
-        <span data-ref="mem-total" class="tabular text-slate-500">—</span>
+        <span data-ref="mem-used" class="tabular stat text-2xl">—</span>
+        <span data-ref="mem-total" class="tabular text-neutral-500">—</span>
       </div>
-      <div class="mt-2 h-2 bg-[#1e2733]"><div data-ref="mem-bar" class="h-full bg-emerald-500" style="width:0%"></div></div>
-      <dl class="tabular mt-2 grid grid-cols-2 gap-x-4 text-[11px] text-slate-500">
+      <div class="mt-2 h-2 bg-white/10"><div data-ref="mem-bar" class="h-full bg-emerald-500" style="width:0%"></div></div>
+      <dl class="tabular mt-2 grid grid-cols-2 gap-x-4 text-[11px] text-neutral-500">
         <div class="flex justify-between"><dt>cached</dt><dd data-ref="mem-cached">—</dd></div>
         <div class="flex justify-between"><dt>buffers</dt><dd data-ref="mem-buffers">—</dd></div>
         <div class="flex justify-between"><dt>available</dt><dd data-ref="mem-avail">—</dd></div>
@@ -53,25 +58,20 @@ const MARKUP = `
     </div>
   </section>
 
-  <section class="panel xl:col-span-2 2xl:col-span-1">
-    <div class="panel-title border-b border-[#1e2733] px-3 py-1.5 text-[10px]">network</div>
-    <div data-ref="nets"></div>
-  </section>
-
   <section class="panel">
-    <div class="panel-title border-b border-[#1e2733] px-3 py-1.5 text-[10px]">filesystems</div>
+    <div class="panel-title border-b border-white/5 px-3 py-1.5 text-[10px]">filesystems</div>
     <div data-ref="disks"></div>
   </section>
 
   <section class="panel">
-    <div class="panel-title border-b border-[#1e2733] px-3 py-1.5 text-[10px]">smart</div>
+    <div class="panel-title border-b border-white/5 px-3 py-1.5 text-[10px]">smart</div>
     <div data-ref="smart"></div>
   </section>
 `;
 
 export function createSystemPage(telemetry: Telemetry): { root: HTMLElement } {
   const root = document.createElement("div");
-  root.className = "grid grid-cols-1 gap-3 p-3 xl:grid-cols-2 2xl:grid-cols-3";
+  root.className = "grid grid-cols-1 gap-4 p-4 xl:grid-cols-2 2xl:grid-cols-3";
   root.innerHTML = MARKUP;
 
   const ref = <T extends Element>(name: string): T => must<T>(`[data-ref="${name}"]`, root);
@@ -109,9 +109,9 @@ export function createSystemPage(telemetry: Telemetry): { root: HTMLElement } {
       for (let index = 0; index < perCore.length; index++) {
         const cell = document.createElement("div");
         const label = document.createElement("div");
-        label.className = "tabular text-[9px] text-slate-600";
+        label.className = "tabular text-[9px] text-neutral-600";
         const track = document.createElement("div");
-        track.className = "h-1.5 bg-[#1e2733]";
+        track.className = "h-1.5 bg-white/10";
         const bar = document.createElement("div");
         bar.className = "h-full bg-emerald-500";
         bar.style.width = "0%";
@@ -161,29 +161,29 @@ export function createSystemPage(telemetry: Telemetry): { root: HTMLElement } {
 
       for (const net of networks) {
         const row = document.createElement("div");
-        row.className = "border-b border-[#161d27] px-3 py-2 last:border-b-0";
+        row.className = "border-b border-white/5 px-3 py-2 last:border-b-0";
 
         const head = document.createElement("div");
         head.className = "flex items-baseline justify-between";
         const name = document.createElement("span");
-        name.className = "text-slate-300";
+        name.className = "text-neutral-300";
         name.textContent = net.iface;
         const total = document.createElement("span");
-        total.className = "tabular text-[10px] text-slate-600";
+        total.className = "tabular text-[10px] text-neutral-600";
         head.append(name, total);
 
         const split = document.createElement("div");
         split.className = "mt-1 grid grid-cols-2 gap-3";
 
         const rxLabel = document.createElement("div");
-        rxLabel.className = "tabular text-[11px] text-slate-500";
+        rxLabel.className = "tabular text-[11px] text-neutral-500";
         const rxValue = document.createElement("span");
         rxValue.className = "text-emerald-400";
         rxLabel.append("↓ ", rxValue);
         const rxSpark = new Sparkline(60, { color: EMERALD });
 
         const txLabel = document.createElement("div");
-        txLabel.className = "tabular text-[11px] text-slate-500";
+        txLabel.className = "tabular text-[11px] text-neutral-500";
         const txValue = document.createElement("span");
         txValue.className = "text-sky-400";
         txLabel.append("↑ ", txValue);
@@ -241,26 +241,26 @@ export function createSystemPage(telemetry: Telemetry): { root: HTMLElement } {
 
       for (const disk of disks) {
         const row = document.createElement("div");
-        row.className = "border-b border-[#161d27] px-3 py-2 last:border-b-0";
+        row.className = "border-b border-white/5 px-3 py-2 last:border-b-0";
 
         const head = document.createElement("div");
         head.className = "flex items-baseline justify-between gap-3";
         const mount = document.createElement("span");
-        mount.className = "truncate text-slate-300";
+        mount.className = "truncate text-neutral-300";
         mount.textContent = disk.mount;
         const usage = document.createElement("span");
-        usage.className = "tabular shrink-0 text-[11px] text-slate-500";
+        usage.className = "tabular shrink-0 text-[11px] text-neutral-500";
         head.append(mount, usage);
 
         const track = document.createElement("div");
-        track.className = "mt-1.5 h-1.5 bg-[#1e2733]";
+        track.className = "mt-1.5 h-1.5 bg-white/10";
         const bar = document.createElement("div");
         bar.className = "h-full bg-emerald-500";
         bar.style.width = "0%";
         track.append(bar);
 
         const meta = document.createElement("div");
-        meta.className = "tabular mt-1 text-[10px] text-slate-600";
+        meta.className = "tabular mt-1 text-[10px] text-neutral-600";
         meta.textContent = `${disk.device} · ${disk.fs}`;
 
         row.append(head, track, meta);
@@ -307,15 +307,15 @@ export function createSystemPage(telemetry: Telemetry): { root: HTMLElement } {
       for (const device of devices) {
         const row = document.createElement("div");
         row.className =
-          "flex items-baseline justify-between gap-3 border-b border-[#161d27] px-3 py-2 last:border-b-0";
+          "flex items-baseline justify-between gap-3 border-b border-white/5 px-3 py-2 last:border-b-0";
 
         const left = document.createElement("div");
         left.className = "min-w-0";
         const name = document.createElement("div");
-        name.className = "truncate text-slate-300";
+        name.className = "truncate text-neutral-300";
         name.textContent = device.device;
         const model = document.createElement("div");
-        model.className = "truncate text-[10px] text-slate-600";
+        model.className = "truncate text-[10px] text-neutral-600";
         model.textContent = device.model ?? "";
         left.append(name, model);
 
@@ -323,9 +323,9 @@ export function createSystemPage(telemetry: Telemetry): { root: HTMLElement } {
         right.className = "tabular flex shrink-0 items-baseline gap-3 text-[11px]";
         const health = document.createElement("span");
         const temp = document.createElement("span");
-        temp.className = "text-slate-500";
+        temp.className = "text-neutral-500";
         const hours = document.createElement("span");
-        hours.className = "text-slate-600";
+        hours.className = "text-neutral-600";
         right.append(health, temp, hours);
 
         row.append(left, right);
@@ -342,7 +342,7 @@ export function createSystemPage(telemetry: Telemetry): { root: HTMLElement } {
 
       if (device.healthy === null) {
         row.health.textContent = "?";
-        row.health.className = "text-slate-600";
+        row.health.className = "text-neutral-600";
       } else {
         row.health.textContent = device.healthy ? "OK" : "FAIL";
         row.health.className = device.healthy ? "text-emerald-400" : "text-rose-500";
@@ -357,7 +357,8 @@ export function createSystemPage(telemetry: Telemetry): { root: HTMLElement } {
 
   // --- Frame -------------------------------------------------------------
   function render(snapshot: Snapshot): void {
-    cpuTotalEl.textContent = percent(snapshot.cpu.usage_pct);
+    // Rolled rather than snapped: a headline figure that jumps every tick flickers.
+    animateNumber(cpuTotalEl, snapshot.cpu.usage_pct, percent, 500);
     cpuSpark.push(snapshot.cpu.usage_pct);
     cpuModelEl.textContent = snapshot.cpu.model ?? "";
     cpuUserEl.textContent = `usr ${snapshot.cpu.user_pct.toFixed(0)}`;
@@ -367,7 +368,7 @@ export function createSystemPage(telemetry: Telemetry): { root: HTMLElement } {
     renderCores(snapshot.cpu.per_core);
 
     const memory = snapshot.memory;
-    memUsedEl.textContent = bytes(memory.used_bytes);
+    animateNumber(memUsedEl, memory.used_bytes, bytes, 500);
     memTotalEl.textContent = `of ${bytes(memory.total_bytes)} · ${percent(memory.used_pct)}`;
     fill(memBarEl, memory.used_pct);
     memCachedEl.textContent = bytes(memory.cached_bytes);

@@ -24,7 +24,7 @@ export function createTerminalPage(hostname: () => string): PageHandle {
 
   cardBody.append(
     el("div", {
-      class: "text-slate-400",
+      class: "text-neutral-400",
       text: "A root login shell on this host, behind the same login gate as everything else. Output is capped like the container console.",
     }),
   );
@@ -41,7 +41,7 @@ export function createTerminalPage(hostname: () => string): PageHandle {
   root.append(
     (() => {
       const { root: notes, body: notesBody } = panel("notes");
-      notesBody.className = "flex flex-col gap-1 px-3 py-2 text-[11px] text-slate-500";
+      notesBody.className = "flex flex-col gap-1 px-3 py-2 text-[11px] text-neutral-500";
       for (const line of [
         "The shell is /bin/bash -l as root; job control works (Ctrl+C, Ctrl+Z).",
         "Closing the modal hangs up the session; the child is reaped either way.",

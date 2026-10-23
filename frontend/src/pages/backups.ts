@@ -62,7 +62,7 @@ export function createBackupsPage(): PageHandle {
   let status = "";
   let loaded = false;
 
-  const statusLine = el("span", { class: "tabular text-[11px] text-slate-500" });
+  const statusLine = el("span", { class: "tabular text-[11px] text-neutral-500" });
   const refreshButton = button("refresh", "", () => void load());
   const addButton = button("add job", "text-emerald-400 hover:border-emerald-500", () => {
     editing = freshJob();
@@ -72,7 +72,7 @@ export function createBackupsPage(): PageHandle {
   });
 
   const header = el("div", { class: "flex flex-wrap items-center gap-2" }, [
-    el("span", { class: "text-slate-300", text: "backups" }),
+    el("span", { class: "text-neutral-300", text: "backups" }),
     refreshButton,
     addButton,
     el("span", { class: "ml-auto" }, [statusLine]),
@@ -169,7 +169,7 @@ export function createBackupsPage(): PageHandle {
       `next run: ${next ? formatTime(next * 1000) : "—"}`,
     ];
     for (const line of lines) {
-      cardBody.append(el("div", { class: "text-slate-400", text: line }));
+      cardBody.append(el("div", { class: "text-neutral-400", text: line }));
     }
 
     const actions = el("div", { class: "flex flex-wrap gap-2" });
@@ -266,7 +266,7 @@ export function createBackupsPage(): PageHandle {
 
     const schedule = el("div", { class: "flex flex-wrap items-end gap-3" });
     const cadenceSelect = el("select", {
-      class: "border border-[#1e2733] bg-[#0b0f14] px-1.5 py-0.5 text-slate-200",
+      class: "border border-white/5 bg-black/40 px-1.5 py-0.5 text-neutral-200",
     }) as HTMLSelectElement;
     for (const [value, label] of [
       ["hourly", "hourly"],
@@ -309,7 +309,7 @@ export function createBackupsPage(): PageHandle {
 
     const backend = el("div", { class: "flex flex-wrap items-end gap-3" });
     const kindSelect = el("select", {
-      class: "border border-[#1e2733] bg-[#0b0f14] px-1.5 py-0.5 text-slate-200",
+      class: "border border-white/5 bg-black/40 px-1.5 py-0.5 text-neutral-200",
     }) as HTMLSelectElement;
     for (const value of ["local", "s3", "sftp"]) {
       const option = document.createElement("option");
@@ -377,7 +377,7 @@ export function createBackupsPage(): PageHandle {
 
   function panelSection(title: string, content: HTMLElement): HTMLElement {
     const box = el("div", { class: "flex flex-col gap-1" });
-    box.append(el("div", { class: "text-[10px] uppercase tracking-wide text-slate-600", text: title }), content);
+    box.append(el("div", { class: "text-[10px] uppercase tracking-wide text-neutral-600", text: title }), content);
     return box;
   }
 
@@ -453,9 +453,9 @@ export function createBackupsPage(): PageHandle {
     table.append(
       el("thead", {}, [
         el("tr", {}, [
-          el("th", { class: "px-2 py-1 text-left text-[10px] uppercase text-slate-600", text: "id" }),
-          el("th", { class: "px-2 py-1 text-left text-[10px] uppercase text-slate-600", text: "time" }),
-          el("th", { class: "px-2 py-1 text-left text-[10px] uppercase text-slate-600", text: "paths" }),
+          el("th", { class: "px-2 py-1 text-left text-[10px] uppercase text-neutral-600", text: "id" }),
+          el("th", { class: "px-2 py-1 text-left text-[10px] uppercase text-neutral-600", text: "time" }),
+          el("th", { class: "px-2 py-1 text-left text-[10px] uppercase text-neutral-600", text: "paths" }),
           el("th", { class: "px-2 py-1" }),
         ]),
       ]),
@@ -467,10 +467,10 @@ export function createBackupsPage(): PageHandle {
       );
       const restore = button("restore", "text-[10px]", () => void restoreSnapshot(job, snapshot));
       tbody.append(
-        el("tr", { class: "border-b border-[#161d27]" }, [
-          el("td", { class: "px-2 py-1 text-slate-300", text: snapshot.short_id || snapshot.id }),
-          el("td", { class: "px-2 py-1 text-slate-500", text: snapshot.time }),
-          el("td", { class: "px-2 py-1 text-slate-500", text: snapshot.paths.join(", ") }),
+        el("tr", { class: "border-b border-white/5" }, [
+          el("td", { class: "px-2 py-1 text-neutral-300", text: snapshot.short_id || snapshot.id }),
+          el("td", { class: "px-2 py-1 text-neutral-500", text: snapshot.time }),
+          el("td", { class: "px-2 py-1 text-neutral-500", text: snapshot.paths.join(", ") }),
           el("td", { class: "px-2 py-1 text-right", text: "" }, [browse, restore]),
         ]),
       );
@@ -485,10 +485,10 @@ export function createBackupsPage(): PageHandle {
   }
 
   function browsePanel(job: BackupJob): HTMLElement {
-    const box = el("div", { class: "flex flex-col gap-1 border-t border-[#1e2733] pt-2" });
+    const box = el("div", { class: "flex flex-col gap-1 border-t border-white/5 pt-2" });
     box.append(
       el("div", {
-        class: "text-[11px] text-slate-400",
+        class: "text-[11px] text-neutral-400",
         text: `inside ${browsePath ?? "/"} (snapshot ${browseSnapshot ?? ""})`,
       }),
     );
@@ -504,10 +504,10 @@ export function createBackupsPage(): PageHandle {
       const row = el("div", { class: "flex items-center gap-2 text-[11px]" });
       row.append(
         el("span", {
-          class: entry.kind === "dir" ? "text-emerald-400" : "text-slate-400",
+          class: entry.kind === "dir" ? "text-emerald-400" : "text-neutral-400",
           text: entry.kind === "dir" ? `${entry.name}/` : entry.name,
         }),
-        el("span", { class: "ml-auto text-slate-600", text: entry.kind === "dir" ? "" : bytes(entry.size) }),
+        el("span", { class: "ml-auto text-neutral-600", text: entry.kind === "dir" ? "" : bytes(entry.size) }),
       );
       if (entry.kind === "dir") {
         row.append(button("open", "text-[10px]", () => void browseTree(job, browseSnapshot!, entry.path)));
@@ -557,23 +557,23 @@ export function createBackupsPage(): PageHandle {
     table.append(
       el("thead", {}, [
         el("tr", {}, [
-          el("th", { class: "px-2 py-1 text-left text-[10px] uppercase text-slate-600", text: "when" }),
-          el("th", { class: "px-2 py-1 text-left text-[10px] uppercase text-slate-600", text: "job" }),
-          el("th", { class: "px-2 py-1 text-left text-[10px] uppercase text-slate-600", text: "result" }),
-          el("th", { class: "px-2 py-1 text-right text-[10px] uppercase text-slate-600", text: "data" }),
-          el("th", { class: "px-2 py-1 text-left text-[10px] uppercase text-slate-600", text: "detail" }),
+          el("th", { class: "px-2 py-1 text-left text-[10px] uppercase text-neutral-600", text: "when" }),
+          el("th", { class: "px-2 py-1 text-left text-[10px] uppercase text-neutral-600", text: "job" }),
+          el("th", { class: "px-2 py-1 text-left text-[10px] uppercase text-neutral-600", text: "result" }),
+          el("th", { class: "px-2 py-1 text-right text-[10px] uppercase text-neutral-600", text: "data" }),
+          el("th", { class: "px-2 py-1 text-left text-[10px] uppercase text-neutral-600", text: "detail" }),
         ]),
       ]),
     );
     const tbody = el("tbody");
     for (const run of history) {
       tbody.append(
-        el("tr", { class: "border-b border-[#161d27]" }, [
-          el("td", { class: "px-2 py-1 text-slate-500", text: formatTime(run.ts_ms) }),
-          el("td", { class: "px-2 py-1 text-slate-300", text: run.name }),
+        el("tr", { class: "border-b border-white/5" }, [
+          el("td", { class: "px-2 py-1 text-neutral-500", text: formatTime(run.ts_ms) }),
+          el("td", { class: "px-2 py-1 text-neutral-300", text: run.name }),
           el("td", { class: `px-2 py-1 ${run.ok ? "text-emerald-400" : "text-rose-400"}`, text: run.ok ? "ok" : "failed" }),
-          el("td", { class: "tabular px-2 py-1 text-right text-slate-500", text: run.bytes ? bytes(run.bytes) : "—" }),
-          el("td", { class: "px-2 py-1 text-slate-500", text: run.detail }),
+          el("td", { class: "tabular px-2 py-1 text-right text-neutral-500", text: run.bytes ? bytes(run.bytes) : "—" }),
+          el("td", { class: "px-2 py-1 text-neutral-500", text: run.detail }),
         ]),
       );
     }

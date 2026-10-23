@@ -58,6 +58,44 @@ export function badge(text: string, tone: "ok" | "warn" | "err" | "muted" = "mut
   return node;
 }
 
+/**
+ * Roll a numeric readout from its previous value to the new one.
+ *
+ * A live counter that snaps to a new number every tick reads as flicker; a short
+ * interpolation reads as an instrument. The last value is kept on the element so
+ * only genuine changes animate.
+ */
+export function animateNumber(
+  node: HTMLElement,
+  value: number,
+  format: (value: number) => string,
+  durationMs = 400,
+): void {
+  const raw = node.dataset.value;
+  const previous = raw === undefined ? Number.NaN : Number(raw);
+  node.dataset.value = String(value);
+
+  if (!Number.isFinite(previous) || previous === value || durationMs <= 0) {
+    node.textContent = format(value);
+    return;
+  }
+
+  const start = performance.now();
+  const step = (now: number): void => {
+    const progress = Math.min(1, (now - start) / durationMs);
+    // ease-out cubic, matching the shared transition curve
+    const eased = 1 - Math.pow(1 - progress, 3);
+    const current = previous + (value - previous) * eased;
+    node.textContent = format(current);
+    if (progress < 1) {
+      requestAnimationFrame(step);
+    } else {
+      node.textContent = format(value);
+    }
+  };
+  requestAnimationFrame(step);
+}
+
 /** A shimmering placeholder for content that has not arrived yet. */
 export function skeleton(className = ""): HTMLElement {
   const node = document.createElement("div");
@@ -76,7 +114,7 @@ export function must<T extends Element>(selector: string, root: ParentNode = doc
 
 export function emptyNote(text: string): HTMLElement {
   const note = document.createElement("div");
-  note.className = "px-4 py-6 text-center text-slate-500";
+  note.className = "px-4 py-6 text-center text-neutral-500";
   note.textContent = text;
   return note;
 }
@@ -86,7 +124,7 @@ export function panel(title: string, extraClass = ""): { root: HTMLElement; body
   const root = document.createElement("section");
   root.className = `panel ${extraClass}`.trim();
   const head = document.createElement("div");
-  head.className = "panel-title border-b border-[#1e2733] px-3 py-1.5 text-[10px]";
+  head.className = "panel-title border-b border-white/5 px-3 py-1.5 text-[10px]";
   head.textContent = title;
   const body = document.createElement("div");
   root.append(head, body);
@@ -136,7 +174,7 @@ export function el(
 }
 
 const INPUT_CLASS =
-  "border border-[#1e2733] bg-[#0b0f14] px-1.5 py-0.5 text-slate-200 outline-none focus:border-slate-500";
+  "border border-white/5 bg-black/40 px-1.5 py-0.5 text-neutral-200 outline-none focus:border-neutral-500";
 
 export function textInput(
   value: string,
@@ -186,7 +224,7 @@ export function checkbox(
   box.disabled = disabled;
   box.addEventListener("change", () => onChange(box.checked));
   const wrapper = document.createElement("label");
-  wrapper.className = "inline-flex items-center gap-1 text-[11px] text-slate-400";
+  wrapper.className = "inline-flex items-center gap-1 text-[11px] text-neutral-400";
   wrapper.append(box);
   if (label) {
     wrapper.append(label);
@@ -215,7 +253,7 @@ export function select(
 /** A labelled row in a form grid. */
 export function field(label: string, control: Node): HTMLElement {
   const wrapper = document.createElement("label");
-  wrapper.className = "flex flex-col gap-0.5 text-[10px] uppercase tracking-wide text-slate-600";
+  wrapper.className = "flex flex-col gap-0.5 text-[10px] uppercase tracking-wide text-neutral-600";
   const caption = document.createElement("span");
   caption.textContent = label;
   wrapper.append(caption, control);
@@ -253,7 +291,7 @@ export function button(
   const node = document.createElement("button");
   node.type = "button";
   node.textContent = label;
-  node.className = `rounded-lg border border-white/10 bg-white/5 px-2 py-0.5 text-slate-300 transition-all duration-200 hover:-translate-y-px hover:border-white/20 hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-40 ${className}`.trim();
+  node.className = `rounded-lg border border-white/5 bg-white/5 px-2 py-0.5 text-neutral-300 transition-colors duration-150 hover:border-white/15 hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-40 ${className}`.trim();
   if (onClick) {
     node.addEventListener("click", onClick);
   }
@@ -285,12 +323,12 @@ export function tableEditor<T>(
     headRow.append(
       el("th", {
         class:
-          "border-b border-[#1e2733] px-2 py-1 text-left text-[10px] uppercase tracking-wide text-slate-600",
+          "border-b border-white/5 px-2 py-1 text-left text-[10px] uppercase tracking-wide text-neutral-600",
         text: column.header,
       }),
     );
   }
-  headRow.append(el("th", { class: "border-b border-[#1e2733]" }));
+  headRow.append(el("th", { class: "border-b border-white/5" }));
   head.append(headRow);
 
   const body = document.createElement("tbody");
@@ -298,13 +336,13 @@ export function tableEditor<T>(
     const tr = document.createElement("tr");
     for (const column of columns) {
       tr.append(
-        el("td", { class: "border-b border-[#161d27] px-2 py-1 align-middle" }, [
+        el("td", { class: "border-b border-white/5 px-2 py-1 align-middle" }, [
           column.cell(row, index),
         ]),
       );
     }
     tr.append(
-      el("td", { class: "border-b border-[#161d27] px-2 py-1 text-right" }, [
+      el("td", { class: "border-b border-white/5 px-2 py-1 text-right" }, [
         button("remove", "text-rose-400 hover:border-rose-500", () => {
           rows.splice(index, 1);
           rerender();

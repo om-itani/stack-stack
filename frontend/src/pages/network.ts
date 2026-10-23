@@ -94,9 +94,9 @@ export function createNetworkPage(): PageHandle {
   let report: ApplyReport | null = null;
 
   // --- shell -------------------------------------------------------------
-  const heading = el("span", { class: "text-slate-300", text: "network" });
+  const heading = el("span", { class: "text-neutral-300", text: "network" });
   const dirtyBadge = el("span", { class: "tabular text-[10px] text-amber-400" });
-  const statusLine = el("span", { class: "tabular truncate text-[11px] text-slate-500" });
+  const statusLine = el("span", { class: "tabular truncate text-[11px] text-neutral-500" });
   const badges = el("span", { class: "flex flex-wrap items-center gap-2" });
 
   const saveButton = button("save");
@@ -122,7 +122,7 @@ export function createNetworkPage(): PageHandle {
     class:
       "border border-amber-700 bg-amber-950/40 px-3 py-2 text-[11px] text-amber-300",
   });
-  const tabBar = el("div", { class: "flex flex-wrap gap-1 border-b border-[#1e2733] pb-1" });
+  const tabBar = el("div", { class: "flex flex-wrap gap-1 border-b border-white/5 pb-1" });
   const tabBody = el("div", { class: "min-h-0 flex-1" });
 
   root.append(header, noticeBox, pendingBox, tabBar, tabBody);
@@ -278,7 +278,7 @@ export function createNetworkPage(): PageHandle {
         ? "tabular truncate text-[11px] text-rose-400"
         : tone === "ok"
           ? "tabular truncate text-[11px] text-emerald-400"
-          : "tabular truncate text-[11px] text-slate-500";
+          : "tabular truncate text-[11px] text-neutral-500";
   }
 
   // --- chrome ------------------------------------------------------------
@@ -295,7 +295,7 @@ export function createNetworkPage(): PageHandle {
       for (const service of status.services) {
         badges.append(
           el("span", {
-            class: `tabular text-[10px] ${service.active ? "text-emerald-500" : "text-slate-600"}`,
+            class: `tabular text-[10px] ${service.active ? "text-emerald-500" : "text-neutral-600"}`,
             text: `${service.name}:${service.state}`,
             title: service.unit,
           }),
@@ -303,14 +303,14 @@ export function createNetworkPage(): PageHandle {
       }
       badges.append(
         el("span", {
-          class: `tabular text-[10px] ${status.firewall.loaded ? "text-emerald-500" : "text-slate-600"}`,
+          class: `tabular text-[10px] ${status.firewall.loaded ? "text-emerald-500" : "text-neutral-600"}`,
           text: `nft:${status.firewall.rules}`,
           title: status.firewall.detail,
         }),
       );
       badges.append(
         el("span", {
-          class: `tabular text-[10px] ${status.sqm.active ? "text-emerald-500" : "text-slate-600"}`,
+          class: `tabular text-[10px] ${status.sqm.active ? "text-emerald-500" : "text-neutral-600"}`,
           text: status.sqm.active ? "sqm:on" : "sqm:off",
           title: status.sqm.detail,
         }),
@@ -340,13 +340,13 @@ export function createNetworkPage(): PageHandle {
       noticeBox.append(list);
     }
     if (report) {
-      const panel = el("div", { class: "flex flex-col gap-0.5 border border-[#1e2733] px-3 py-2 text-[11px]" });
-      panel.append(el("div", { class: "font-semibold text-slate-300", text: "apply result" }));
+      const panel = el("div", { class: "flex flex-col gap-0.5 border border-white/5 px-3 py-2 text-[11px]" });
+      panel.append(el("div", { class: "font-semibold text-neutral-300", text: "apply result" }));
       for (const step of report.steps) {
         panel.append(
           el("div", { class: step.ok ? "text-emerald-400" : "text-rose-400" }, [
             el("span", { class: "tabular", text: `${step.subsystem} ` }),
-            el("span", { class: "text-slate-500", text: step.detail }),
+            el("span", { class: "text-neutral-500", text: step.detail }),
           ]),
         );
       }
@@ -395,7 +395,7 @@ export function createNetworkPage(): PageHandle {
 
   function renderAll(): void {
     if (!draft) {
-      tabBody.replaceChildren(el("div", { class: "text-slate-600", text: "loading…" }));
+      tabBody.replaceChildren(el("div", { class: "text-neutral-600", text: "loading…" }));
       renderChrome();
       return;
     }
@@ -432,7 +432,7 @@ export function createNetworkPage(): PageHandle {
             cell: (row) =>
               el("input", {
                 class:
-                  "border border-[#1e2733] bg-[#0b0f14] px-1.5 py-0.5 text-slate-200 outline-none focus:border-slate-500",
+                  "border border-white/5 bg-black/40 px-1.5 py-0.5 text-neutral-200 outline-none focus:border-neutral-500",
                 value: row.name,
                 list: "net-iface-names",
                 oninput: (event: Event) => {
@@ -568,7 +568,7 @@ export function createNetworkPage(): PageHandle {
     if (discovered.length === 0) {
       liveSection.append(
         el("div", {
-          class: "px-3 py-2 text-slate-600",
+          class: "px-3 py-2 text-neutral-600",
           text: "no interfaces detected (this host has no /sys/class/net or no permissions)",
         }),
       );
@@ -581,7 +581,7 @@ export function createNetworkPage(): PageHandle {
           el("tr", {}, ["name", "kind", "state", "mac", "mtu", "speed", "addresses", "wifi"].map((header) =>
             el("th", {
               class:
-                "border-b border-[#1e2733] px-2 py-1 text-left text-[10px] uppercase tracking-wide text-slate-600",
+                "border-b border-white/5 px-2 py-1 text-left text-[10px] uppercase tracking-wide text-neutral-600",
               text: header,
             }),
           )),
@@ -594,20 +594,20 @@ export function createNetworkPage(): PageHandle {
           : "";
         body.append(
           el("tr", {}, [
-            el("td", { class: "border-b border-[#161d27] px-2 py-1 text-slate-300", text: iface.name }),
-            el("td", { class: "border-b border-[#161d27] px-2 py-1 text-slate-500", text: iface.kind }),
+            el("td", { class: "border-b border-white/5 px-2 py-1 text-neutral-300", text: iface.name }),
+            el("td", { class: "border-b border-white/5 px-2 py-1 text-neutral-500", text: iface.kind }),
             el("td", {
-              class: `border-b border-[#161d27] px-2 py-1 ${iface.operstate === "up" ? "text-emerald-400" : "text-slate-500"}`,
+              class: `border-b border-white/5 px-2 py-1 ${iface.operstate === "up" ? "text-emerald-400" : "text-neutral-500"}`,
               text: iface.operstate,
             }),
-            el("td", { class: "border-b border-[#161d27] px-2 py-1 text-slate-500", text: iface.mac ?? "—" }),
-            el("td", { class: "border-b border-[#161d27] px-2 py-1 text-slate-500", text: iface.mtu === null ? "—" : String(iface.mtu) }),
-            el("td", { class: "border-b border-[#161d27] px-2 py-1 text-slate-500", text: iface.speed_mbps === null ? "—" : `${iface.speed_mbps}M` }),
+            el("td", { class: "border-b border-white/5 px-2 py-1 text-neutral-500", text: iface.mac ?? "—" }),
+            el("td", { class: "border-b border-white/5 px-2 py-1 text-neutral-500", text: iface.mtu === null ? "—" : String(iface.mtu) }),
+            el("td", { class: "border-b border-white/5 px-2 py-1 text-neutral-500", text: iface.speed_mbps === null ? "—" : `${iface.speed_mbps}M` }),
             el("td", {
-              class: "border-b border-[#161d27] px-2 py-1 text-slate-500",
+              class: "border-b border-white/5 px-2 py-1 text-neutral-500",
               text: iface.addresses.map((address) => address.cidr).join(", ") || "—",
             }),
-            el("td", { class: "border-b border-[#161d27] px-2 py-1 text-slate-500", text: wifiText }),
+            el("td", { class: "border-b border-white/5 px-2 py-1 text-neutral-500", text: wifiText }),
           ]),
         );
       }
@@ -869,7 +869,7 @@ export function createNetworkPage(): PageHandle {
     section.append(grid);
     section.append(
       el("div", {
-        class: "px-3 pb-3 text-[10px] text-slate-600",
+        class: "px-3 pb-3 text-[10px] text-neutral-600",
         text: "Set the bandwidth to about 85-95% of what a speed test reports; that is what keeps the queue draining.",
       }),
     );
@@ -899,7 +899,7 @@ export function createNetworkPage(): PageHandle {
     main.append(grid);
     main.append(
       el("div", {
-        class: "px-3 pb-3 text-[10px] text-slate-600",
+        class: "px-3 pb-3 text-[10px] text-neutral-600",
         text: "Cloudflare terminates TLS at the edge, so *.yourdomain over HTTPS needs no local certificate: create the tunnel and add a public hostname per service below.",
       }),
     );
@@ -955,7 +955,7 @@ export function createNetworkPage(): PageHandle {
     const nameInput = textInput("local", () => {});
     actions.append(
       el("span", { class: "flex items-center gap-2" }, [
-        el("span", { class: "text-[10px] uppercase text-slate-600", text: "name" }),
+        el("span", { class: "text-[10px] uppercase text-neutral-600", text: "name" }),
         nameInput,
       ]),
       button("generate self-signed", "text-emerald-400 hover:border-emerald-500", () => {
@@ -968,7 +968,7 @@ export function createNetworkPage(): PageHandle {
     config.append(actions);
     config.append(
       el("div", {
-        class: "px-3 pb-3 text-[10px] text-slate-600",
+        class: "px-3 pb-3 text-[10px] text-neutral-600",
         text: "Import accepts a Cloudflare Origin certificate and key (or any PEM pair). Generation needs openssl on the host.",
       }),
     );
@@ -977,13 +977,13 @@ export function createNetworkPage(): PageHandle {
     const list = el("section", { class: "panel" });
     list.append(sectionTitle("installed certificates"));
     if (certificates.length === 0) {
-      list.append(el("div", { class: "px-3 py-2 text-slate-600", text: "no certificates found" }));
+      list.append(el("div", { class: "px-3 py-2 text-neutral-600", text: "no certificates found" }));
     }
     for (const cert of certificates) {
-      const row = el("div", { class: "border-b border-[#161d27] px-3 py-2 text-[11px]" });
+      const row = el("div", { class: "border-b border-white/5 px-3 py-2 text-[11px]" });
       row.append(
         el("div", { class: "flex items-baseline gap-2" }, [
-          el("span", { class: "text-slate-200", text: cert.name }),
+          el("span", { class: "text-neutral-200", text: cert.name }),
           cert.active ? el("span", { class: "text-[10px] text-emerald-400", text: "active" }) : el("span"),
           cert.key_matches === false
             ? el("span", { class: "text-[10px] text-rose-400", text: "key mismatch" })
@@ -994,10 +994,10 @@ export function createNetworkPage(): PageHandle {
             }),
           ]),
         ]),
-        el("div", { class: "text-slate-500", text: cert.subject ?? "—" }),
-        el("div", { class: "text-slate-600", text: cert.sans.join(", ") || "no SANs" }),
+        el("div", { class: "text-neutral-500", text: cert.subject ?? "—" }),
+        el("div", { class: "text-neutral-600", text: cert.sans.join(", ") || "no SANs" }),
         el("div", {
-          class: "text-slate-600",
+          class: "text-neutral-600",
           text: cert.days_remaining === null
             ? "expiry unknown"
             : `${cert.days_remaining} day(s) remaining (${cert.not_after ?? ""})`,
@@ -1018,7 +1018,7 @@ export function createNetworkPage(): PageHandle {
     if (!preview) {
       section.append(
         el("div", {
-          class: "px-3 py-2 text-slate-600",
+          class: "px-3 py-2 text-neutral-600",
           text: "press preview to render nftables, dnsmasq, unbound, cloudflared and the SQM script",
         }),
       );
@@ -1037,7 +1037,7 @@ export function createNetworkPage(): PageHandle {
     }
     section.append(bar, el("pre", {
       class:
-        "mt-1 max-h-[60vh] overflow-auto border-t border-[#1e2733] bg-[#0b0f14] p-3 text-[11px] leading-relaxed text-slate-400",
+        "mt-1 max-h-[60vh] overflow-auto border-t border-white/5 bg-black/40 p-3 text-[11px] leading-relaxed text-neutral-400",
       text: preview[previewFile],
     }));
     return section;
@@ -1051,14 +1051,14 @@ export function createNetworkPage(): PageHandle {
     const services = el("section", { class: "panel" });
     services.append(sectionTitle("daemons"));
     if (!status) {
-      services.append(el("div", { class: "px-3 py-2 text-slate-600", text: "no status yet" }));
+      services.append(el("div", { class: "px-3 py-2 text-neutral-600", text: "no status yet" }));
     } else {
       for (const service of status.services) {
         services.append(
-          el("div", { class: "flex items-baseline justify-between border-b border-[#161d27] px-3 py-2 text-[11px]" }, [
-            el("span", { class: "text-slate-300", text: service.unit }),
+          el("div", { class: "flex items-baseline justify-between border-b border-white/5 px-3 py-2 text-[11px]" }, [
+            el("span", { class: "text-neutral-300", text: service.unit }),
             el("span", {
-              class: service.active ? "text-emerald-400" : "text-slate-500",
+              class: service.active ? "text-emerald-400" : "text-neutral-500",
               text: service.state,
             }),
           ]),
@@ -1072,16 +1072,16 @@ export function createNetworkPage(): PageHandle {
     const body = el("div", { class: "flex flex-col gap-2 px-3 py-2 text-[11px]" });
     body.append(
       el("div", { class: "flex justify-between" }, [
-        el("span", { class: "text-slate-500", text: "firewall" }),
+        el("span", { class: "text-neutral-500", text: "firewall" }),
         el("span", {
-          class: status?.firewall.loaded ? "text-emerald-400" : "text-slate-500",
+          class: status?.firewall.loaded ? "text-emerald-400" : "text-neutral-500",
           text: status?.firewall.detail ?? "unknown",
         }),
       ]),
       el("div", { class: "flex justify-between" }, [
-        el("span", { class: "text-slate-500", text: "traffic shaping" }),
+        el("span", { class: "text-neutral-500", text: "traffic shaping" }),
         el("span", {
-          class: status?.sqm.active ? "text-emerald-400" : "text-slate-500",
+          class: status?.sqm.active ? "text-emerald-400" : "text-neutral-500",
           text: status?.sqm.detail ?? "unknown",
         }),
       ]),
@@ -1210,7 +1210,7 @@ export function createNetworkPage(): PageHandle {
 
 function sectionTitle(text: string): HTMLElement {
   return el("div", {
-    class: "panel-title border-b border-[#1e2733] px-3 py-1.5 text-[10px]",
+    class: "panel-title border-b border-white/5 px-3 py-1.5 text-[10px]",
     text,
   });
 }

@@ -47,7 +47,7 @@ export function createBell(): Bell {
     {
       type: "button",
       class:
-        "relative border border-[#1e2733] px-2 py-0.5 text-slate-400 hover:border-slate-500 hover:text-slate-200",
+        "relative border border-white/5 px-2 py-0.5 text-neutral-400 hover:border-neutral-500 hover:text-neutral-200",
       title: "Notifications",
     },
     [badge],
@@ -57,7 +57,7 @@ export function createBell(): Bell {
 
   const panel = el("div", {
     class:
-      "absolute right-0 z-40 mt-1 hidden max-h-96 w-80 overflow-y-auto border border-[#1e2733] bg-[#0d131b] shadow-xl",
+      "absolute right-0 z-40 mt-1 hidden max-h-96 w-80 overflow-y-auto border border-white/5 bg-[#0e0e0e] shadow-xl",
   });
 
   root.append(trigger, panel);
@@ -70,11 +70,11 @@ export function createBell(): Bell {
   function renderPanel(): void {
     panel.replaceChildren();
     const head = el("div", {
-      class: "flex items-center gap-2 border-b border-[#1e2733] px-3 py-1.5",
+      class: "flex items-center gap-2 border-b border-white/5 px-3 py-1.5",
     });
     head.append(
       el("span", {
-        class: "text-[10px] uppercase tracking-wide text-slate-500",
+        class: "text-[10px] uppercase tracking-wide text-neutral-500",
         text: "Notifications",
       }),
       el("span", { class: "ml-auto" }),
@@ -91,21 +91,21 @@ export function createBell(): Bell {
 
     if (items.length === 0) {
       panel.append(
-        el("div", { class: "px-3 py-4 text-xs text-slate-600", text: "Nothing to report." }),
+        el("div", { class: "px-3 py-4 text-xs text-neutral-600", text: "Nothing to report." }),
       );
       return;
     }
 
     for (const item of items) {
-      const row = el("div", { class: "border-b border-[#161d27] px-3 py-2" });
+      const row = el("div", { class: "border-b border-white/5 px-3 py-2" });
       const top = el("div", { class: "flex items-baseline gap-2" });
       top.append(
         el("span", { class: `text-xs font-semibold ${LEVEL_CLASS[item.level]}`, text: item.title }),
-        el("span", { class: "ml-auto text-[9px] text-slate-600", text: relativeTime(item.ts_ms) }),
+        el("span", { class: "ml-auto text-[9px] text-neutral-600", text: relativeTime(item.ts_ms) }),
       );
       row.append(
         top,
-        el("div", { class: "mt-0.5 text-[11px] text-slate-400", text: item.message }),
+        el("div", { class: "mt-0.5 text-[11px] text-neutral-400", text: item.message }),
       );
       panel.append(row);
     }

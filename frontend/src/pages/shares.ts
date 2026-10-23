@@ -46,8 +46,8 @@ export function createSharesPage(): PageHandle {
   let status = "";
   let loaded = false;
 
-  const statusLine = el("span", { class: "tabular text-[11px] text-slate-500" });
-  const tabBar = el("div", { class: "flex gap-1 border-b border-[#1e2733] pb-1" });
+  const statusLine = el("span", { class: "tabular text-[11px] text-neutral-500" });
+  const tabBar = el("div", { class: "flex gap-1 border-b border-white/5 pb-1" });
   const body = el("div", { class: "flex min-h-0 flex-1 flex-col gap-2" });
 
   const refreshButton = button("refresh", "", () => void load());
@@ -57,7 +57,7 @@ export function createSharesPage(): PageHandle {
   );
 
   const header = el("div", { class: "flex flex-wrap items-center gap-2" }, [
-    el("span", { class: "text-slate-300", text: "shares" }),
+    el("span", { class: "text-neutral-300", text: "shares" }),
     refreshButton,
     saveButton,
     applyButton,
@@ -205,7 +205,7 @@ export function createSharesPage(): PageHandle {
       field("workgroup", textInput(draft!.workgroup, (value) => (draft!.workgroup = value))),
       field("server string", textInput(draft!.server_string, (value) => (draft!.server_string = value))),
       el("span", {
-        class: "text-[11px] text-slate-600",
+        class: "text-[11px] text-neutral-600",
         text: samba!.lan_cidr ? `hosts allow = ${samba!.lan_cidr}` : "no LAN network detected",
       }),
     );
@@ -268,8 +268,8 @@ export function createSharesPage(): PageHandle {
       table.append(
         el("thead", {}, [
           el("tr", {}, [
-            el("th", { class: "px-2 py-1 text-left text-[10px] uppercase text-slate-600", text: "user" }),
-            el("th", { class: "px-2 py-1 text-left text-[10px] uppercase text-slate-600", text: "uid" }),
+            el("th", { class: "px-2 py-1 text-left text-[10px] uppercase text-neutral-600", text: "user" }),
+            el("th", { class: "px-2 py-1 text-left text-[10px] uppercase text-neutral-600", text: "uid" }),
             el("th", { class: "px-2 py-1" }),
           ]),
         ]),
@@ -277,9 +277,9 @@ export function createSharesPage(): PageHandle {
       const tbody = el("tbody");
       for (const user of samba!.users) {
         tbody.append(
-          el("tr", { class: "border-b border-[#161d27]" }, [
-            el("td", { class: "px-2 py-1 text-slate-300", text: user.username }),
-            el("td", { class: "tabular px-2 py-1 text-slate-500", text: user.uid ?? "—" }),
+          el("tr", { class: "border-b border-white/5" }, [
+            el("td", { class: "px-2 py-1 text-neutral-300", text: user.username }),
+            el("td", { class: "tabular px-2 py-1 text-neutral-500", text: user.uid ?? "—" }),
             el("td", { class: "px-2 py-1 text-right" }, [
               button("set password", "mr-2 text-[10px]", () => void setPassword(user.username)),
               button("remove", "text-[10px] text-rose-400", async () => {
@@ -366,7 +366,7 @@ export function createSharesPage(): PageHandle {
       cardBody.append(emptyNote("nothing is currently exported"));
     } else {
       for (const entry of nfs.active) {
-        cardBody.append(el("div", { class: "text-slate-400", text: `${entry.path} → ${entry.clients}` }));
+        cardBody.append(el("div", { class: "text-neutral-400", text: `${entry.path} → ${entry.clients}` }));
       }
     }
     return card;
@@ -375,7 +375,7 @@ export function createSharesPage(): PageHandle {
   function previewPanel(title: string, content: string): HTMLElement {
     const { root: card, body: cardBody } = panel(title);
     const pre = el("pre", {
-      class: "max-h-64 overflow-auto px-3 py-2 font-mono text-[10px] text-slate-400",
+      class: "max-h-64 overflow-auto px-3 py-2 font-mono text-[10px] text-neutral-400",
       text: content,
     });
     cardBody.append(pre);

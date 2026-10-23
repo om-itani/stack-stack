@@ -11,7 +11,7 @@
 import { api, hubApi } from "../api";
 import type { App, HubRepo } from "../api";
 import { stageStackDraft } from "../stackdraft";
-import { button, emptyNote } from "../ui";
+import { badge, button, emptyNote } from "../ui";
 
 export interface PageHandle {
   root: HTMLElement;
@@ -26,30 +26,30 @@ export function createAppsPage(): PageHandle {
   bar.className = "flex flex-wrap items-center gap-3";
 
   const heading = document.createElement("span");
-  heading.className = "text-slate-300";
+  heading.className = "text-neutral-300";
   heading.textContent = "app store";
 
   const search = document.createElement("input");
   search.type = "search";
   search.placeholder = "search name, tag…";
   search.className =
-    "w-48 border border-[#1e2733] bg-[#0b0f14] px-2 py-0.5 text-slate-200 outline-none focus:border-slate-500";
+    "w-48 border border-white/5 bg-black/40 px-2 py-0.5 text-neutral-200 outline-none focus:border-neutral-500";
 
   const category = document.createElement("select");
   category.className =
-    "border border-[#1e2733] bg-[#0b0f14] px-2 py-0.5 text-slate-200 outline-none focus:border-slate-500";
+    "border border-white/5 bg-black/40 px-2 py-0.5 text-neutral-200 outline-none focus:border-neutral-500";
 
   const installedOnly = document.createElement("label");
-  installedOnly.className = "flex items-center gap-1 text-[11px] text-slate-500";
+  installedOnly.className = "flex items-center gap-1 text-[11px] text-neutral-500";
   const installedBox = document.createElement("input");
   installedBox.type = "checkbox";
   installedOnly.append(installedBox, "installed only");
 
   const count = document.createElement("span");
-  count.className = "tabular text-[11px] text-slate-600";
+  count.className = "tabular text-[11px] text-neutral-600";
 
   const status = document.createElement("span");
-  status.className = "tabular truncate text-[11px] text-slate-500";
+  status.className = "tabular truncate text-[11px] text-neutral-500";
 
   bar.append(heading, search, category, installedOnly, count, status);
 
@@ -58,7 +58,7 @@ export function createAppsPage(): PageHandle {
   const hubPanel = document.createElement("section");
   hubPanel.className = "panel flex flex-col";
   const hubBar = document.createElement("div");
-  hubBar.className = "flex flex-wrap items-center gap-2 border-b border-[#1e2733] px-3 py-1.5";
+  hubBar.className = "flex flex-wrap items-center gap-2 border-b border-white/5 px-3 py-1.5";
   const hubHeading = document.createElement("span");
   hubHeading.className = "panel-title text-[10px]";
   hubHeading.textContent = "docker hub";
@@ -66,18 +66,19 @@ export function createAppsPage(): PageHandle {
   hubInput.type = "search";
   hubInput.placeholder = "search docker hub…";
   hubInput.className =
-    "w-56 border border-[#1e2733] bg-[#0b0f14] px-2 py-0.5 text-slate-200 outline-none focus:border-slate-500";
+    "w-56 border border-white/5 bg-black/40 px-2 py-0.5 text-neutral-200 outline-none focus:border-neutral-500";
   const hubBtn = button("search", "text-[10px]");
   const hubStatus = document.createElement("span");
-  hubStatus.className = "tabular truncate text-[11px] text-slate-500";
+  hubStatus.className = "tabular truncate text-[11px] text-neutral-500";
   hubBar.append(hubHeading, hubInput, hubBtn, hubStatus);
 
   const hubResults = document.createElement("div");
   hubResults.className = "flex flex-col divide-y divide-[#161d27]";
   hubPanel.append(hubBar, hubResults);
 
+  // One vertical stack of horizontal rows (carousels), not a grid.
   const grid = document.createElement("div");
-  grid.className = "grid grid-cols-1 gap-3 lg:grid-cols-2 2xl:grid-cols-3";
+  grid.className = "flex min-h-0 flex-col gap-5";
 
   root.append(bar, hubPanel, grid);
 
@@ -91,7 +92,7 @@ export function createAppsPage(): PageHandle {
         ? "tabular truncate text-[11px] text-rose-400"
         : tone === "ok"
           ? "tabular truncate text-[11px] text-emerald-400"
-          : "tabular truncate text-[11px] text-slate-500";
+          : "tabular truncate text-[11px] text-neutral-500";
   }
 
   function errorText(err: unknown): string {
@@ -135,7 +136,7 @@ export function createAppsPage(): PageHandle {
     hubStatus.className =
       tone === "error"
         ? "tabular truncate text-[11px] text-rose-400"
-        : "tabular truncate text-[11px] text-slate-500";
+        : "tabular truncate text-[11px] text-neutral-500";
   }
 
   // Typing debounces; the button and Enter search immediately. An in-flight
@@ -216,7 +217,7 @@ export function createAppsPage(): PageHandle {
     row.className = "flex flex-wrap items-baseline gap-x-3 gap-y-1 px-3 py-1.5 text-[11px]";
 
     const name = document.createElement("span");
-    name.className = "font-semibold text-slate-200";
+    name.className = "font-semibold text-neutral-200";
     name.textContent = repo.name;
 
     const official = document.createElement("span");
@@ -226,11 +227,11 @@ export function createAppsPage(): PageHandle {
     }
 
     const stats = document.createElement("span");
-    stats.className = "tabular text-[10px] text-slate-600";
+    stats.className = "tabular text-[10px] text-neutral-600";
     stats.textContent = `★ ${compact(repo.star_count)} · ${compact(repo.pull_count)} pulls`;
 
     const description = document.createElement("span");
-    description.className = "w-full truncate text-slate-500";
+    description.className = "w-full truncate text-neutral-500";
     description.textContent = repo.description;
 
     const deploy = button("deploy", "ml-auto text-[10px] text-emerald-400 hover:border-emerald-500");
@@ -296,37 +297,77 @@ export function createAppsPage(): PageHandle {
       grid.append(emptyNote("no apps match the current filter"));
       return;
     }
+    // Group into rows so the eye scans by category, the way a media library does.
+    const byCategory = new Map<string, App[]>();
     for (const app of list) {
-      grid.append(card(app));
+      const key = app.category || "other";
+      const bucket = byCategory.get(key) ?? [];
+      bucket.push(app);
+      byCategory.set(key, bucket);
     }
+    for (const [category, items] of byCategory) {
+      grid.append(row(category, items));
+    }
+  }
+
+  /** A titled, horizontally scrolling row of app cards. */
+  function row(category: string, items: App[]): HTMLElement {
+    const section = document.createElement("section");
+
+    const heading = document.createElement("div");
+    heading.className = "mb-2 flex items-baseline gap-2 px-1";
+    const title = document.createElement("span");
+    title.className = "text-sm font-medium text-neutral-200";
+    title.textContent = category;
+    const subtitle = document.createElement("span");
+    subtitle.className = "tabular text-[10px] text-neutral-600";
+    subtitle.textContent = `${items.length} app${items.length === 1 ? "" : "s"}`;
+    heading.append(title, subtitle);
+
+    const track = document.createElement("div");
+    track.className = "flex snap-x gap-3 overflow-x-auto pb-2";
+    for (const app of items) {
+      track.append(card(app));
+    }
+
+    section.append(heading, track);
+    return section;
   }
 
   function card(app: App): HTMLElement {
     const el = document.createElement("section");
-    el.className = "panel flex flex-col";
+    // Fixed width so the row scrolls rather than reflowing.
+    el.className = "panel flex w-60 shrink-0 snap-start flex-col";
 
     const head = document.createElement("div");
-    head.className = "flex items-baseline gap-2 border-b border-[#1e2733] px-3 py-1.5";
+    head.className = "flex items-center gap-3 px-3 pt-3";
+    // A large icon tile is what makes the row read as a media library rather
+    // than a list of package names.
     const icon = document.createElement("span");
-    icon.textContent = app.icon || "▢";
-    const name = document.createElement("span");
-    name.className = "font-semibold text-slate-200";
+    icon.className =
+      "grid size-11 shrink-0 place-items-center rounded-lg bg-white/5 text-2xl leading-none";
+    icon.textContent = app.icon ?? "";
+    const titleWrap = document.createElement("div");
+    titleWrap.className = "min-w-0";
+    const name = document.createElement("div");
+    name.className = "truncate font-medium text-neutral-100";
     name.textContent = app.name;
-    const categoryTag = document.createElement("span");
-    categoryTag.className = "tabular ml-auto text-[10px] text-slate-600";
+    const categoryTag = document.createElement("div");
+    categoryTag.className = "tabular truncate text-[10px] text-neutral-600";
     categoryTag.textContent = app.category;
-    head.append(icon, name, categoryTag);
+    titleWrap.append(name, categoryTag);
+    head.append(icon, titleWrap);
 
     const body = document.createElement("div");
-    body.className = "flex-1 px-3 py-2 text-[11px] text-slate-500";
+    body.className = "flex-1 px-3 pt-2 pb-2 text-[11px] text-neutral-500";
     const description = document.createElement("p");
-    description.className = "text-slate-400";
+    description.className = "line-clamp-3 text-neutral-400";
     description.textContent = app.description;
     body.append(description);
 
     if (app.ports.length > 0) {
       const ports = document.createElement("div");
-      ports.className = "tabular mt-1 flex flex-wrap gap-x-3 text-[10px] text-slate-600";
+      ports.className = "tabular mt-1 flex flex-wrap gap-x-3 text-[10px] text-neutral-600";
       for (const port of app.ports) {
         const span = document.createElement("span");
         span.textContent = `${port.host}:${port.container}/${port.protocol}`;
@@ -337,10 +378,10 @@ export function createAppsPage(): PageHandle {
 
     if (app.tags.length > 0) {
       const tags = document.createElement("div");
-      tags.className = "mt-1 flex flex-wrap gap-1 text-[10px] text-slate-600";
+      tags.className = "mt-1 flex flex-wrap gap-1 text-[10px] text-neutral-600";
       for (const tag of app.tags) {
         const span = document.createElement("span");
-        span.className = "border border-[#1e2733] px-1";
+        span.className = "border border-white/5 px-1";
         span.textContent = tag;
         tags.append(span);
       }
@@ -350,17 +391,17 @@ export function createAppsPage(): PageHandle {
     const details = document.createElement("details");
     details.className = "mt-2";
     const summary = document.createElement("summary");
-    summary.className = "cursor-pointer text-[10px] text-slate-600";
+    summary.className = "cursor-pointer text-[10px] text-neutral-600";
     summary.textContent = "compose";
     const pre = document.createElement("pre");
     pre.className =
-      "mt-1 max-h-40 overflow-auto border border-[#1e2733] bg-[#0b0f14] p-2 text-[10px] text-slate-500";
+      "mt-1 max-h-40 overflow-auto border border-white/5 bg-black/40 p-2 text-[10px] text-neutral-500";
     pre.textContent = app.compose;
     details.append(summary, pre);
     body.append(details);
 
     const actions = document.createElement("div");
-    actions.className = "flex flex-wrap items-center gap-2 border-t border-[#161d27] px-3 py-2";
+    actions.className = "flex flex-wrap items-center gap-2 border-t border-white/5 px-3 py-2";
 
     const installBtn = button(app.installed ? "reinstall" : "install", "text-emerald-400 hover:border-emerald-500");
     installBtn.disabled = busy;
@@ -376,13 +417,9 @@ export function createAppsPage(): PageHandle {
       }
     });
 
-    const badge = document.createElement("span");
-    badge.className = app.installed
-      ? "tabular text-[10px] text-emerald-500"
-      : "tabular text-[10px] text-slate-600";
-    badge.textContent = app.installed ? "installed" : "not installed";
+    const state = badge(app.installed ? "installed" : "not installed", app.installed ? "ok" : "muted");
 
-    actions.append(installBtn, removeBtn, badge);
+    actions.append(installBtn, removeBtn, state);
     el.append(head, body, actions);
     return el;
   }

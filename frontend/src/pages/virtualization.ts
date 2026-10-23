@@ -103,13 +103,13 @@ const IP_MODE_OPTIONS: [string, string][] = [
 
 const STATE_STYLES: Record<string, string> = {
   running: "text-emerald-400",
-  stopped: "text-slate-500",
+  stopped: "text-neutral-500",
   paused: "text-amber-400",
   frozen: "text-amber-400",
   starting: "text-sky-400",
   stopping: "text-amber-400",
-  unknown: "text-slate-600",
-  unavailable: "text-slate-600",
+  unknown: "text-neutral-600",
+  unavailable: "text-neutral-600",
 };
 
 export function createVirtualizationPage(): PageHandle {
@@ -126,9 +126,9 @@ export function createVirtualizationPage(): PageHandle {
   let vmFilter = "";
   let ctFilter = "";
 
-  const heading = el("span", { class: "text-slate-300", text: "virtualization" });
-  const statusLine = el("span", { class: "tabular truncate text-[11px] text-slate-500" });
-  const badges = el("span", { class: "tabular text-[10px] text-slate-500" });
+  const heading = el("span", { class: "text-neutral-300", text: "virtualization" });
+  const statusLine = el("span", { class: "tabular truncate text-[11px] text-neutral-500" });
+  const badges = el("span", { class: "tabular text-[10px] text-neutral-500" });
   const reload = button("refresh");
   const header = el("div", { class: "flex flex-wrap items-center gap-3" }, [
     heading,
@@ -138,7 +138,7 @@ export function createVirtualizationPage(): PageHandle {
   ]);
 
   const noticeBox = el("div", { class: "flex flex-col gap-1" });
-  const tabBar = el("div", { class: "flex flex-wrap gap-1 border-b border-[#1e2733] pb-1" });
+  const tabBar = el("div", { class: "flex flex-wrap gap-1 border-b border-white/5 pb-1" });
   const tabBody = el("div", { class: "min-h-0 flex-1" });
   root.append(header, noticeBox, tabBar, tabBody);
 
@@ -159,7 +159,7 @@ export function createVirtualizationPage(): PageHandle {
         ? "tabular truncate text-[11px] text-rose-400"
         : tone === "ok"
           ? "tabular truncate text-[11px] text-emerald-400"
-          : "tabular truncate text-[11px] text-slate-500";
+          : "tabular truncate text-[11px] text-neutral-500";
   }
 
   function errorText(err: unknown): string {
@@ -270,7 +270,7 @@ export function createVirtualizationPage(): PageHandle {
   function buildGuests(): HTMLElement {
     const layout = el("div", { class: "flex min-h-0 flex-col gap-3" });
     if (!state) {
-      layout.append(el("div", { class: "text-slate-600", text: "loading…" }));
+      layout.append(el("div", { class: "text-neutral-600", text: "loading…" }));
       return layout;
     }
     if (state.statuses.length === 0) {
@@ -292,28 +292,28 @@ export function createVirtualizationPage(): PageHandle {
     const card = el("section", { class: "panel flex flex-col" });
 
     const head = el("div", {
-      class: "flex items-baseline justify-between gap-3 border-b border-[#1e2733] px-3 py-1.5",
+      class: "flex items-baseline justify-between gap-3 border-b border-white/5 px-3 py-1.5",
     });
     head.append(
-      el("span", { class: "truncate font-semibold text-slate-200", text: status.name }),
+      el("span", { class: "truncate font-semibold text-neutral-200", text: status.name }),
       el("span", {
-        class: `tabular text-[10px] uppercase ${STATE_STYLES[status.state] ?? "text-slate-500"}`,
+        class: `tabular text-[10px] uppercase ${STATE_STYLES[status.state] ?? "text-neutral-500"}`,
         text: status.state,
       }),
     );
 
     const kindLabel = status.kind === "vm" ? "KVM" : "LXC";
     const meta = el("div", {
-      class: "tabular flex flex-wrap gap-x-3 px-3 py-1 text-[10px] text-slate-600",
+      class: "tabular flex flex-wrap gap-x-3 px-3 py-1 text-[10px] text-neutral-600",
     });
     meta.append(
-      el("span", { class: "text-slate-500", text: kindLabel }),
+      el("span", { class: "text-neutral-500", text: kindLabel }),
       el("span", { text: status.pid ? `pid ${status.pid}` : "no pid" }),
       el("span", { text: status.memory_bytes ? `${mib(status.memory_bytes)} MiB` : "—" }),
       status.ip ? el("span", { text: status.ip }) : el("span", { text: "—" }),
     );
 
-    const actions = el("div", { class: "flex flex-wrap gap-2 border-t border-[#161d27] px-3 py-2" });
+    const actions = el("div", { class: "flex flex-wrap gap-2 border-t border-white/5 px-3 py-2" });
     const running = status.state === "running";
 
     const startBtn = button("start");
@@ -486,7 +486,7 @@ export function createVirtualizationPage(): PageHandle {
     );
     form.append(ciGrid);
 
-    const actions = el("div", { class: "flex flex-wrap gap-2 border-t border-[#161d27] px-3 py-2" });
+    const actions = el("div", { class: "flex flex-wrap gap-2 border-t border-white/5 px-3 py-2" });
     actions.append(
       button("create vm", "text-emerald-400 hover:border-emerald-500", () => {
         void run(() => virtApi.createVm(cloneVm(vm)), `creating ${vm.id || "vm"}`);
@@ -617,7 +617,7 @@ export function createVirtualizationPage(): PageHandle {
     );
     form.append(bindBox);
 
-    const actions = el("div", { class: "flex flex-wrap gap-2 border-t border-[#161d27] px-3 py-2" });
+    const actions = el("div", { class: "flex flex-wrap gap-2 border-t border-white/5 px-3 py-2" });
     actions.append(
       button("create container", "text-emerald-400 hover:border-emerald-500", () => {
         void run(() => virtApi.createCt(cloneCt(ct)), `creating ${ct.id || "container"}`);
@@ -639,7 +639,7 @@ export function createVirtualizationPage(): PageHandle {
     const row = el("div", { class: "flex flex-wrap items-center gap-2 text-[11px]" });
     row.append(
       textInput(bind.source, (value) => { bind.source = value; }, { placeholder: "/srv/data" }),
-      el("span", { class: "text-slate-600", text: "→" }),
+      el("span", { class: "text-neutral-600", text: "→" }),
       textInput(bind.target, (value) => { bind.target = value; }, { placeholder: "/mnt/data" }),
       checkbox(bind.readonly, (value) => { bind.readonly = value; }, "ro"),
       button("remove", "text-rose-400", () => {
@@ -691,14 +691,14 @@ export function createVirtualizationPage(): PageHandle {
       class: `flex flex-col items-start gap-1 border px-2 py-1.5 text-left transition-colors ${
         selected
           ? "border-emerald-600 bg-emerald-950/30"
-          : "border-[#1e2733] hover:border-slate-500"
+          : "border-white/5 hover:border-neutral-500"
       }`,
     });
     const top = el("div", { class: "flex w-full items-baseline gap-2" });
     top.append(
       el("span", { text: image.icon || "▢" }),
-      el("span", { class: "font-semibold text-slate-200", text: image.name }),
-      el("span", { class: "tabular ml-auto text-[10px] text-slate-600", text: image.category }),
+      el("span", { class: "font-semibold text-neutral-200", text: image.name }),
+      el("span", { class: "tabular ml-auto text-[10px] text-neutral-600", text: image.category }),
     );
     // A rolling release cannot be checksum-pinned, so it is badged as unverified
     // rather than failing the download with a checksum it can never match.
@@ -712,9 +712,9 @@ export function createVirtualizationPage(): PageHandle {
     }
     card.append(
       top,
-      el("span", { class: "text-[10px] text-slate-500", text: image.description }),
+      el("span", { class: "text-[10px] text-neutral-500", text: image.description }),
       el("span", {
-        class: "tabular text-[10px] text-slate-600",
+        class: "tabular text-[10px] text-neutral-600",
         text: [
           image.arch,
           image.format ?? image.lxc_release ?? "",
@@ -745,7 +745,7 @@ export function createVirtualizationPage(): PageHandle {
     if (files.length === 0) {
       section.append(
         el("div", {
-          class: "px-3 py-2 text-slate-600",
+          class: "px-3 py-2 text-neutral-600",
           text: "press preview on a VM or container form to render its QEMU command line, LXC config and cloud-init files",
         }),
       );
@@ -770,7 +770,7 @@ export function createVirtualizationPage(): PageHandle {
     section.append(
       el("pre", {
         class:
-          "mt-1 max-h-[60vh] overflow-auto border-t border-[#1e2733] bg-[#0b0f14] p-3 text-[11px] leading-relaxed text-slate-400",
+          "mt-1 max-h-[60vh] overflow-auto border-t border-white/5 bg-black/40 p-3 text-[11px] leading-relaxed text-neutral-400",
         text: files[previewFile] ?? "",
       }),
     );
@@ -778,7 +778,7 @@ export function createVirtualizationPage(): PageHandle {
     if (vmPreview) {
       section.append(
         el("div", {
-          class: "tabular px-3 py-2 text-[10px] text-slate-600",
+          class: "tabular px-3 py-2 text-[10px] text-neutral-600",
           text: `uuid ${vmPreview.uuid}${vmPreview.vnc ? ` · vnc ${vmPreview.vnc}` : ""}`,
         }),
       );
@@ -831,7 +831,7 @@ export function createVirtualizationPage(): PageHandle {
   function buildHost(): HTMLElement {
     const layout = el("div", { class: "grid gap-4 xl:grid-cols-2" });
     if (!state) {
-      layout.append(el("div", { class: "text-slate-600", text: "loading…" }));
+      layout.append(el("div", { class: "text-neutral-600", text: "loading…" }));
       return layout;
     }
     const host: HostCapabilities = state.host;
@@ -872,9 +872,9 @@ export function createVirtualizationPage(): PageHandle {
 
   function row(label: string, value: string, ok?: boolean): HTMLElement {
     return el("div", { class: "flex justify-between gap-3" }, [
-      el("span", { class: "text-slate-500", text: label }),
+      el("span", { class: "text-neutral-500", text: label }),
       el("span", {
-        class: ok === undefined ? "text-slate-300" : ok ? "text-emerald-400" : "text-slate-600",
+        class: ok === undefined ? "text-neutral-300" : ok ? "text-emerald-400" : "text-neutral-600",
         text: value,
       }),
     ]);
@@ -930,7 +930,7 @@ type CloudInitIpMode = VmConfig["cloud_init"]["ip_mode"];
 
 function sectionTitle(text: string): HTMLElement {
   return el("div", {
-    class: "panel-title border-b border-[#1e2733] px-3 py-1.5 text-[10px]",
+    class: "panel-title border-b border-white/5 px-3 py-1.5 text-[10px]",
     text,
   });
 }
