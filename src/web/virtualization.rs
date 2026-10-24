@@ -22,6 +22,7 @@ use crate::state::AppState;
 use crate::virtualization::host::{self, HostCapabilities};
 use crate::virtualization::manager::{self, Report, SnapshotAction, VmControl};
 use crate::virtualization::model::{CtConfig, Problem, VirtualizationConfig, VmConfig};
+use crate::virtualization::sources::{self, CachedImage, ImportResult};
 use crate::virtualization::status::{self, GuestStatus};
 use crate::virtualization::{CtPreview, VirtContext, VmPreview, images, store};
 
@@ -84,6 +85,97 @@ pub async fn state(State(state): State<AppState>) -> Result<Json<VirtState>, Api
 }
 
 /// Persist the document, refusing an invalid one before it can be written.
+// ---------------------------------------------------------------------------
+// Custom image sources and the download cache
+// ---------------------------------------------------------------------------
+
+#[derive(Deserialize)]
+pub struct FetchRequest {
+    pub url: String,
+    #[serde(default)]
+    pub name: Option<String>,
+}
+
+#[derive(Deserialize)]
+pub struct ImportRequest {
+    /// Absolute path to an image already on this host.
+    pub path: String,
+}
+
+#[derive(Serialize)]
+pub struct ImageActionResult {
+    pub ok: bool,
+    pub message: String,
+    pub image: ImportResult,
+}
+
+/// Images currently in the cache.
+pub async fn image_list(State(state): State<AppState>) -> Result<Json<Vec<CachedImage>>, ApiError> {
+    let dir = std::path::PathBuf::from(&state.config.images_dir);
+    let images = tokio::task::spawn_blocking(move || sources::list(&dir))
+        .await
+        .map_err(|err| ApiError::internal(format!("image task failed: {err}")))?;
+    Ok(Json(images))
+}
+
+/// Download an image from a URL into the cache.
+pub async fn image_fetch(
+    State(state): State<AppState>,
+    Json(request): Json<FetchRequest>,
+) -> Result<Json<ImageActionResult>, ApiError> {
+    let dir = std::path::PathBuf::from(&state.config.images_dir);
+    let runner = state.virt.runner.clone();
+    let url = request.url.clone();
+    let name = request.name.clone();
+    let image = tokio::task::spawn_blocking(move || {
+        sources::fetch(&dir, runner.as_ref(), &url, name.as_deref())
+    })
+    .await
+    .map_err(|err| ApiError::internal(format!("image task failed: {err}")))??;
+
+    state.audit("virt.image_fetch", &request.url, &image.name);
+    Ok(Json(ImageActionResult {
+        ok: true,
+        message: format!("{} downloaded", image.name),
+        image,
+    }))
+}
+
+/// Copy an image that is already on this host into the cache.
+pub async fn image_import(
+    State(state): State<AppState>,
+    Json(request): Json<ImportRequest>,
+) -> Result<Json<ImageActionResult>, ApiError> {
+    let dir = std::path::PathBuf::from(&state.config.images_dir);
+    let runner = state.virt.runner.clone();
+    let path = request.path.clone();
+    let image = tokio::task::spawn_blocking(move || sources::import(&dir, runner.as_ref(), &path))
+        .await
+        .map_err(|err| ApiError::internal(format!("image task failed: {err}")))??;
+
+    state.audit("virt.image_import", &request.path, &image.name);
+    Ok(Json(ImageActionResult {
+        ok: true,
+        message: format!("{} imported", image.name),
+        image,
+    }))
+}
+
+/// Delete one cached image.
+pub async fn image_delete(
+    State(state): State<AppState>,
+    Path(name): Path<String>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let dir = std::path::PathBuf::from(&state.config.images_dir);
+    let target = name.clone();
+    tokio::task::spawn_blocking(move || sources::remove(&dir, &target))
+        .await
+        .map_err(|err| ApiError::internal(format!("image task failed: {err}")))??;
+
+    state.audit("virt.image_delete", &name, "");
+    Ok(Json(serde_json::json!({ "ok": true })))
+}
+
 pub async fn update_config(
     State(state): State<AppState>,
     Json(config): Json<VirtualizationConfig>,

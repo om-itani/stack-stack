@@ -209,6 +209,16 @@ pub fn router(state: AppState) -> Router {
         )
         .route("/api/virt/preview/vm", post(virtualization::preview_vm))
         .route("/api/virt/preview/ct", post(virtualization::preview_ct))
+        .route("/api/virt/images", get(virtualization::image_list))
+        .route("/api/virt/images/fetch", post(virtualization::image_fetch))
+        .route(
+            "/api/virt/images/import",
+            post(virtualization::image_import),
+        )
+        .route(
+            "/api/virt/images/{name}",
+            delete(virtualization::image_delete),
+        )
         .route("/api/virt/vms", post(virtualization::create_vm))
         .route("/api/virt/vms/{id}/start", post(virtualization::vm_start))
         .route("/api/virt/vms/{id}/stop", post(virtualization::vm_stop))

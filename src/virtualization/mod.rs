@@ -29,6 +29,7 @@ pub mod model;
 pub mod qemu;
 pub mod qmp;
 pub mod sha256;
+pub mod sources;
 pub mod status;
 pub mod store;
 

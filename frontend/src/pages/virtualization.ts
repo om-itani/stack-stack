@@ -12,7 +12,7 @@
  * or template selection) re-render.
  */
 
-import { virtApi, hostApi, blankVm, blankCt } from "../api";
+import { virtApi, hostApi, imagesApi, blankVm, blankCt } from "../api";
 import type {
   ActionReport,
   ApiFailure,
@@ -32,12 +32,14 @@ import type {
 const loadTerminal = () => import("../terminal");
 import {
   button,
+  bytes,
   checkbox,
   el,
   emptyNote,
   field,
   listInput,
   numberInput,
+  openModal,
   select,
   textInput,
 } from "../ui";
@@ -146,6 +148,7 @@ export function createVirtualizationPage(): PageHandle {
     { id: "guests", label: "guests", build: buildGuests },
     { id: "new-vm", label: "new vm", build: buildNewVm },
     { id: "new-ct", label: "new container", build: buildNewCt },
+    { id: "images", label: "images", build: buildImages },
     { id: "preview", label: "preview", build: buildPreview },
     { id: "host", label: "host", build: buildHost },
   ];
@@ -164,6 +167,147 @@ export function createVirtualizationPage(): PageHandle {
 
   function errorText(err: unknown): string {
     return err instanceof Error ? err.message : String(err);
+  }
+
+  // --- images tab: custom sources and the download cache ------------------
+
+  function buildImages(): HTMLElement {
+    const layout = el("div", { class: "flex flex-col gap-3" });
+    const host = el("div", { class: "flex flex-col divide-y divide-white/5 border border-white/5" });
+
+    const actions = el("section", { class: "panel flex flex-wrap items-center gap-2 px-3 py-2" });
+    const urlBtn = button("add from url", "text-emerald-400 hover:border-emerald-500");
+    urlBtn.addEventListener("click", openAddUrl);
+    const pathBtn = button("import from host path");
+    pathBtn.addEventListener("click", openImportPath);
+    const refreshBtn = button("refresh");
+    refreshBtn.addEventListener("click", () => void refreshImages(host));
+    actions.append(
+      el("span", { class: "panel-title text-[10px]", text: "guest images" }),
+      urlBtn,
+      pathBtn,
+      refreshBtn,
+      el("span", {
+        class: "text-[10px] text-neutral-600",
+        text: "downloaded into the images directory; validated with qemu-img",
+      }),
+    );
+
+    layout.append(actions, host);
+    void refreshImages(host);
+    return layout;
+  }
+
+  async function refreshImages(host: HTMLElement): Promise<void> {
+    host.replaceChildren(el("div", { class: "px-3 py-2 text-[11px] text-neutral-500", text: "loading…" }));
+    try {
+      const images = await imagesApi.list();
+      host.replaceChildren();
+      if (images.length === 0) {
+        host.append(emptyNote("no downloaded images yet"));
+        return;
+      }
+      for (const image of images) {
+        const row = el("div", { class: "flex flex-wrap items-center gap-x-3 gap-y-1 px-3 py-2 text-[11px]" });
+        row.append(
+          el("span", { class: "min-w-0 flex-1 truncate text-neutral-200", text: image.name }),
+          el("span", { class: "tabular text-neutral-500", text: bytes(image.size_bytes) }),
+          el("span", {
+            class: "tabular text-neutral-600",
+            text: image.modified ? new Date(image.modified * 1000).toLocaleDateString() : "—",
+          }),
+        );
+        const removeBtn = button("delete", "text-[10px] text-rose-400 hover:border-rose-500");
+        removeBtn.addEventListener("click", async () => {
+          if (!window.confirm(`Delete ${image.name} from the images directory?`)) {
+            return;
+          }
+          try {
+            await imagesApi.remove(image.name);
+            setStatus(`${image.name} deleted`, "ok");
+          } catch (err) {
+            setStatus(errorText(err), "error");
+          }
+          await refreshImages(host);
+        });
+        row.append(removeBtn);
+        host.append(row);
+      }
+    } catch (err) {
+      host.replaceChildren(emptyNote(errorText(err)));
+    }
+  }
+
+  function openAddUrl(): void {
+    const modal = openModal("add image from url", "max-w-lg");
+    let url = "";
+    let name = "";
+    const feedback = el("div", { class: "tabular text-[11px] text-neutral-500" });
+    const submit = button("download", "text-emerald-400 hover:border-emerald-500");
+    const cancel = button("cancel", "", () => modal.close());
+    submit.addEventListener("click", async () => {
+      if (!url.trim()) {
+        feedback.textContent = "a url is required";
+        return;
+      }
+      submit.disabled = true;
+      busy = true;
+      feedback.className = "tabular text-[11px] text-neutral-500";
+      feedback.textContent = "downloading… this can take a while for an ISO";
+      try {
+        const result = await imagesApi.fetch(url.trim(), name.trim() || undefined);
+        setStatus(result.message, "ok");
+        modal.close();
+      } catch (err) {
+        feedback.className = "tabular text-[11px] text-rose-400";
+        feedback.textContent = errorText(err);
+      } finally {
+        busy = false;
+        submit.disabled = false;
+      }
+    });
+    modal.body.append(
+      field("url", textInput("", (value) => { url = value; }, { placeholder: "https://example.com/kali.iso" })),
+      field("file name (optional)", textInput("", (value) => { name = value; }, { placeholder: "derived from the url" })),
+      el("div", { class: "flex flex-wrap items-center gap-2" }, [submit, cancel, feedback]),
+    );
+  }
+
+  function openImportPath(): void {
+    const modal = openModal("import image from this host", "max-w-lg");
+    let path = "";
+    const feedback = el("div", { class: "tabular text-[11px] text-neutral-500" });
+    const submit = button("import", "text-emerald-400 hover:border-emerald-500");
+    const cancel = button("cancel", "", () => modal.close());
+    submit.addEventListener("click", async () => {
+      if (!path.trim()) {
+        feedback.textContent = "a path is required";
+        return;
+      }
+      submit.disabled = true;
+      busy = true;
+      feedback.className = "tabular text-[11px] text-neutral-500";
+      feedback.textContent = "copying…";
+      try {
+        const result = await imagesApi.import(path.trim());
+        setStatus(result.message, "ok");
+        modal.close();
+      } catch (err) {
+        feedback.className = "tabular text-[11px] text-rose-400";
+        feedback.textContent = errorText(err);
+      } finally {
+        busy = false;
+        submit.disabled = false;
+      }
+    });
+    modal.body.append(
+      el("div", {
+        class: "text-[11px] text-neutral-400",
+        text: "The file must already be on this machine. It is validated with qemu-img and copied into the images directory.",
+      }),
+      field("host path", textInput("", (value) => { path = value; }, { placeholder: "/home/you/kali.iso" })),
+      el("div", { class: "flex flex-wrap items-center gap-2" }, [submit, cancel, feedback]),
+    );
   }
 
   async function load(): Promise<void> {

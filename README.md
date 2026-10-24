@@ -145,6 +145,14 @@ The guest catalog has 46 entries: 25 VM images and 21 LXC templates, each with a
 pinned URL and a download cache. Images that cannot be pinned, like rolling
 releases, are marked unverified in the UI instead of pretending otherwise.
 
+An Images tab covers anything outside the catalog. An image can be downloaded
+from a URL or imported from a path already on this host; both are validated with
+`qemu-img info` before they are offered, the transfer lands in the images
+directory through a temporary file so a half-download is never visible, and the
+tab lists the cache with sizes and dates so it can be pruned. URLs must be
+`http(s)`, and names must be a plain `name.ext` with an image extension, so
+neither can reach outside the images directory.
+
 ### Terminal and logs
 
 A real PTY host shell behind the login gate, using your login shell. Container

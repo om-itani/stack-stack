@@ -1742,3 +1742,31 @@ export const updatesApi = {
   rollback: (id: string) =>
     request<UpdateResult>(`/api/updates/${encodeURIComponent(id)}/rollback`, { method: "POST" }),
 };
+
+// ---------------------------------------------------------------------------
+// Guest image sources and cache
+// ---------------------------------------------------------------------------
+
+export interface CachedImage {
+  name: string;
+  size_bytes: number;
+  modified: number;
+}
+
+export interface ImageActionResult {
+  ok: boolean;
+  message: string;
+  image: { name: string; path: string; size_bytes: number };
+}
+
+export const imagesApi = {
+  list: () => request<CachedImage[]>("/api/virt/images"),
+  fetch: (url: string, name?: string) =>
+    jsonRequest<ImageActionResult>("/api/virt/images/fetch", "POST", { url, name: name ?? null }),
+  import: (path: string) =>
+    jsonRequest<ImageActionResult>("/api/virt/images/import", "POST", { path }),
+  remove: (name: string) =>
+    request<{ ok: boolean }>(`/api/virt/images/${encodeURIComponent(name)}`, {
+      method: "DELETE",
+    }),
+};
