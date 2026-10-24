@@ -1644,3 +1644,55 @@ export const storageApi = {
   unmount: (target: string) =>
     jsonRequest<StorageResult>("/api/storage/unmount", "POST", { target }),
 };
+
+// ---------------------------------------------------------------------------
+// DNS blocklists (adblock)
+// ---------------------------------------------------------------------------
+
+/** One subscription plus the outcome of its last fetch. */
+export interface BlocklistRow {
+  name: string;
+  url: string;
+  enabled: boolean;
+  builtin: boolean;
+  status: string | null;
+  error: string | null;
+  domains: number | null;
+  fetched_at: number | null;
+}
+
+export interface BlocklistState {
+  sources: BlocklistRow[];
+  allowlist: string[];
+  total: number;
+  updated_at: number | null;
+  compiled_file: string;
+  unbound_enabled: boolean;
+}
+
+export interface BlocklistUpdateResult {
+  ok: boolean;
+  message: string;
+  state: BlocklistState;
+}
+
+export interface BlocklistLookup {
+  domain: string;
+  blocked: boolean;
+  allowed: boolean;
+}
+
+export const blocklistsApi = {
+  state: () => request<BlocklistState>("/api/network/blocklists"),
+  saveSources: (
+    sources: { name: string; url: string; enabled: boolean; builtin: boolean }[],
+  ) => jsonRequest<BlocklistState>("/api/network/blocklists/sources", "POST", { sources }),
+  saveAllowlist: (allowlist: string[]) =>
+    jsonRequest<BlocklistState>("/api/network/blocklists/allowlist", "POST", { allowlist }),
+  update: () =>
+    request<BlocklistUpdateResult>("/api/network/blocklists/update", { method: "POST" }),
+  lookup: (domain: string) =>
+    request<BlocklistLookup>(
+      `/api/network/blocklists/lookup?domain=${encodeURIComponent(domain)}`,
+    ),
+};

@@ -90,6 +90,23 @@ pub fn router(state: AppState) -> Router {
             get(network::state).put(network::update_config),
         )
         .route("/api/network/preview", post(network::preview))
+        .route("/api/network/blocklists", get(network::blocklists_state))
+        .route(
+            "/api/network/blocklists/sources",
+            post(network::blocklists_sources),
+        )
+        .route(
+            "/api/network/blocklists/allowlist",
+            post(network::blocklists_allowlist),
+        )
+        .route(
+            "/api/network/blocklists/update",
+            post(network::blocklists_update),
+        )
+        .route(
+            "/api/network/blocklists/lookup",
+            get(network::blocklists_lookup),
+        )
         .route("/api/network/apply", post(network::apply))
         .route("/api/network/confirm", post(network::confirm))
         .route(

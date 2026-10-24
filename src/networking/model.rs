@@ -254,6 +254,18 @@ pub struct DnsRewrite {
     pub comment: String,
 }
 
+/// One blocklist subscription.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BlocklistSource {
+    pub name: String,
+    pub url: String,
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    /// True for a shipped default, so the UI does not offer to delete it.
+    #[serde(default)]
+    pub builtin: bool,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DnsConfig {
     #[serde(default = "default_true")]
@@ -272,6 +284,15 @@ pub struct DnsConfig {
     /// Domains answered with NXDOMAIN (a hand-managed blocklist).
     #[serde(default)]
     pub blocked_domains: Vec<String>,
+    /// Subscription blocklists. Each one is a hosts-format file or a plain
+    /// domain list, fetched on demand or on the daily schedule and compiled into
+    /// a single local-zone include.
+    #[serde(default = "default_blocklists")]
+    pub blocklists: Vec<BlocklistSource>,
+    /// Domains that are never blocked, even when a list contains them. A parent
+    /// entry also allows its subdomains.
+    #[serde(default)]
+    pub allowlist: Vec<String>,
     /// Optional on-disk blocklist file pulled in with `include:`.
     #[serde(default)]
     pub blocklist_file: Option<String>,
@@ -295,6 +316,8 @@ impl Default for DnsConfig {
             qname_minimisation: true,
             rewrites: Vec::new(),
             blocked_domains: Vec::new(),
+            blocklists: default_blocklists(),
+            allowlist: Vec::new(),
             blocklist_file: None,
             cache_min_ttl: default_cache_min(),
             cache_max_ttl: default_cache_max(),
@@ -1392,6 +1415,36 @@ fn is_valid_service(value: &str) -> bool {
 
 fn default_true() -> bool {
     true
+}
+
+/// The subscription list offered out of the box. All disabled: nothing is
+/// fetched until the operator turns a list on, so an upgrade never starts
+/// making network requests on its own.
+pub fn default_blocklists() -> Vec<BlocklistSource> {
+    [
+        (
+            "StevenBlack unified",
+            "https://raw.githubusercontent.com/StevenBlack/hosts/master/hosts",
+        ),
+        ("OISD Big", "https://big.oisd.nl/"),
+        ("OISD Small", "https://small.oisd.nl/"),
+        (
+            "SomeoneWhoCares",
+            "https://someonewhocares.org/hosts/zero/hosts",
+        ),
+        (
+            "hagezi Pro",
+            "https://raw.githubusercontent.com/hagezi/dns-blocklists/main/hosts/pro.txt",
+        ),
+    ]
+    .into_iter()
+    .map(|(name, url)| BlocklistSource {
+        name: name.to_string(),
+        url: url.to_string(),
+        enabled: false,
+        builtin: true,
+    })
+    .collect()
 }
 
 fn default_protocol() -> String {

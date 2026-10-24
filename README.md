@@ -99,6 +99,12 @@ The router side of the box:
 - DNS through unbound, with hostname rewrites and blocked domains. When unbound
   is enabled, dnsmasq is reduced to DHCP only so the two do not fight over
   port 53.
+- Adblocking without a second process. Blocklist subscriptions (a hosts file or a
+  plain domain list) are fetched with `curl`, compiled into one unbound
+  `local-zone` include, and applied with a reload. Five lists are offered
+  disabled by default, a daily refresh runs after 03:00 local, and there is an
+  allowlist that also covers subdomains, per-list counts and errors, a manual
+  "update now", and a box to check whether a domain is blocked.
 - Optional Cloudflare tunnel.
 - SQM traffic shaping.
 - Dynamic DNS updates through Cloudflare.
@@ -326,8 +332,11 @@ Things that are not in yet, roughly in the order they are likely to arrive:
   else.
 - Storage pooling. Drives are formatted and mounted one at a time; there is no
   mergerfs-style pool yet.
-- A native blocklist suite. DNS blocking already works through unbound's
-  blocked-domain list, but there is no subscription fetcher or per-list stats.
+- Container auto-update, scheduled tasks and alerting rules. The schedules that
+  exist today are backups, SMART self-tests, DDNS and the blocklist refresh.
+- Query statistics per client. The adblock page reports what is compiled and
+  what a lookup would do; it does not yet parse the unbound query log to count
+  what was actually blocked.
 
 ## Deliberate limits
 

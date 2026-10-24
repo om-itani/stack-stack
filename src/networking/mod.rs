@@ -15,6 +15,7 @@
 //!   `systemctl`, probes report `unavailable` and the UI still loads.
 
 pub mod apply;
+pub mod blocklists;
 pub mod certs;
 pub mod cloudflared;
 pub mod dnsmasq;

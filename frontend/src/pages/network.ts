@@ -10,10 +10,11 @@
  * ruleset for a short window and a countdown is shown until it is confirmed.
  */
 
-import { networkApi } from "../api";
+import { blocklistsApi, networkApi } from "../api";
 import type {
   ApiFailure,
   ApplyReport,
+  BlocklistState,
   CertInfo,
   CertMode,
   FirewallAction,
@@ -27,9 +28,11 @@ import type {
   Problem,
 } from "../api";
 import {
+  badge,
   button,
   checkbox,
   el,
+  emptyNote,
   field,
   listInput,
   numberInput,
@@ -839,7 +842,205 @@ export function createNetworkPage(): PageHandle {
     blocked.append(blockedGrid);
     layout.append(blocked);
 
+    // Adblock is driven by its own endpoints, not by the draft: toggling or
+    // refreshing a list must not require a full network apply, and the backend
+    // preserves these fields when the DNS form is saved.
+    const adblock = el("section", { class: "panel xl:col-span-2" });
+    adblock.append(sectionTitle("adblock (blocklists compiled into unbound local zones)"));
+    const adblockBody = el("div", { class: "flex flex-col gap-3 p-3" });
+    adblock.append(adblockBody);
+    layout.append(adblock);
+    void refreshBlocklists(adblockBody);
+
     return layout;
+  }
+
+  // --- adblock -----------------------------------------------------------
+
+  async function refreshBlocklists(host: HTMLElement): Promise<void> {
+    host.replaceChildren(el("div", { class: "text-[11px] text-neutral-500", text: "loading…" }));
+    try {
+      renderBlocklists(host, await blocklistsApi.state());
+    } catch (err) {
+      host.replaceChildren(emptyNote(errorText(err)));
+    }
+  }
+
+  function renderBlocklists(host: HTMLElement, state: BlocklistState): void {
+    host.replaceChildren();
+    let working = state.sources.map((row) => ({
+      name: row.name,
+      url: row.url,
+      enabled: row.enabled,
+      builtin: row.builtin,
+    }));
+
+    const report = el("div", { class: "tabular text-[11px] text-neutral-500" });
+
+    async function save(message: string): Promise<void> {
+      try {
+        const next = await blocklistsApi.saveSources(working);
+        report.className = "tabular text-[11px] text-emerald-400";
+        report.textContent = message;
+        renderBlocklists(host, next);
+      } catch (err) {
+        report.className = "tabular text-[11px] text-rose-400";
+        report.textContent = errorText(err);
+      }
+    }
+
+    // Summary line.
+    const summary = el("div", { class: "flex flex-wrap items-center gap-2 text-[11px]" });
+    summary.append(
+      el("span", { class: "tabular text-neutral-200", text: `${state.total} domains blocked` }),
+      el("span", {
+        class: "tabular text-neutral-600",
+        text: state.updated_at
+          ? `updated ${new Date(state.updated_at * 1000).toLocaleString()}`
+          : "never updated",
+      }),
+      state.unbound_enabled ? badge("unbound on", "ok") : badge("unbound off", "warn"),
+      el("span", { class: "tabular truncate text-neutral-700", text: state.compiled_file }),
+    );
+
+    const updateBtn = button("update now", "text-emerald-400 hover:border-emerald-500");
+    updateBtn.addEventListener("click", async () => {
+      updateBtn.disabled = true;
+      report.className = "tabular text-[11px] text-neutral-500";
+      report.textContent = "fetching lists…";
+      try {
+        const result = await blocklistsApi.update();
+        report.className = "tabular text-[11px] text-emerald-400";
+        report.textContent = result.message;
+        renderBlocklists(host, result.state);
+      } catch (err) {
+        report.className = "tabular text-[11px] text-rose-400";
+        report.textContent = errorText(err);
+      } finally {
+        updateBtn.disabled = false;
+      }
+    });
+    summary.append(el("span", { class: "ml-auto" }, [updateBtn]));
+    host.append(summary, report);
+
+    // Subscription rows.
+    const list = el("div", { class: "flex flex-col divide-y divide-white/5 border border-white/5" });
+    for (const row of state.sources) {
+      const line = el("div", { class: "flex flex-wrap items-center gap-x-3 gap-y-1 px-2 py-1.5 text-[11px]" });
+      const toggle = checkbox(
+        row.enabled,
+        (value) => {
+          working = working.map((entry) =>
+            entry.url === row.url ? { ...entry, enabled: value } : entry,
+          );
+          void save(`${row.name} ${value ? "enabled" : "disabled"}`);
+        },
+        "",
+      );
+      line.append(
+        toggle,
+        el("span", { class: "w-40 shrink-0 truncate text-neutral-200", text: row.name }),
+        el("span", { class: "min-w-0 flex-1 truncate text-neutral-600", text: row.url }),
+      );
+      if (row.status) {
+        const tone = row.status === "ok" ? "ok" : row.status === "failed" ? "err" : "muted";
+        line.append(badge(`${row.status}${row.domains !== null ? ` · ${row.domains}` : ""}`, tone));
+      }
+      if (row.error) {
+        line.append(el("span", { class: "w-full truncate text-rose-400", text: row.error }));
+      }
+      if (!row.builtin) {
+        line.append(
+          button("remove", "ml-auto text-[10px] text-rose-400", () => {
+            working = working.filter((entry) => entry.url !== row.url);
+            void save(`${row.name} removed`);
+          }),
+        );
+      }
+      list.append(line);
+    }
+    if (state.sources.length === 0) {
+      list.append(emptyNote("no subscriptions"));
+    }
+    host.append(list);
+
+    // Add a subscription.
+    let newName = "";
+    let newUrl = "";
+    const addLine = el("div", { class: "flex flex-wrap items-end gap-2" });
+    const add = button("add source", "text-[10px] text-emerald-400");
+    add.addEventListener("click", () => {
+      if (!newName.trim() || !newUrl.trim()) {
+        report.className = "tabular text-[11px] text-amber-400";
+        report.textContent = "a source needs a name and a URL";
+        return;
+      }
+      working = [...working, { name: newName.trim(), url: newUrl.trim(), enabled: true, builtin: false }];
+      void save(`${newName.trim()} added`);
+    });
+    addLine.append(
+      field("name", textInput("", (value) => { newName = value; }, { placeholder: "My list" })),
+      field("url", textInput("", (value) => { newUrl = value; }, { placeholder: "https://example.com/hosts" })),
+      add,
+    );
+    host.append(addLine);
+
+    // Allowlist.
+    let allowlist = [...state.allowlist];
+    const allowSection = el("div", { class: "flex flex-col gap-2 border-t border-white/5 pt-3" });
+    allowSection.append(
+      el("div", { class: "text-[10px] uppercase tracking-wide text-neutral-500", text: "allowlist (never blocked, subdomains included)" }),
+      listInput(allowlist, (values) => { allowlist = values; }, { placeholder: "example.com" }),
+    );
+    const saveAllow = button("save allowlist", "text-[10px] text-emerald-400");
+    saveAllow.addEventListener("click", async () => {
+      try {
+        const next = await blocklistsApi.saveAllowlist(allowlist);
+        report.className = "tabular text-[11px] text-emerald-400";
+        report.textContent = `${next.allowlist.length} allowlist entries saved`;
+        renderBlocklists(host, next);
+      } catch (err) {
+        report.className = "tabular text-[11px] text-rose-400";
+        report.textContent = errorText(err);
+      }
+    });
+    allowSection.append(el("div", { class: "flex" }, [saveAllow]));
+    host.append(allowSection);
+
+    // Lookup.
+    let query = "";
+    const lookupResult = el("div", { class: "tabular text-[11px] text-neutral-500" });
+    const lookupBtn = button("check", "text-[10px]");
+    lookupBtn.addEventListener("click", async () => {
+      if (!query.trim()) {
+        return;
+      }
+      try {
+        const result = await blocklistsApi.lookup(query.trim());
+        lookupResult.className =
+          result.blocked
+            ? "tabular text-[11px] text-rose-400"
+            : "tabular text-[11px] text-emerald-400";
+        lookupResult.textContent = result.blocked
+          ? `${result.domain} is blocked`
+          : result.allowed
+            ? `${result.domain} is allowlisted`
+            : `${result.domain} is not blocked`;
+      } catch (err) {
+        lookupResult.className = "tabular text-[11px] text-rose-400";
+        lookupResult.textContent = errorText(err);
+      }
+    });
+    host.append(
+      el("div", { class: "flex flex-col gap-2 border-t border-white/5 pt-3" }, [
+        el("div", { class: "text-[10px] uppercase tracking-wide text-neutral-500", text: "check a domain" }),
+        el("div", { class: "flex flex-wrap items-end gap-2" }, [
+          textInput("", (value) => { query = value; }, { placeholder: "ads.example.com" }),
+          lookupBtn,
+          lookupResult,
+        ]),
+      ]),
+    );
   }
 
   // --- tab: sqm ----------------------------------------------------------
