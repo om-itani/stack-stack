@@ -63,6 +63,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
     web::ddns::spawn_scheduler(app_state.clone());
     web::network::spawn_blocklist_scheduler(app_state.clone());
     web::updates::spawn_scheduler(app_state.clone());
+    web::tasks::spawn_scheduler(app_state.clone());
 
     if cfg.tls_enabled {
         // The admin hostname needs a certificate before the first handshake, and

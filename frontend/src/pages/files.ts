@@ -36,6 +36,10 @@ export function createFilesPage(): PageHandle {
   // The path whose listing failed, so the error renders inline next to the
   // breadcrumbs instead of leaving a stale table on screen.
   let loadError: string | null = null;
+  /** List or grid, remembered for the session. */
+  let view: "list" | "grid" = "list";
+  /** Entry shown in the preview pane, if any. */
+  let preview: FileEntry | null = null;
 
   const statusLine = el("span", { class: "tabular text-[11px] text-neutral-500" });
   const hiddenToggle = el("input", {
@@ -66,6 +70,10 @@ export function createFilesPage(): PageHandle {
   }
   const sidebar = el("div", { class: "flex w-48 shrink-0 flex-col gap-0.5 overflow-y-auto border-r border-white/5 pr-2" });
   const tableHost = el("div", { class: "min-h-0 flex-1 overflow-auto" });
+  // Preview pane: hidden until a text or image file is selected.
+  const previewHost = el("div", {
+    class: "hidden w-80 shrink-0 overflow-auto border-l border-white/5 pl-2",
+  });
 
   const upButton = button("up", "", () => {
     if (state?.listing.parent) void load(state.listing.parent);
@@ -81,6 +89,11 @@ export function createFilesPage(): PageHandle {
     window.location.href = filesApi.archiveUrl(current);
   });
   const uploadButton = button("upload", "text-emerald-400 hover:border-emerald-500", () => uploadInput.click());
+  const viewToggle = button("grid view", "", () => {
+    view = view === "list" ? "grid" : "list";
+    viewToggle.textContent = view === "list" ? "grid view" : "list view";
+    render();
+  });
 
   uploadInput.addEventListener("change", () => {
     if (uploadInput.files?.length) void uploadFiles(uploadInput.files);
@@ -101,6 +114,7 @@ export function createFilesPage(): PageHandle {
     newFile,
     uploadButton,
     archiveButton,
+    viewToggle,
     el("label", { class: "flex items-center gap-1 text-[11px] text-neutral-400" }, [hiddenToggle, "hidden"]),
     el("span", { class: "ml-auto" }, [statusLine]),
     uploadInput,
@@ -110,7 +124,7 @@ export function createFilesPage(): PageHandle {
     toolbar,
     crumbs,
     progressTrack,
-    el("div", { class: "flex min-h-0 flex-1 gap-2" }, [sidebar, tableHost]),
+    el("div", { class: "flex min-h-0 flex-1 gap-2" }, [sidebar, tableHost, previewHost]),
   );
 
   // Drag-and-drop upload onto the table area.
@@ -159,6 +173,12 @@ export function createFilesPage(): PageHandle {
     upButton.disabled = busy || !state?.listing.parent;
   }
 
+  /** Set the status line from a menu action, which has no other way to report. */
+  function setStatus(text: string, _tone: "muted" | "error" | "ok" = "muted"): void {
+    status = text;
+    renderChrome();
+  }
+
   function render(): void {
     renderChrome();
     tableHost.replaceChildren();
@@ -189,7 +209,8 @@ export function createFilesPage(): PageHandle {
     }
 
     renderCrumbs(state.listing.path);
-    renderTable();
+    renderEntries();
+    renderPreview();
   }
 
   function renderCrumbs(path: string): void {
@@ -202,6 +223,211 @@ export function createFilesPage(): PageHandle {
       const target = accumulated;
       crumbs.append(el("span", { class: "text-neutral-600", text: "/" }));
       crumbs.append(button(part, "text-[11px]", () => void load(target)));
+    }
+  }
+
+  function renderEntries(): void {
+    const listing = state!.listing;
+    if (listing.entries.length === 0) {
+      tableHost.append(emptyNote("this directory is empty"));
+      return;
+    }
+    if (view === "grid") {
+      renderGrid();
+    } else {
+      renderTable();
+    }
+  }
+
+  /** Grid view: one tile per entry with an icon, name and size. */
+  function renderGrid(): void {
+    const grid = el("div", {
+      class: "grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4 2xl:grid-cols-6",
+    });
+    for (const entry of state!.listing.entries) {
+      const tile = el("div", {
+        class:
+          "panel flex cursor-default flex-col items-center gap-1 px-2 py-3 text-center transition-colors hover:border-white/20",
+      });
+      tile.append(
+        el("span", { class: "text-2xl leading-none", text: iconFor(entry) }),
+        el("span", {
+          class: `w-full truncate text-[11px] ${entry.kind === "dir" ? "text-emerald-400" : "text-neutral-200"}`,
+          text: entry.name,
+        }),
+        el("span", {
+          class: "tabular text-[10px] text-neutral-600",
+          text: entry.kind === "dir" ? "folder" : bytes(entry.size),
+        }),
+      );
+      tile.addEventListener("dblclick", () => {
+        if (entry.kind === "dir") void load(entry.path);
+        else void openPreview(entry);
+      });
+      tile.addEventListener("contextmenu", (event) => {
+        event.preventDefault();
+        openContextMenu(entry, event.clientX, event.clientY);
+      });
+      grid.append(tile);
+    }
+    tableHost.append(grid);
+  }
+
+  /** A text glyph per kind; no icon font and no image requests. */
+  function iconFor(entry: FileEntry): string {
+    if (entry.kind === "dir") return "📁";
+    const name = entry.name.toLowerCase();
+    if (/\.(png|jpe?g|gif|webp|bmp|svg)$/.test(name)) return "🖼";
+    if (/\.(zip|tar\.gz|tgz|tar\.zst|tar\.xz|tar\.bz2|tar|zst)$/.test(name)) return "🗜";
+    if (/\.(md|txt|log|json|ya?ml|toml|ini|conf|sh|rs|ts|js|css|html)$/.test(name)) return "📄";
+    return "📄";
+  }
+
+  /** Right-click menu. Positioned at the pointer and dismissed on any click. */
+  function openContextMenu(entry: FileEntry, x: number, y: number): void {
+    document.querySelectorAll(".ss-context-menu").forEach((node) => node.remove());
+
+    const menu = el("div", {
+      class:
+        "ss-context-menu panel fixed z-50 flex min-w-40 flex-col py-1 text-[11px] shadow-lg",
+    });
+    menu.style.left = `${Math.min(x, window.innerWidth - 180)}px`;
+    menu.style.top = `${Math.min(y, window.innerHeight - 220)}px`;
+
+    const add = (label: string, action: () => void, tone = ""): void => {
+      const item = button(label, `w-full justify-start text-left text-[11px] ${tone}`.trim(), () => {
+        close();
+        action();
+      });
+      item.style.textAlign = "left";
+      menu.append(item);
+    };
+
+    const close = (): void => {
+      menu.remove();
+      document.removeEventListener("click", close);
+      document.removeEventListener("keydown", onKey);
+    };
+    const onKey = (event: KeyboardEvent): void => {
+      if (event.key === "Escape") close();
+    };
+
+    if (entry.kind === "dir") {
+      add("Open", () => void load(entry.path));
+    } else {
+      add("Download", () => {
+        window.location.href = filesApi.downloadUrl(entry.path);
+      });
+      add("Preview", () => void openPreview(entry));
+      if (isText(entry.name) || isImage(entry.name)) {
+        add("Edit", () => void openEditor(entry));
+      }
+    }
+    if (entry.kind === "file" && isArchive(entry.name)) {
+      add("Extract", () => void withBusy(() => filesApi.extract(entry.path)).then(() => load(current)));
+    }
+    add("Rename", () =>
+      void promptName("Rename", (name) =>
+        filesApi.rename(entry.path, join(parentOf(entry.path), name)),
+      ),
+    );
+    add("Copy path", () => {
+      void navigator.clipboard?.writeText(entry.path).then(
+        () => setStatus(`copied ${entry.path}`, "ok"),
+        () => setStatus("clipboard is unavailable in this browser", "error"),
+      );
+    });
+    if (entry.kind === "file") {
+      add("Permissions", () =>
+        void promptName("Mode (e.g. 644)", (mode) => filesApi.chmod(entry.path, mode)),
+      );
+      add("Owner", () => void promptOwner(entry));
+    }
+    add("Delete", () => void removeEntry(entry), "text-rose-400 hover:border-rose-500");
+
+    document.body.append(menu);
+    // The click that opened the menu must not immediately dismiss it.
+    window.setTimeout(() => {
+      document.addEventListener("click", close);
+      document.addEventListener("keydown", onKey);
+    }, 0);
+  }
+
+  function isImage(name: string): boolean {
+    return /\.(png|jpe?g|gif|webp|bmp|svg)$/i.test(name);
+  }
+
+  function isText(name: string): boolean {
+    return /\.(md|txt|log|json|ya?ml|toml|ini|conf|sh|rs|ts|js|tsx|jsx|css|html|xml|csv)$/i.test(name);
+  }
+
+  function isArchive(name: string): boolean {
+    return /\.(zip|tar\.gz|tgz|tar\.zst|tzst|tar\.xz|txz|tar\.bz2|tbz2|tar)$/i.test(name);
+  }
+
+  /** Load a file into the preview pane: an image inline, text as monospace. */
+  async function openPreview(entry: FileEntry): Promise<void> {
+    if (entry.kind === "dir") {
+      void load(entry.path);
+      return;
+    }
+    preview = entry;
+    if (isImage(entry.name)) {
+      renderPreview();
+      return;
+    }
+    if (!isText(entry.name)) {
+      setStatus(`${entry.name}: no inline preview for this type`, "muted");
+      preview = null;
+      renderPreview();
+      return;
+    }
+    previewHost.className = "w-80 shrink-0 overflow-auto border-l border-white/5 pl-2";
+    previewHost.replaceChildren(el("div", { class: "text-[11px] text-neutral-500", text: "loading…" }));
+    try {
+      const file = await filesApi.read(entry.path);
+      // The listing may have moved on while the read was in flight.
+      if (preview?.path !== entry.path) return;
+      previewHost.replaceChildren(
+        el("div", { class: "mb-1 flex items-baseline gap-2" }, [
+          el("span", { class: "min-w-0 flex-1 truncate text-[11px] text-neutral-200", text: entry.name }),
+          button("close", "text-[10px]", clearPreview),
+        ]),
+        el("pre", {
+          class: "tabular whitespace-pre-wrap break-words text-[10px] text-neutral-300",
+          text: file.content,
+        }),
+      );
+    } catch (err) {
+      previewHost.replaceChildren(emptyNote(errorText(err)));
+    }
+  }
+
+  function clearPreview(): void {
+    preview = null;
+    renderPreview();
+  }
+
+  function renderPreview(): void {
+    if (!preview) {
+      previewHost.className = "hidden";
+      previewHost.replaceChildren();
+      return;
+    }
+    previewHost.className = "w-80 shrink-0 overflow-auto border-l border-white/5 pl-2";
+    const entry = preview;
+    if (isImage(entry.name)) {
+      previewHost.replaceChildren(
+        el("div", { class: "mb-1 flex items-baseline gap-2" }, [
+          el("span", { class: "min-w-0 flex-1 truncate text-[11px] text-neutral-200", text: entry.name }),
+          button("close", "text-[10px]", clearPreview),
+        ]),
+        el("img", {
+          src: filesApi.downloadUrl(entry.path),
+          alt: entry.name,
+          class: "max-h-96 w-full border border-white/5 object-contain",
+        }),
+      );
     }
   }
 
@@ -269,10 +495,18 @@ export function createFilesPage(): PageHandle {
         void promptName("Mode (e.g. 644)", (mode) => filesApi.chmod(entry.path, mode)),
       ),
       button("owner", "mr-2 text-[10px]", () => void promptOwner(entry)),
-      button("delete", "text-[10px] text-rose-400 hover:border-rose-500", () => void removeEntry(entry)),
+      button("delete", "mr-2 text-[10px] text-rose-400 hover:border-rose-500", () => void removeEntry(entry)),
     );
+    // A visible affordance for the context menu, since right-click is invisible.
+    const moreButton = button("···", "text-[10px]");
+    moreButton.title = "more actions";
+    moreButton.addEventListener("click", () => {
+      const box = moreButton.getBoundingClientRect();
+      openContextMenu(entry, box.left, box.bottom);
+    });
+    actions.append(moreButton);
 
-    return el("tr", { class: "border-b border-white/5" }, [
+    const tr = el("tr", { class: "border-b border-white/5" }, [
       nameCell,
       el("td", { class: "tabular px-2 py-1 text-right text-neutral-500", text: entry.kind === "dir" ? "—" : bytes(entry.size) }),
       el("td", { class: "px-2 py-1 text-neutral-500", text: formatTime(entry.modified_ms) }),
@@ -280,6 +514,12 @@ export function createFilesPage(): PageHandle {
       el("td", { class: "px-2 py-1 text-neutral-500", text: owner }),
       actions,
     ]);
+    // Right-click anywhere on the row opens the same menu as the ··· button.
+    tr.addEventListener("contextmenu", (event) => {
+      event.preventDefault();
+      openContextMenu(entry, event.clientX, event.clientY);
+    });
+    return tr;
   }
 
   function parentOf(path: string): string {

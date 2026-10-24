@@ -22,6 +22,7 @@ import { createSettingsPage } from "./pages/settings";
 import { createStoragePage } from "./pages/storage";
 import { createVpnPage } from "./pages/vpn";
 import { createSystemPage } from "./pages/system";
+import { createTasksPage } from "./pages/tasks";
 import { createTerminalPage } from "./pages/terminal";
 import { createVirtualizationPage } from "./pages/virtualization";
 import { createBell } from "./notifications";
@@ -274,6 +275,7 @@ function startShell(): void {
     { id: "virtualization", label: "Virtualization", group: "Services", create: () => createVirtualizationPage() },
     { id: "vpn", label: "VPN", group: "Services", create: () => createVpnPage() },
     { id: "terminal", label: "Terminal", group: "Admin", create: () => createTerminalPage(() => hostEl.textContent ?? "") },
+    { id: "tasks", label: "Tasks", group: "Admin", create: () => createTasksPage() },
     { id: "settings", label: "Settings", group: "Admin", create: () => createSettingsPage() },
   ];
 

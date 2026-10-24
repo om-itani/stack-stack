@@ -1770,3 +1770,40 @@ export const imagesApi = {
       method: "DELETE",
     }),
 };
+
+// ---------------------------------------------------------------------------
+// Scheduled tasks
+// ---------------------------------------------------------------------------
+
+export interface ScheduledTask {
+  id: string;
+  name: string;
+  schedule: string;
+  command: string;
+  last_run: number | null;
+  /** `ok`, `failed` or null when it has not run. */
+  last_status: string | null;
+  last_output: string | null;
+}
+
+export interface TasksState {
+  tasks: ScheduledTask[];
+  doc_error: string | null;
+}
+
+export interface TaskRunResult {
+  ok: boolean;
+  status: string;
+  output: string;
+  tasks: ScheduledTask[];
+}
+
+export const tasksApi = {
+  list: () => request<TasksState>("/api/tasks"),
+  save: (task: { id?: string; name: string; schedule: string; command: string }) =>
+    jsonRequest<TasksState>("/api/tasks", "POST", task),
+  remove: (id: string) =>
+    request<TasksState>(`/api/tasks/${encodeURIComponent(id)}`, { method: "DELETE" }),
+  run: (id: string) =>
+    request<TaskRunResult>(`/api/tasks/${encodeURIComponent(id)}/run`, { method: "POST" }),
+};

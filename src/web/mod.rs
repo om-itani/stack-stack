@@ -17,6 +17,7 @@ pub mod shares;
 pub mod shell_ws;
 pub mod smart;
 pub mod storage;
+pub mod tasks;
 pub mod updates;
 pub mod virtualization;
 pub mod wireguard;
@@ -183,6 +184,9 @@ pub fn router(state: AppState) -> Router {
             delete(wireguard::remove_peer),
         )
         .route("/api/shell/ws", get(shell_ws::shell_ws))
+        .route("/api/tasks", get(tasks::list).post(tasks::upsert))
+        .route("/api/tasks/{id}", delete(tasks::remove))
+        .route("/api/tasks/{id}/run", post(tasks::run))
         .route("/api/updates", get(updates::state))
         .route("/api/updates/{id}", post(updates::configure))
         .route("/api/updates/{id}/check", post(updates::check))

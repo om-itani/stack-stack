@@ -75,6 +75,12 @@ download, archive and extract. Paths are collapsed and resolved before use, and
 a symlink that escapes a configured root is refused. Archive extraction is
 filtered so it cannot write outside the destination.
 
+The listing switches between a list and a grid. Right-clicking an entry (or its
+`···` button) opens a menu with open, download, preview, edit, extract, rename,
+copy path, permissions, owner and delete. Selecting a text file loads it into a
+preview pane, and an image shows inline; uploads report real byte progress rather
+than a spinner.
+
 ### Storage
 
 Every physical disk and partition on the box, read from `lsblk`: its size,
@@ -152,6 +158,16 @@ directory through a temporary file so a half-download is never visible, and the
 tab lists the cache with sizes and dates so it can be pruned. URLs must be
 `http(s)`, and names must be a plain `name.ext` with an image extension, so
 neither can reach outside the images directory.
+
+### Scheduled tasks
+
+A Tasks page under Admin runs a shell command on a cron-like schedule. A task
+needs a name, a command, and either a preset (hourly, daily at 03:00, weekly) or
+a five-field cron expression. Supported syntax is deliberately small: `*`, `a`,
+`a-b`, `*/n`, `a-b/n` and comma lists, per field. Commands run through `sh -c` as
+the service user, so the page carries a root warning, every run is written to the
+audit log, and a failure raises a notification. The last run's status and the tail
+of its output are kept for the UI.
 
 ### Terminal and logs
 
