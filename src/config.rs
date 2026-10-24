@@ -23,6 +23,8 @@ pub const DEFAULT_STACKS_DIR: &str = "/var/lib/stack-stack/stacks";
 /// Append-only audit trail for destructive operations.
 pub const DEFAULT_AUDIT_PATH: &str = "/var/log/stack-stack/audit.log";
 pub const DEFAULT_COMPOSE_TIMEOUT_S: u64 = 300;
+/// Auto-update document: per-stack opt-in, schedule and digest history.
+pub const DEFAULT_UPDATES_PATH: &str = "/etc/stack-stack/updates.json";
 pub const DEFAULT_NETWORK_PATH: &str = "/etc/stack-stack/network.json";
 pub const DEFAULT_VIRT_PATH: &str = "/etc/stack-stack/virtualization.json";
 pub const DEFAULT_GUEST_CATALOG_PATH: &str = "/etc/stack-stack/guests.json";
@@ -86,6 +88,8 @@ pub struct Config {
     pub audit_path: String,
     /// Hard limit on a single `docker compose` invocation (pull + up can be slow).
     pub compose_timeout_s: u64,
+    /// Auto-update document: which stacks update themselves, and how often.
+    pub updates_path: String,
     /// Router/network configuration document (interfaces, firewall, DNS, …).
     pub network_path: String,
     /// Virtualization document: every KVM guest and LXC container this box owns.
@@ -187,6 +191,7 @@ impl Default for Config {
             stacks_dir: DEFAULT_STACKS_DIR.to_string(),
             audit_path: DEFAULT_AUDIT_PATH.to_string(),
             compose_timeout_s: DEFAULT_COMPOSE_TIMEOUT_S,
+            updates_path: DEFAULT_UPDATES_PATH.to_string(),
             network_path: DEFAULT_NETWORK_PATH.to_string(),
             virt_path: DEFAULT_VIRT_PATH.to_string(),
             guest_catalog_path: DEFAULT_GUEST_CATALOG_PATH.to_string(),

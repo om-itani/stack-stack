@@ -22,6 +22,7 @@ use crate::services::logs::LogsContext;
 use crate::services::nfs::NfsContext;
 use crate::services::samba::SambaContext;
 use crate::services::smart::SmartContext;
+use crate::services::updates::UpdateContext;
 use crate::services::wireguard::WgContext;
 use crate::system::metrics::Snapshot;
 use crate::system::storage::StorageContext;
@@ -75,6 +76,8 @@ pub struct AppState {
     pub smart: SmartContext,
     /// Physical disks and the format/mount operations behind the Storage page.
     pub storage: StorageContext,
+    /// Container and stack auto-update, with the digest history rollback uses.
+    pub updates: UpdateContext,
 
     /// journald reader surface.
     pub logs: LogsContext,
@@ -167,6 +170,15 @@ impl AppState {
         );
         // mkfs on a large disk can take minutes; mount/umount are instant.
         let storage = StorageContext::new(Arc::new(SystemRunner::new(Duration::from_secs(600))));
+        // A pull can be slow; the compose timeout already covers it.
+        let updates = UpdateContext::new(
+            std::path::PathBuf::from(&config.updates_path),
+            std::path::PathBuf::from(&config.stacks_dir),
+            config.compose_timeout_s,
+            Arc::new(SystemRunner::new(Duration::from_secs(
+                config.compose_timeout_s.clamp(30, 1800),
+            ))),
+        );
         Self {
             started_at: Instant::now(),
             telemetry,
@@ -186,6 +198,7 @@ impl AppState {
             wireguard,
             smart,
             storage,
+            updates,
             logs,
             ddns,
         }

@@ -1696,3 +1696,49 @@ export const blocklistsApi = {
       `/api/network/blocklists/lookup?domain=${encodeURIComponent(domain)}`,
     ),
 };
+
+// ---------------------------------------------------------------------------
+// Container / stack auto-update
+// ---------------------------------------------------------------------------
+
+export type UpdateSchedule = "manual" | "daily" | "weekly";
+
+export interface UpdateEntry {
+  id: string;
+  /** `stack` or `container`; only a stack can be redeployed and rolled back. */
+  kind: string;
+  auto_update: boolean;
+  schedule: UpdateSchedule;
+  pinned_digest: string | null;
+  previous_digest: string | null;
+  last_checked: number | null;
+  last_result: string | null;
+  update_available: boolean;
+}
+
+export interface UpdatesState {
+  entries: UpdateEntry[];
+  doc_error: string | null;
+}
+
+export interface UpdateResult {
+  ok: boolean;
+  message: string;
+  entries: UpdateEntry[];
+}
+
+export const updatesApi = {
+  state: () => request<UpdatesState>("/api/updates"),
+  configure: (id: string, auto_update: boolean, schedule: UpdateSchedule, kind = "stack") =>
+    jsonRequest<UpdatesState>(`/api/updates/${encodeURIComponent(id)}`, "POST", {
+      auto_update,
+      schedule,
+      kind,
+    }),
+  check: (id: string) =>
+    request<UpdateResult>(`/api/updates/${encodeURIComponent(id)}/check`, { method: "POST" }),
+  apply: (id: string) =>
+    request<UpdateResult>(`/api/updates/${encodeURIComponent(id)}/apply`, { method: "POST" }),
+  rollback: (id: string) =>
+    request<UpdateResult>(`/api/updates/${encodeURIComponent(id)}/rollback`, { method: "POST" }),
+};

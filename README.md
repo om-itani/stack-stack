@@ -40,6 +40,22 @@ and deployed: pick a result, and it opens the stack editor with the image
 already filled in. Search results are cached for five minutes and the client is
 rate-limit aware.
 
+### Updates
+
+Each stack can opt into checking for a newer image, on a daily or weekly cadence
+(off by default). A check pulls the image and compares the digest; if it moved,
+the stack is redeployed and the previous digest is kept. A stack that has a
+previous digest shows a Rollback button, which pins that digest into the compose
+file and brings it back up. Rollback refuses an image that is set from a
+`${VARIABLE}`, because the real name is only known when compose runs.
+
+Updates, rollbacks and failed checks are written to the audit log, and the
+scheduler raises a notification on both outcomes.
+
+Only stacks are updated automatically. A standalone container can be checked,
+but not recreated unattended: reproducing its run arguments by guesswork is how a
+rollback turns into an outage.
+
 ### Stacks
 
 Paste any docker-compose document, give it a name, and deploy it. Each stack
@@ -332,8 +348,10 @@ Things that are not in yet, roughly in the order they are likely to arrive:
   else.
 - Storage pooling. Drives are formatted and mounted one at a time; there is no
   mergerfs-style pool yet.
-- Container auto-update, scheduled tasks and alerting rules. The schedules that
-  exist today are backups, SMART self-tests, DDNS and the blocklist refresh.
+- Scheduled tasks and alerting rules. The schedules that exist today are
+  backups, SMART self-tests, DDNS, the blocklist refresh and stack image checks.
+- Auto-update for standalone containers (recreating one on a new image), and
+  automatic redeploy for app-store apps.
 - Query statistics per client. The adblock page reports what is compiled and
   what a lookup would do; it does not yet parse the unbound query log to count
   what was actually blocked.

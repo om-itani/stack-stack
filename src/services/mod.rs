@@ -12,6 +12,7 @@ pub mod nfs;
 pub mod pty;
 pub mod samba;
 pub mod smart;
+pub mod updates;
 pub mod wireguard;
 
 use crate::networking::apply::StepResult;

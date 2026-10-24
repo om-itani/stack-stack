@@ -17,7 +17,20 @@ import { HARDENING_FRAGMENT, composeForImage, serviceName, takeStackDraft } from
 // xterm is by far the largest dependency; it is imported on demand so it stays
 // out of the initial bundle (see `openTerminal`/`openLogs` below).
 const loadTerminal = () => import("../terminal");
-import { badge, button, bytes, el, emptyNote, field, openModal, percent, textInput } from "../ui";
+import {
+  badge,
+  button,
+  bytes,
+  el,
+  emptyNote,
+  field,
+  openModal,
+  percent,
+  select,
+  textInput,
+} from "../ui";
+import { updatesApi } from "../api";
+import type { UpdateEntry, UpdateSchedule } from "../api";
 
 const REFRESH_MS = 5000;
 
@@ -85,6 +98,9 @@ export function createContainersPage(): PageHandle {
 
   let busy = false;
   let stacks: StackInfo[] = [];
+  let updates: UpdateEntry[] = [];
+  /** Last rendered container list, so a stack-row action can re-render in place. */
+  let lastContainers: Container[] = [];
 
   function setStatus(text: string, tone: "muted" | "error" | "ok"): void {
     status.textContent = text;
@@ -106,12 +122,15 @@ export function createContainersPage(): PageHandle {
     }
     setStatus("loading…", "muted");
     try {
-      const [containers, stackList] = await Promise.all([
+      const [containers, stackList, updateState] = await Promise.all([
         api.containers(),
         // A stack listing failure must not hide the container list.
         stacksApi.list().catch(() => [] as StackInfo[]),
+        updatesApi.state().catch(() => ({ entries: [], doc_error: null })),
       ]);
       stacks = stackList;
+      updates = updateState.entries;
+      lastContainers = containers;
       count.textContent = `${containers.length} total`;
       renderStacks(containers);
       render(containers);
@@ -130,6 +149,28 @@ export function createContainersPage(): PageHandle {
     try {
       await action();
       setStatus(note.replace("…", " done"), "ok");
+    } catch (err) {
+      setStatus(errorText(err), "error");
+    } finally {
+      busy = false;
+    }
+    await load();
+  }
+
+  /** Check, apply or roll back one stack, then refresh the panels. */
+  async function runUpdate(
+    action: () => Promise<{ message: string; entries: UpdateEntry[] }>,
+  ): Promise<void> {
+    if (busy) {
+      return;
+    }
+    busy = true;
+    setStatus("working…", "muted");
+    try {
+      const result = await action();
+      updates = result.entries;
+      setStatus(result.message, "ok");
+      renderStacks(lastContainers);
     } catch (err) {
       setStatus(errorText(err), "error");
     } finally {
@@ -238,7 +279,52 @@ export function createContainersPage(): PageHandle {
           void run(() => stacksApi.remove(stack.name, true), `force-removing ${stack.name}…`);
         }
       });
-      actions.append(edit, redeploy, removeBtn, forceBtn);
+      // Auto-update is opt-in per stack and defaults to off. Only a stack can be
+      // checked, redeployed and rolled back; a standalone container cannot.
+      const update = updates.find((row) => row.id === stack.name);
+      const schedule = select(
+        update?.schedule ?? "manual",
+        [
+          ["manual", "auto-update: off"],
+          ["daily", "auto-update: daily"],
+          ["weekly", "auto-update: weekly"],
+        ],
+        (value) => {
+          void updatesApi
+            .configure(stack.name, value !== "manual", value as UpdateSchedule)
+            .then((next) => {
+              updates = next.entries;
+              setStatus(`${stack.name}: auto-update ${value}`, "ok");
+              renderStacks(lastContainers);
+            })
+            .catch((err) => setStatus(errorText(err), "error"));
+        },
+      );
+      schedule.disabled = busy;
+
+      const checkBtn = button("check updates", "text-[10px]");
+      checkBtn.disabled = busy;
+      checkBtn.addEventListener("click", () =>
+        void runUpdate(() => updatesApi.check(stack.name)),
+      );
+
+      const rollbackBtn = button("rollback", "text-[10px] text-amber-400");
+      rollbackBtn.disabled = busy;
+      rollbackBtn.hidden = !update?.previous_digest;
+      rollbackBtn.addEventListener("click", () => {
+        if (
+          window.confirm(
+            `Roll ${stack.name} back to the previous image digest? Its compose file is rewritten to pin that digest.`,
+          )
+        ) {
+          void runUpdate(() => updatesApi.rollback(stack.name));
+        }
+      });
+
+      actions.append(edit, redeploy, schedule, checkBtn, rollbackBtn, removeBtn, forceBtn);
+      if (update?.update_available) {
+        actions.append(badge("update available", "warn"));
+      }
       head.append(title, kind, actions);
 
       const body = document.createElement("div");

@@ -70,6 +70,10 @@ impl BlockDevice {
 pub struct StorageContext {
     runner: Arc<dyn Runner>,
     fstab: PathBuf,
+    /// Prefixes a mount point may live under. Injectable so a test can mount
+    /// under its own temporary directory instead of creating `/mnt/...` on the
+    /// machine running the suite (which fails for an unprivileged CI user).
+    mount_prefixes: Vec<String>,
 }
 
 impl StorageContext {
@@ -77,14 +81,26 @@ impl StorageContext {
         Self {
             runner,
             fstab: PathBuf::from("/etc/fstab"),
+            mount_prefixes: default_mount_prefixes(),
         }
     }
 
-    /// Point the fstab writer at another file. Test-only: production always uses
-    /// the real `/etc/fstab`.
+    /// Point the fstab writer and the mount-point prefixes somewhere harmless.
+    /// Test-only: production always uses the real paths.
     #[cfg(test)]
     pub fn with_fstab(runner: Arc<dyn Runner>, fstab: PathBuf) -> Self {
-        Self { runner, fstab }
+        Self {
+            runner,
+            fstab,
+            mount_prefixes: default_mount_prefixes(),
+        }
+    }
+
+    /// Test-only: replace the allowed mount-point prefixes.
+    #[cfg(all(test, unix))]
+    pub fn with_mount_prefixes(mut self, prefixes: Vec<String>) -> Self {
+        self.mount_prefixes = prefixes;
+        self
     }
 
     /// The full block-device tree, root filesystem check included.
@@ -197,7 +213,7 @@ impl StorageContext {
     /// Mount `device` at `path`, optionally adding it to `/etc/fstab`.
     pub fn mount(&self, device: &str, path: &str, persist: bool) -> Result<String, ApiError> {
         validate_device_path(device)?;
-        validate_mount_path(path)?;
+        validate_mount_path_with(path, &self.mount_prefixes)?;
 
         let devices = self.devices()?;
         let mut flat = Vec::new();
@@ -348,24 +364,37 @@ pub fn validate_device_path(device: &str) -> Result<(), ApiError> {
     Ok(())
 }
 
-/// Absolute, no traversal, and under an allowed prefix.
+/// Absolute, no traversal, and under one of the default prefixes.
+#[cfg(test)]
 pub fn validate_mount_path(path: &str) -> Result<(), ApiError> {
+    validate_mount_path_with(path, &default_mount_prefixes())
+}
+
+/// The same check against an explicit prefix list, so the context can be pointed
+/// at a different root (a test's temporary directory) without weakening the
+/// production rule.
+pub fn validate_mount_path_with(path: &str, prefixes: &[String]) -> Result<(), ApiError> {
     if !path.starts_with('/') {
         return Err(ApiError::bad_request("mount point must be absolute"));
     }
     if path.contains("..") {
         return Err(ApiError::bad_request("mount point must not contain '..'"));
     }
-    let allowed = ALLOWED_MOUNT_PREFIXES
-        .iter()
-        .any(|prefix| path.starts_with(prefix));
+    let allowed = prefixes.iter().any(|prefix| path.starts_with(prefix));
     if !allowed {
         return Err(ApiError::bad_request(format!(
             "mount point must be under one of {}",
-            ALLOWED_MOUNT_PREFIXES.join(", ")
+            prefixes.join(", ")
         )));
     }
     Ok(())
+}
+
+fn default_mount_prefixes() -> Vec<String> {
+    ALLOWED_MOUNT_PREFIXES
+        .iter()
+        .map(|prefix| (*prefix).to_string())
+        .collect()
 }
 
 /// True for the mounts this page must never take down.
@@ -485,6 +514,7 @@ mod tests {
         }
     }
 
+    #[cfg(all(test, unix))]
     fn fail(stderr: &str) -> crate::proc::Output {
         crate::proc::Output {
             code: Some(1),
@@ -656,15 +686,34 @@ mod tests {
         assert!(matches!(err, ApiError::BadRequest(_)), "{err:?}");
     }
 
+    /// The mount point is created with `create_dir_all`, so pointing this test at
+    /// the real `/mnt/...` makes it a host side effect: it worked on a developer
+    /// machine but failed on CI, where the runner user cannot create `/mnt/x`,
+    /// and `mount` then failed before ever reaching the mocked command. The
+    /// context is pointed at a temporary directory instead, so the injected
+    /// `mount` failure is what surfaces.
+    #[cfg(unix)]
     #[test]
     fn mount_failure_surfaces_the_tool_error() {
-        let (ctx, _) = context(vec![
+        let dir = std::env::temp_dir().join(format!("ss-storage-mountfail-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("create temp dir");
+        let prefix = format!("{}/", dir.to_string_lossy());
+        let mountpoint = format!("{prefix}data");
+
+        let runner = FakeRunner::new(vec![
             ("lsblk", ok(lsblk_sample())),
-            ("mount", fail("mount: /mnt/x: unknown filesystem type")),
+            ("mount", fail("mount: unknown filesystem type")),
         ]);
-        let err = ctx.mount("/dev/sdb", "/mnt/x", false).expect_err("fail");
+        let ctx =
+            StorageContext::with_fstab(runner, dir.join("fstab")).with_mount_prefixes(vec![prefix]);
+
+        let err = ctx.mount("/dev/sdb", &mountpoint, false).expect_err("fail");
         match err {
-            ApiError::Internal(message) => assert!(message.contains("unknown filesystem")),
+            ApiError::Internal(message) => assert!(
+                message.contains("unknown filesystem"),
+                "actual message was {message:?}"
+            ),
             other => panic!("expected Internal, got {other:?}"),
         }
     }
