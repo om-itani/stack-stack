@@ -24,6 +24,7 @@ use crate::services::samba::SambaContext;
 use crate::services::smart::SmartContext;
 use crate::services::wireguard::WgContext;
 use crate::system::metrics::Snapshot;
+use crate::system::storage::StorageContext;
 use crate::tls::TlsRuntime;
 use crate::virtualization::VirtContext;
 
@@ -72,6 +73,8 @@ pub struct AppState {
     pub wireguard: WgContext,
     /// SMART self-test scheduling and history.
     pub smart: SmartContext,
+    /// Physical disks and the format/mount operations behind the Storage page.
+    pub storage: StorageContext,
 
     /// journald reader surface.
     pub logs: LogsContext,
@@ -162,6 +165,8 @@ impl AppState {
             Arc::new(SystemRunner::new(Duration::from_secs(120))),
             Duration::from_secs(120),
         );
+        // mkfs on a large disk can take minutes; mount/umount are instant.
+        let storage = StorageContext::new(Arc::new(SystemRunner::new(Duration::from_secs(600))));
         Self {
             started_at: Instant::now(),
             telemetry,
@@ -180,6 +185,7 @@ impl AppState {
             backup,
             wireguard,
             smart,
+            storage,
             logs,
             ddns,
         }

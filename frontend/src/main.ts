@@ -19,6 +19,7 @@ import { createLogsPage } from "./pages/logs";
 import { createNetworkPage } from "./pages/network";
 import { createSharesPage } from "./pages/shares";
 import { createSettingsPage } from "./pages/settings";
+import { createStoragePage } from "./pages/storage";
 import { createVpnPage } from "./pages/vpn";
 import { createSystemPage } from "./pages/system";
 import { createTerminalPage } from "./pages/terminal";
@@ -266,6 +267,7 @@ function startShell(): void {
     { id: "containers", label: "Containers", group: "Data", create: () => createContainersPage() },
     { id: "apps", label: "App Store", group: "Data", create: () => createAppsPage() },
     { id: "files", label: "Files", group: "Data", create: () => createFilesPage() },
+    { id: "storage", label: "Storage", group: "Data", create: () => createStoragePage() },
     { id: "shares", label: "Shares", group: "Data", create: () => createSharesPage() },
     { id: "backups", label: "Backups", group: "Data", create: () => createBackupsPage() },
     { id: "network", label: "Network", group: "Services", create: () => createNetworkPage() },

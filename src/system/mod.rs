@@ -5,3 +5,4 @@
 //! we only ever need a handful of fields and the binary should stay small.
 
 pub mod metrics;
+pub mod storage;

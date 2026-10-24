@@ -45,6 +45,25 @@ export function createFilesPage(): PageHandle {
   const uploadInput = el("input", { type: "file", multiple: true, class: "hidden" }) as HTMLInputElement;
 
   const crumbs = el("div", { class: "flex flex-wrap items-center gap-1 text-[11px] text-neutral-400" });
+
+  // A real progress bar for uploads: the browser knows the byte total, so there
+  // is no reason to show an indefinite spinner.
+  const progressTrack = el("div", {
+    class: "hidden h-1 w-full overflow-hidden rounded-full bg-white/10",
+  });
+  const progressBar = el("div", {
+    class: "h-full w-0 rounded-full bg-gradient-to-r from-emerald-500 to-teal-400",
+  });
+  progressTrack.append(progressBar);
+  function setProgress(pct: number | null): void {
+    if (pct === null) {
+      progressTrack.className = "hidden h-1 w-full overflow-hidden rounded-full bg-white/10";
+      progressBar.style.width = "0%";
+      return;
+    }
+    progressTrack.className = "h-1 w-full overflow-hidden rounded-full bg-white/10";
+    progressBar.style.width = `${Math.min(100, Math.max(0, pct))}%`;
+  }
   const sidebar = el("div", { class: "flex w-48 shrink-0 flex-col gap-0.5 overflow-y-auto border-r border-white/5 pr-2" });
   const tableHost = el("div", { class: "min-h-0 flex-1 overflow-auto" });
 
@@ -87,7 +106,12 @@ export function createFilesPage(): PageHandle {
     uploadInput,
   ]);
 
-  root.append(toolbar, crumbs, el("div", { class: "flex min-h-0 flex-1 gap-2" }, [sidebar, tableHost]));
+  root.append(
+    toolbar,
+    crumbs,
+    progressTrack,
+    el("div", { class: "flex min-h-0 flex-1 gap-2" }, [sidebar, tableHost]),
+  );
 
   // Drag-and-drop upload onto the table area.
   tableHost.addEventListener("dragover", (event) => {
@@ -288,32 +312,72 @@ export function createFilesPage(): PageHandle {
     await load(current);
   }
 
-  async function uploadFiles(files: FileList): Promise<void> {
-    busy = true;
-    status = `uploading ${files.length} file(s)…`;
-    renderChrome();
-    try {
-      for (const file of Array.from(files)) {
-        const form = new FormData();
-        form.append("file", file, file.name);
-        const response = await fetch(filesApi.uploadUrl(current), {
-          method: "POST",
-          body: form,
-          credentials: "same-origin",
-        });
-        if (response.status === 401) {
+  /**
+   * POST one file and report byte progress. `fetch` cannot observe upload
+   * progress, so this uses `XMLHttpRequest`, which is the only API that exposes
+   * `upload.onprogress` in every current browser.
+   */
+  function uploadOne(url: string, file: File, onProgress: (pct: number) => void): Promise<void> {
+    return new Promise((resolve, reject) => {
+      const request = new XMLHttpRequest();
+      request.open("POST", url);
+      request.withCredentials = true;
+      request.upload.addEventListener("progress", (event) => {
+        if (event.lengthComputable && event.total > 0) {
+          onProgress((event.loaded / event.total) * 100);
+        }
+      });
+      request.addEventListener("load", () => {
+        if (request.status === 401) {
           window.dispatchEvent(new CustomEvent("stack-stack:unauthorized"));
+          reject(new Error("session expired"));
           return;
         }
-        if (!response.ok) {
-          const body = (await response.json().catch(() => null)) as { error?: string } | null;
-          throw new Error(body?.error ?? `upload failed (${response.status})`);
+        if (request.status >= 200 && request.status < 300) {
+          resolve();
+          return;
         }
+        // Surface the server's own message: "permission denied" and "no space
+        // left on device" are the two the operator actually needs to read.
+        let message = `upload failed (${request.status})`;
+        try {
+          const body = JSON.parse(request.responseText) as { error?: string };
+          if (body.error) {
+            message = body.error;
+          }
+        } catch {
+          // Not JSON; keep the status-code message.
+        }
+        reject(new Error(message));
+      });
+      request.addEventListener("error", () => reject(new Error("network error during upload")));
+      request.addEventListener("abort", () => reject(new Error("upload cancelled")));
+      request.addEventListener("timeout", () => reject(new Error("upload timed out")));
+
+      const form = new FormData();
+      form.append("file", file, file.name);
+      request.send(form);
+    });
+  }
+
+  async function uploadFiles(files: FileList): Promise<void> {
+    busy = true;
+    const list = Array.from(files);
+    try {
+      for (let index = 0; index < list.length; index++) {
+        const file = list[index];
+        status = `uploading ${index + 1}/${list.length}: ${file.name}`;
+        renderChrome();
+        setProgress(0);
+        // Only the bar updates per event; re-rendering the chrome on every
+        // progress tick would fight the browser for no visible gain.
+        await uploadOne(filesApi.uploadUrl(current), file, setProgress);
       }
-      status = "uploaded";
+      status = `uploaded ${list.length} file(s)`;
     } catch (err) {
       status = errorText(err);
     } finally {
+      setProgress(null);
       busy = false;
       await load(current);
     }

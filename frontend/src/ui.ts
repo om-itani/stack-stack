@@ -96,6 +96,50 @@ export function animateNumber(
   requestAnimationFrame(step);
 }
 
+export interface Modal {
+  root: HTMLElement;
+  body: HTMLElement;
+  close: () => void;
+}
+
+/**
+ * A centred modal on a dimmed backdrop. Closes on backdrop click and Escape, and
+ * removes its key listener on close so repeated openings do not pile up.
+ */
+export function openModal(title: string, width = "max-w-lg"): Modal {
+  const overlay = el("div", {
+    class: "fixed inset-0 z-50 flex items-start justify-center overflow-auto bg-black/70 p-4",
+  });
+  const modal = el("div", { class: `panel mt-8 flex w-full ${width} flex-col gap-3 p-4` });
+
+  const head = el("div", { class: "flex items-baseline gap-2" });
+  head.append(el("span", { class: "text-sm font-medium text-neutral-100", text: title }));
+
+  const body = el("div", { class: "flex flex-col gap-3" });
+  modal.append(head, body);
+  overlay.append(modal);
+
+  const onKey = (event: KeyboardEvent): void => {
+    if (event.key === "Escape") {
+      close();
+    }
+  };
+  const close = (): void => {
+    overlay.remove();
+    document.removeEventListener("keydown", onKey);
+  };
+
+  overlay.addEventListener("click", (event) => {
+    if (event.target === overlay) {
+      close();
+    }
+  });
+  document.addEventListener("keydown", onKey);
+  document.body.append(overlay);
+
+  return { root: overlay, body, close };
+}
+
 /** A shimmering placeholder for content that has not arrived yet. */
 export function skeleton(className = ""): HTMLElement {
   const node = document.createElement("div");

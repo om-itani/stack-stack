@@ -19,14 +19,14 @@ use bollard::exec::{CreateExecOptions, StartExecOptions, StartExecResults};
 use bollard::models::{ContainerSummary, PortSummary};
 use bollard::query_parameters::{
     ListContainersOptionsBuilder, LogsOptionsBuilder, RemoveContainerOptionsBuilder,
-    ResizeExecOptions, RestartContainerOptionsBuilder, StartContainerOptions,
+    ResizeExecOptions, RestartContainerOptionsBuilder, StartContainerOptions, StatsOptionsBuilder,
     StopContainerOptionsBuilder,
 };
-use futures_util::Stream;
+use futures_util::{Stream, StreamExt};
 use tokio::io::AsyncWrite;
 use tokio::sync::RwLock;
 
-use crate::containers::model::{App, Container, ContainerPort, ContainerSource};
+use crate::containers::model::{App, Container, ContainerPort, ContainerSource, ContainerStats};
 use crate::containers::store;
 use crate::error::ApiError;
 
@@ -214,6 +214,25 @@ impl DockerClient {
         Ok(())
     }
 
+    /// One live sample for a container. `one_shot` makes Docker answer with a
+    /// single reading instead of a stream, so the modal can poll it.
+    pub async fn stats(&self, id: &str) -> Result<ContainerStats, ApiError> {
+        let id = store::sanitize_container_id(id)?.to_string();
+        let docker = self.get().await?;
+        let options = StatsOptionsBuilder::new()
+            .stream(false)
+            .one_shot(true)
+            .build();
+        let mut stream = docker.stats(&id, Some(options));
+        let sample = stream
+            .next()
+            .await
+            .transpose()
+            .map_err(ApiError::from)?
+            .ok_or_else(|| ApiError::unavailable("docker returned no stats for this container"))?;
+        Ok(compute_stats(&id, &sample))
+    }
+
     /// Follow logs from `tail` historical lines onward.
     pub async fn logs(&self, id: &str, tail: &str) -> Result<LogStream, ApiError> {
         let id = store::sanitize_container_id(id)?;
@@ -367,6 +386,81 @@ fn summary_to_container(
     }
 }
 
+/// Turn one Docker stats sample into the numbers the modal shows.
+///
+/// Docker reports cumulative counters, so CPU is a delta against the previous
+/// sample, scaled by the core count. Memory is the working set (usage minus page
+/// cache) where the daemon reports a cache figure.
+pub fn compute_stats(id: &str, stats: &bollard::models::ContainerStatsResponse) -> ContainerStats {
+    let cpu = stats.cpu_stats.as_ref();
+    let pre = stats.precpu_stats.as_ref();
+
+    let cpu_total = cpu
+        .and_then(|c| c.cpu_usage.as_ref())
+        .and_then(|u| u.total_usage);
+    let pre_total = pre
+        .and_then(|c| c.cpu_usage.as_ref())
+        .and_then(|u| u.total_usage);
+    let cpu_delta = cpu_total
+        .unwrap_or(0)
+        .saturating_sub(pre_total.unwrap_or(0));
+
+    let system_delta = cpu
+        .and_then(|c| c.system_cpu_usage)
+        .unwrap_or(0)
+        .saturating_sub(pre.and_then(|c| c.system_cpu_usage).unwrap_or(0));
+
+    let online = cpu
+        .and_then(|c| c.online_cpus)
+        .map(u64::from)
+        .or_else(|| {
+            cpu.and_then(|c| c.cpu_usage.as_ref())
+                .and_then(|u| u.percpu_usage.as_ref())
+                .map(|cores| cores.len() as u64)
+        })
+        .unwrap_or(1)
+        .max(1);
+
+    let cpu_pct = if system_delta > 0 {
+        ((cpu_delta as f64 / system_delta as f64) * online as f64 * 100.0) as f32
+    } else {
+        0.0
+    };
+
+    let memory = stats.memory_stats.as_ref();
+    let usage = memory.and_then(|m| m.usage).unwrap_or(0);
+    let cache = memory
+        .and_then(|m| m.stats.as_ref())
+        .and_then(|values| values.get("cache").copied())
+        .unwrap_or(0);
+    let used = usage.saturating_sub(cache);
+    let limit = memory.and_then(|m| m.limit).unwrap_or(0);
+    let memory_pct = if limit > 0 {
+        (used as f64 / limit as f64 * 100.0) as f32
+    } else {
+        0.0
+    };
+
+    let mut rx = 0u64;
+    let mut tx = 0u64;
+    if let Some(networks) = stats.networks.as_ref() {
+        for interface in networks.values() {
+            rx = rx.saturating_add(interface.rx_bytes.unwrap_or(0));
+            tx = tx.saturating_add(interface.tx_bytes.unwrap_or(0));
+        }
+    }
+
+    ContainerStats {
+        id: id.to_string(),
+        cpu_pct,
+        memory_used_bytes: used,
+        memory_limit_bytes: limit,
+        memory_pct,
+        network_rx_bytes: rx,
+        network_tx_bytes: tx,
+    }
+}
+
 fn to_port(port: PortSummary) -> ContainerPort {
     let protocol = port
         .typ
@@ -425,6 +519,90 @@ mod tests {
             public_port: public,
             typ: Some(protocol),
         }
+    }
+
+    #[test]
+    fn computes_cpu_memory_and_network_from_a_sample() {
+        use bollard::models::{
+            ContainerCpuStats, ContainerCpuUsage, ContainerMemoryStats, ContainerNetworkStats,
+        };
+        use std::collections::HashMap;
+
+        let mut networks = HashMap::new();
+        networks.insert(
+            "eth0".to_string(),
+            ContainerNetworkStats {
+                rx_bytes: Some(1000),
+                tx_bytes: Some(2000),
+                ..Default::default()
+            },
+        );
+
+        let sample = bollard::models::ContainerStatsResponse {
+            cpu_stats: Some(ContainerCpuStats {
+                cpu_usage: Some(ContainerCpuUsage {
+                    total_usage: Some(200),
+                    ..Default::default()
+                }),
+                system_cpu_usage: Some(1000),
+                online_cpus: Some(2),
+                ..Default::default()
+            }),
+            precpu_stats: Some(ContainerCpuStats {
+                cpu_usage: Some(ContainerCpuUsage {
+                    total_usage: Some(100),
+                    ..Default::default()
+                }),
+                system_cpu_usage: Some(500),
+                ..Default::default()
+            }),
+            memory_stats: Some(ContainerMemoryStats {
+                usage: Some(1000),
+                limit: Some(4000),
+                ..Default::default()
+            }),
+            networks: Some(networks),
+            ..Default::default()
+        };
+
+        let stats = compute_stats("abc", &sample);
+        // cpu delta 100 over system delta 500, across 2 cores, is 40%.
+        assert!((stats.cpu_pct - 40.0).abs() < 0.01, "cpu {}", stats.cpu_pct);
+        assert_eq!(stats.memory_used_bytes, 1000);
+        assert_eq!(stats.memory_limit_bytes, 4000);
+        assert!(
+            (stats.memory_pct - 25.0).abs() < 0.01,
+            "mem {}",
+            stats.memory_pct
+        );
+        assert_eq!(stats.network_rx_bytes, 1000);
+        assert_eq!(stats.network_tx_bytes, 2000);
+    }
+
+    #[test]
+    fn idle_container_reports_zero_everywhere() {
+        // No movement between the two samples: no CPU, no network, no memory.
+        let cpu = |total: u64| {
+            Some(bollard::models::ContainerCpuStats {
+                cpu_usage: Some(bollard::models::ContainerCpuUsage {
+                    total_usage: Some(total),
+                    ..Default::default()
+                }),
+                system_cpu_usage: Some(100),
+                ..Default::default()
+            })
+        };
+        let sample = bollard::models::ContainerStatsResponse {
+            cpu_stats: cpu(10),
+            precpu_stats: cpu(10),
+            ..Default::default()
+        };
+        let stats = compute_stats("abc", &sample);
+        assert_eq!(stats.cpu_pct, 0.0);
+        assert_eq!(stats.memory_used_bytes, 0);
+        assert_eq!(stats.memory_pct, 0.0);
+        assert_eq!(stats.network_rx_bytes, 0);
+        assert_eq!(stats.network_tx_bytes, 0);
     }
 
     #[test]

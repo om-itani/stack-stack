@@ -63,6 +63,9 @@ APT_PACKAGES=(
   unzip
   zstd
   xz-utils
+  # mkfs.ext4 (e2fsprogs) and lsblk/mount/umount/blkid (util-linux) are essential
+  # packages; xfs is not, and the Storage page offers it.
+  xfsprogs
   qemu-system-x86
   qemu-utils
   qemu-kvm

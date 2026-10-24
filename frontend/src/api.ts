@@ -1215,6 +1215,8 @@ export const api = {
   restart: (id: string) => post(`/api/containers/${encodeURIComponent(id)}/restart`),
   remove: (id: string) =>
     request<ActionResult>(`/api/containers/${encodeURIComponent(id)}`, { method: "DELETE" }),
+  stats: (id: string) =>
+    request<ContainerStats>(`/api/containers/${encodeURIComponent(id)}/stats`),
 
   catalog: () => request<App[]>("/api/apps/catalog"),
   install: (id: string) =>
@@ -1592,3 +1594,53 @@ export function blankCt(): CtConfig {
     comment: "",
   };
 }
+
+// ---------------------------------------------------------------------------
+// Storage
+// ---------------------------------------------------------------------------
+
+/** One live sample for a container, as the Stats modal shows it. */
+export interface ContainerStats {
+  id: string;
+  cpu_pct: number;
+  memory_used_bytes: number;
+  memory_limit_bytes: number;
+  memory_pct: number;
+  network_rx_bytes: number;
+  network_tx_bytes: number;
+}
+
+/** One node of the physical block-device tree. */
+export interface BlockDevice {
+  name: string;
+  path: string;
+  kind: string;
+  size_bytes: number;
+  model: string | null;
+  fstype: string | null;
+  mountpoint: string | null;
+  label: string | null;
+  children: BlockDevice[];
+}
+
+export interface StorageState {
+  devices: BlockDevice[];
+  /** Device backing `/`, which the UI marks as untouchable. */
+  root_device: string | null;
+  formats: string[];
+}
+
+export interface StorageResult {
+  ok: boolean;
+  message: string;
+}
+
+export const storageApi = {
+  state: () => request<StorageState>("/api/storage"),
+  format: (device: string, fs: string) =>
+    jsonRequest<StorageResult>("/api/storage/format", "POST", { device, fs }),
+  mount: (device: string, path: string, persist: boolean) =>
+    jsonRequest<StorageResult>("/api/storage/mount", "POST", { device, path, persist }),
+  unmount: (target: string) =>
+    jsonRequest<StorageResult>("/api/storage/unmount", "POST", { target }),
+};

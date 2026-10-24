@@ -23,9 +23,10 @@ to polling and says so in the header.
 
 Every container on the host, running or stopped, with its state, published
 ports and ready-to-click web URLs. From here you can start, stop, restart and
-remove a container, follow its logs live, or open an interactive shell inside
-it. Containers are grouped by their compose project, so an app or a stack shows
-up as one unit.
+remove a container, follow its logs live, open an interactive shell inside it,
+or open a live stats panel showing that container's CPU, memory and network I/O
+as Docker reports them. Containers are grouped by their compose project, so an
+app or a stack shows up as one unit.
 
 ### App Store
 
@@ -57,6 +58,20 @@ directories and files, rename, change permissions and ownership, upload,
 download, archive and extract. Paths are collapsed and resolved before use, and
 a symlink that escapes a configured root is refused. Archive extraction is
 filtered so it cannot write outside the destination.
+
+### Storage
+
+Every physical disk and partition on the box, read from `lsblk`: its size,
+model, filesystem, label and mount point, with the disk that backs the root
+filesystem marked as untouchable. An unmounted disk or partition can be
+formatted (ext4 or xfs) and mounted at a path under `/mnt`, `/srv` or `/media`,
+with the option to add it to `/etc/fstab` by UUID so it returns after a reboot.
+
+Formatting is destructive and treated as such: the confirmation dialog names the
+device and its size, requires the device path to be typed out, and the backend
+re-checks that the device is not mounted, does not back the root filesystem, and
+is a disk or partition before it runs `mkfs`. The action is written to the audit
+log.
 
 ### Shares
 
@@ -309,6 +324,10 @@ Things that are not in yet, roughly in the order they are likely to arrive:
   install can be verified rather than assumed.
 - Support beyond x86_64. The deploy script currently refuses to run on anything
   else.
+- Storage pooling. Drives are formatted and mounted one at a time; there is no
+  mergerfs-style pool yet.
+- A native blocklist suite. DNS blocking already works through unbound's
+  blocked-domain list, but there is no subscription fetcher or per-list stats.
 
 ## Deliberate limits
 

@@ -17,7 +17,7 @@ import { HARDENING_FRAGMENT, composeForImage, serviceName, takeStackDraft } from
 // xterm is by far the largest dependency; it is imported on demand so it stays
 // out of the initial bundle (see `openTerminal`/`openLogs` below).
 const loadTerminal = () => import("../terminal");
-import { badge, button, el, emptyNote, field, textInput } from "../ui";
+import { badge, button, bytes, el, emptyNote, field, openModal, percent, textInput } from "../ui";
 
 const REFRESH_MS = 5000;
 
@@ -265,6 +265,77 @@ export function createContainersPage(): PageHandle {
     }
   }
 
+  /** One labelled readout in the stats modal. */
+  function statCell(label: string): { row: HTMLElement; value: HTMLElement } {
+    const value = el("span", { class: "tabular stat text-lg", text: "…" });
+    const row = el("div", { class: "flex flex-col" }, [
+      el("span", { class: "text-[10px] uppercase tracking-wide text-neutral-500", text: label }),
+      value,
+    ]);
+    return { row, value };
+  }
+
+  /** Live CPU, memory and network for one container, polled while the modal is
+   * open and stopped the moment it is dismissed. */
+  function openStats(container: Container): void {
+    const modal = openModal(`stats · ${container.name}`, "max-w-md");
+    let timer: number | null = null;
+
+    const cpu = statCell("cpu");
+    const memory = statCell("memory");
+    const rx = statCell("network in");
+    const tx = statCell("network out");
+    const grid = el("div", { class: "grid grid-cols-2 gap-x-4 gap-y-3" }, [
+      cpu.row,
+      memory.row,
+      rx.row,
+      tx.row,
+    ]);
+
+    const feedback = el("div", { class: "tabular text-[11px] text-neutral-500", text: "reading…" });
+
+    const stop = (): void => {
+      if (timer !== null) {
+        window.clearInterval(timer);
+        timer = null;
+      }
+    };
+
+    async function poll(): Promise<void> {
+      try {
+        const stats = await api.stats(container.id);
+        cpu.value.textContent = percent(stats.cpu_pct);
+        memory.value.textContent = `${bytes(stats.memory_used_bytes)} / ${bytes(stats.memory_limit_bytes)}`;
+        rx.value.textContent = bytes(stats.network_rx_bytes);
+        tx.value.textContent = bytes(stats.network_tx_bytes);
+        feedback.className = "tabular text-[11px] text-neutral-500";
+        feedback.textContent = "updating every 2s";
+      } catch (err) {
+        feedback.className = "tabular text-[11px] text-rose-400";
+        feedback.textContent = errorText(err);
+        stop();
+      }
+    }
+
+    const close = button("close", "", () => {
+      stop();
+      modal.close();
+    });
+    modal.body.append(grid, feedback, el("div", { class: "flex gap-2" }, [close]));
+
+    void poll();
+    timer = window.setInterval(() => void poll(), 2000);
+    // The overlay is removed on backdrop click and Escape, so watch for that
+    // rather than leaving the timer polling a container whose modal is gone.
+    const watcher = new MutationObserver(() => {
+      if (!modal.root.isConnected) {
+        stop();
+        watcher.disconnect();
+      }
+    });
+    watcher.observe(document.body, { childList: true });
+  }
+
   function card(container: Container): HTMLElement {
     const el = document.createElement("section");
     el.className = "panel flex flex-col";
@@ -347,6 +418,10 @@ export function createContainersPage(): PageHandle {
       void run(() => api.restart(container.id), `restarting ${container.name}…`),
     );
 
+    const statsBtn = button("stats");
+    statsBtn.disabled = !running;
+    statsBtn.addEventListener("click", () => openStats(container));
+
     const logsBtn = button("logs");
     logsBtn.addEventListener("click", () => {
       void loadTerminal().then((terminal) => terminal.openLogs(container.id, container.name));
@@ -366,7 +441,7 @@ export function createContainersPage(): PageHandle {
       }
     });
 
-    actions.append(startBtn, stopBtn, restartBtn, logsBtn, termBtn, deleteBtn);
+    actions.append(startBtn, stopBtn, restartBtn, statsBtn, logsBtn, termBtn, deleteBtn);
 
     el.append(head, meta, body, links, actions);
     return el;

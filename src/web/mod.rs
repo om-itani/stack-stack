@@ -16,6 +16,7 @@ pub mod proxy;
 pub mod shares;
 pub mod shell_ws;
 pub mod smart;
+pub mod storage;
 pub mod virtualization;
 pub mod wireguard;
 pub mod ws;
@@ -61,6 +62,7 @@ pub fn router(state: AppState) -> Router {
         .route("/api/containers", get(containers::list))
         .route("/api/containers/{id}/start", post(containers::start))
         .route("/api/containers/{id}/stop", post(containers::stop))
+        .route("/api/containers/{id}/stats", get(containers::stats))
         .route("/api/containers/{id}/restart", post(containers::restart))
         .route("/api/containers/{id}", delete(containers::remove))
         .route("/api/containers/{id}/logs/ws", get(containers::logs_ws))
@@ -163,6 +165,10 @@ pub fn router(state: AppState) -> Router {
             delete(wireguard::remove_peer),
         )
         .route("/api/shell/ws", get(shell_ws::shell_ws))
+        .route("/api/storage", get(storage::state))
+        .route("/api/storage/format", post(storage::format))
+        .route("/api/storage/mount", post(storage::mount))
+        .route("/api/storage/unmount", post(storage::unmount))
         .route("/api/smart", get(smart::state))
         .route("/api/smart/config", put(smart::save_config))
         .route("/api/smart/{device}", post(smart::start))

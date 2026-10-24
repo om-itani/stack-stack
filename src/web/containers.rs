@@ -17,7 +17,9 @@ use serde::{Deserialize, Serialize};
 use tokio::io::AsyncWriteExt;
 
 use crate::containers::docker::{ContainerAction, ExecSession};
-use crate::containers::model::{Container, ExecClientMessage, ExecServerMessage, StackInfo};
+use crate::containers::model::{
+    Container, ContainerStats, ExecClientMessage, ExecServerMessage, StackInfo,
+};
 use crate::containers::{host, store};
 use crate::error::ApiError;
 use crate::state::AppState;
@@ -81,6 +83,14 @@ pub async fn remove(
     state.docker.remove(&id).await?;
     state.audit("container.remove", &id, "");
     Ok(Json(ActionResult { ok: true }))
+}
+
+/// One live sample for a container: CPU, memory and network totals.
+pub async fn stats(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<ContainerStats>, ApiError> {
+    Ok(Json(state.docker.stats(&id).await?))
 }
 
 // ---------------------------------------------------------------------------

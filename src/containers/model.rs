@@ -51,6 +51,18 @@ pub struct Container {
     pub web_urls: Vec<String>,
 }
 
+/// A single live sample for one container, as the Stats modal shows it.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ContainerStats {
+    pub id: String,
+    pub cpu_pct: f32,
+    pub memory_used_bytes: u64,
+    pub memory_limit_bytes: u64,
+    pub memory_pct: f32,
+    pub network_rx_bytes: u64,
+    pub network_tx_bytes: u64,
+}
+
 /// One operator-authored compose stack: the project name and the exact YAML on
 /// disk. Container status is read from the containers list (they carry `stack`).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
