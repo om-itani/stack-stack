@@ -1,6 +1,7 @@
 //! HTTP surface. Everything the browser talks to lives behind `/api`; the
 //! fallback serves the embedded frontend.
 
+pub mod alerts;
 pub mod apps;
 pub mod assets;
 pub mod auth;
@@ -8,6 +9,7 @@ pub mod backup;
 pub mod containers;
 pub mod ddns;
 pub mod files;
+pub mod jobs;
 pub mod layers;
 pub mod logs;
 pub mod network;
@@ -57,6 +59,10 @@ pub fn router(state: AppState) -> Router {
         .route("/api/notifications/config", put(notify::update_config))
         .route("/api/notifications/test", post(notify::test))
         .route("/api/notifications/ws", get(notify::ws))
+        .route("/api/jobs", get(jobs::list))
+        .route("/api/jobs/{id}", delete(jobs::remove))
+        .route("/api/alerts", get(alerts::state).put(alerts::save))
+        .route("/api/alerts/test/{id}", post(alerts::test))
         .route("/api/health", get(health))
         .route("/api/system/snapshot", get(system_snapshot))
         .route("/api/ws/telemetry", get(ws::telemetry_ws))

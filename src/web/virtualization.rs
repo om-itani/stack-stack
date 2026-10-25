@@ -127,11 +127,20 @@ pub async fn image_fetch(
     let runner = state.virt.runner.clone();
     let url = request.url.clone();
     let name = request.name.clone();
-    let image = tokio::task::spawn_blocking(move || {
-        sources::fetch(&dir, runner.as_ref(), &url, name.as_deref())
-    })
-    .await
-    .map_err(|err| ApiError::internal(format!("image task failed: {err}")))??;
+    let label = name.clone().unwrap_or_else(|| url.clone());
+    let image = state
+        .jobs
+        .track_with(format!("Downloading {label}"), move |ctx| async move {
+            ctx.step(5, format!("fetching {url}"));
+            let image = tokio::task::spawn_blocking(move || {
+                sources::fetch(&dir, runner.as_ref(), &url, name.as_deref())
+            })
+            .await
+            .map_err(|err| ApiError::internal(format!("image task failed: {err}")))??;
+            ctx.log(format!("{} ready", image.name));
+            Ok::<_, ApiError>(image)
+        })
+        .await?;
 
     state.audit("virt.image_fetch", &request.url, &image.name);
     Ok(Json(ImageActionResult {

@@ -497,8 +497,43 @@ fn save_config(path: &Path, config: &NotifyConfig) -> Result<(), ApiError> {
         .map_err(|err| ApiError::internal(format!("cannot write {}: {err}", path.display())))
 }
 
-/// POST `payload` to `url` with `curl`. The body goes in on stdin so it can
-/// never land in the process argument list.
+/// Build a `curl -K -` config that POSTs `payload` to `url`.
+///
+/// Both the URL and the body live in this config, which curl reads from stdin,
+/// so neither a webhook secret (Discord/Slack embed a token in the URL) nor the
+/// message ever appears in the process argument list. The caller supplies the
+/// remaining argv (`--max-time`, method, content type) and passes this as the
+/// child's stdin.
+pub fn curl_json_config(url: &str, payload: &str) -> Vec<u8> {
+    let mut out = String::new();
+    out.push_str("url = \"");
+    out.push_str(&escape_curl_config(url));
+    out.push_str("\"\n");
+    out.push_str("data-binary = \"");
+    out.push_str(&escape_curl_config(payload));
+    out.push_str("\"\n");
+    out.into_bytes()
+}
+
+/// Escape a value for a quoted curl config string. curl recognises `\\`, `\"`,
+/// `\t`, `\n`, `\r` and `\v` inside a quoted value.
+fn escape_curl_config(value: &str) -> String {
+    let mut out = String::with_capacity(value.len());
+    for ch in value.chars() {
+        match ch {
+            '\\' => out.push_str("\\\\"),
+            '"' => out.push_str("\\\""),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            _ => out.push(ch),
+        }
+    }
+    out
+}
+
+/// POST `payload` to `url` with `curl`. The request goes in on stdin via `-K -`,
+/// so neither the URL nor the body can land in the process argument list.
 fn post_webhook(runner: &dyn Runner, url: &str, payload: &str) -> Result<(), String> {
     let args: Vec<String> = [
         "-s",
@@ -509,16 +544,14 @@ fn post_webhook(runner: &dyn Runner, url: &str, payload: &str) -> Result<(), Str
         "POST",
         "-H",
         "content-type: application/json",
-        "--data-binary",
-        "@-",
-        url,
+        "-K",
+        "-",
     ]
     .iter()
     .map(|arg| (*arg).to_string())
     .collect();
 
-    let mut input = payload.as_bytes().to_vec();
-    input.push(b'\n');
+    let input = curl_json_config(url, payload);
 
     let output = runner
         .run_with_input(

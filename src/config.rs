@@ -36,6 +36,8 @@ pub const DEFAULT_VIRT_TIMEOUT_S: u64 = 1800;
 pub const DEFAULT_AUTH_PATH: &str = "/etc/stack-stack/auth.json";
 pub const DEFAULT_SESSION_TTL_H: u64 = 168;
 pub const DEFAULT_NOTIFY_PATH: &str = "/etc/stack-stack/notify.json";
+/// Alerting rules and notification providers.
+pub const DEFAULT_ALERTS_PATH: &str = "/etc/stack-stack/alerts.json";
 pub const DEFAULT_CA_DIR: &str = "/etc/stack-stack/ca";
 pub const DEFAULT_PROXY_PATH: &str = "/etc/stack-stack/proxy.json";
 pub const DEFAULT_FILES_PATH: &str = "/etc/stack-stack/files.json";
@@ -113,6 +115,8 @@ pub struct Config {
     pub session_ttl_h: u64,
     /// Notification document: per-event toggles, thresholds and the webhook URL.
     pub notify_path: String,
+    /// Alerting document: rules and the providers they target.
+    pub alerts_path: String,
     /// Whether the TLS front door (`:80` redirect + `:443` HTTPS) is enabled.
     /// Off by default so a box already running nginx/apache is not taken over.
     pub tls_enabled: bool,
@@ -206,6 +210,7 @@ impl Default for Config {
             auth_path: DEFAULT_AUTH_PATH.to_string(),
             session_ttl_h: DEFAULT_SESSION_TTL_H,
             notify_path: DEFAULT_NOTIFY_PATH.to_string(),
+            alerts_path: DEFAULT_ALERTS_PATH.to_string(),
             tls_enabled: false,
             tls_http_port: DEFAULT_TLS_HTTP_PORT,
             tls_https_port: DEFAULT_TLS_HTTPS_PORT,

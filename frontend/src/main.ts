@@ -11,6 +11,9 @@
 import "./style.css";
 
 import { authApi } from "./api";
+import { createActivity } from "./activity";
+import type { Activity } from "./activity";
+import { createAlertsPage } from "./pages/alerts";
 import { createAppsPage } from "./pages/apps";
 import { createBackupsPage } from "./pages/backups";
 import { createContainersPage } from "./pages/containers";
@@ -47,6 +50,7 @@ const app = must<HTMLElement>("#app");
 
 let telemetry: Telemetry | null = null;
 let bell: Bell | null = null;
+let activity: Activity | null = null;
 let shellStarted = false;
 
 // ---------------------------------------------------------------------------
@@ -250,6 +254,10 @@ function startShell(): void {
   tickClock();
   window.setInterval(tickClock, 1000);
 
+  activity = createActivity();
+  actionsEl.insertBefore(activity.root, logoutEl);
+  activity.start();
+
   bell = createBell();
   actionsEl.insertBefore(bell.root, logoutEl);
   bell.start();
@@ -276,6 +284,7 @@ function startShell(): void {
     { id: "vpn", label: "VPN", group: "Services", create: () => createVpnPage() },
     { id: "terminal", label: "Terminal", group: "Admin", create: () => createTerminalPage(() => hostEl.textContent ?? "") },
     { id: "tasks", label: "Tasks", group: "Admin", create: () => createTasksPage() },
+    { id: "alerts", label: "Alerts", group: "Admin", create: () => createAlertsPage() },
     { id: "settings", label: "Settings", group: "Admin", create: () => createSettingsPage() },
   ];
 
@@ -390,6 +399,8 @@ window.addEventListener("stack-stack:unauthorized", () => {
   telemetry?.stop();
   bell?.stop();
   bell = null;
+  activity?.stop();
+  activity = null;
   shellStarted = false;
   void boot();
 });

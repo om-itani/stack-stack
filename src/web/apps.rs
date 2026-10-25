@@ -35,9 +35,21 @@ pub async fn install(
     State(state): State<AppState>,
     Path(app): Path<String>,
 ) -> Result<Json<OpResult>, ApiError> {
-    let output = store::install(&state.config, &app).await?;
+    // A pull + up is the canonical long-running operation: run it as a tracked
+    // job so it shows in the activity drawer while the request waits.
+    let config = state.config.clone();
+    let app_for_job = app.clone();
+    let output = state
+        .jobs
+        .track_with(format!("Installing {app}"), move |ctx| async move {
+            ctx.step(10, format!("deploying {app_for_job}"));
+            let output = store::install(&config, &app_for_job).await?;
+            Ok::<String, ApiError>(output)
+        })
+        .await?;
     // Compose created containers outside the Docker client; drop the cached list.
     state.docker.invalidate().await;
+    state.audit("app.install", &app, "compose up -d");
     Ok(Json(OpResult {
         ok: true,
         output: trim(&output),

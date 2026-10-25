@@ -124,7 +124,16 @@ pub async fn create_stack(
     State(state): State<AppState>,
     Json(request): Json<CreateStackRequest>,
 ) -> Result<Json<StackResult>, ApiError> {
-    let output = store::deploy_stack(&state.config, &request.name, &request.compose).await?;
+    let config = state.config.clone();
+    let (name, compose) = (request.name.clone(), request.compose.clone());
+    let output = state
+        .jobs
+        .track_with(format!("Deploying stack {name}"), move |ctx| async move {
+            ctx.step(10, "compose up -d");
+            let output = store::deploy_stack(&config, &name, &compose).await?;
+            Ok::<String, ApiError>(output)
+        })
+        .await?;
     // Compose created containers outside the Docker client; drop the cached list.
     state.docker.invalidate().await;
     state.audit("stack.deploy", &request.name, "compose up -d");

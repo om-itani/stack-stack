@@ -247,6 +247,10 @@ function notificationsCard(): HTMLElement {
     });
 
     body.append(
+      el("div", {
+        class: "text-neutral-500",
+        text: "Discord, Slack and email providers are configured, and can be tested, on the Alerts page.",
+      }),
       el("div", { class: "flex flex-wrap gap-3" }, [
         checkbox(config.enabled, (value) => (config.enabled = value), "deliver to webhook"),
         checkbox(config.backup_failed, (value) => (config.backup_failed = value), "backup failed"),

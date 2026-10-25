@@ -81,9 +81,15 @@ pub async fn check(
 ) -> Result<Json<UpdateResult>, ApiError> {
     let updates = state.updates.clone();
     let id_for_task = id.clone();
-    let outcome = tokio::task::spawn_blocking(move || updates.check(&id_for_task))
-        .await
-        .map_err(|err| ApiError::internal(format!("update task failed: {err}")))??;
+    let outcome = state
+        .jobs
+        .track_with(format!("Checking {id}"), move |ctx| async move {
+            ctx.step(10, "docker compose pull");
+            tokio::task::spawn_blocking(move || updates.check(&id_for_task))
+                .await
+                .map_err(|err| ApiError::internal(format!("update task failed: {err}")))?
+        })
+        .await?;
 
     state.audit("container.update_check", &id, &outcome.message);
     let (entries, _) = entries_of(&state);
@@ -101,9 +107,15 @@ pub async fn apply(
 ) -> Result<Json<UpdateResult>, ApiError> {
     let updates = state.updates.clone();
     let id_for_task = id.clone();
-    let output = tokio::task::spawn_blocking(move || updates.apply(&id_for_task))
-        .await
-        .map_err(|err| ApiError::internal(format!("update task failed: {err}")))??;
+    let output = state
+        .jobs
+        .track_with(format!("Redeploying {id}"), move |ctx| async move {
+            ctx.step(10, "docker compose up -d");
+            tokio::task::spawn_blocking(move || updates.apply(&id_for_task))
+                .await
+                .map_err(|err| ApiError::internal(format!("update task failed: {err}")))?
+        })
+        .await?;
 
     state.audit("container.update", &id, "redeployed");
     state.docker.invalidate().await;
@@ -126,9 +138,15 @@ pub async fn rollback(
 ) -> Result<Json<UpdateResult>, ApiError> {
     let updates = state.updates.clone();
     let id_for_task = id.clone();
-    let output = tokio::task::spawn_blocking(move || updates.rollback(&id_for_task))
-        .await
-        .map_err(|err| ApiError::internal(format!("update task failed: {err}")))??;
+    let output = state
+        .jobs
+        .track_with(format!("Rolling back {id}"), move |ctx| async move {
+            ctx.step(10, "restoring the previous digest");
+            tokio::task::spawn_blocking(move || updates.rollback(&id_for_task))
+                .await
+                .map_err(|err| ApiError::internal(format!("update task failed: {err}")))?
+        })
+        .await?;
 
     state.audit("container.rollback", &id, "previous digest restored");
     state.docker.invalidate().await;
@@ -163,29 +181,56 @@ pub fn spawn_scheduler(state: AppState) {
             for id in due {
                 let updates = state.updates.clone();
                 let id_for_task = id.clone();
-                let result = tokio::task::spawn_blocking(move || -> Result<String, ApiError> {
-                    let outcome = updates.check(&id_for_task)?;
-                    if !outcome.changed {
-                        return Ok(outcome.message);
-                    }
-                    // Only redeploy once the digest actually moved, so an
-                    // up-to-date stack is never bounced.
-                    updates.apply(&id_for_task)?;
-                    Ok(format!("{} updated", outcome.id))
-                })
-                .await;
+                let id_label = id.clone();
+                let audit_path = state.config.audit_path.clone();
+                // Sequential on purpose: several stacks can come due on the same
+                // tick, and concurrent pulls/redeploys contend for IO on a small
+                // box. `track_with` keeps the drawer updated while the loop waits
+                // for each stack in turn, and only a stack that actually moved is
+                // audited as an update.
+                let result = state
+                    .jobs
+                    .track_with(format!("Auto-update {id}"), move |ctx| async move {
+                        ctx.step(10, "docker compose pull");
+                        let updated = tokio::task::spawn_blocking(move || -> Result<_, ApiError> {
+                            let outcome = updates.check(&id_for_task)?;
+                            if !outcome.changed {
+                                // An up-to-date stack is never bounced.
+                                return Ok(None);
+                            }
+                            updates.apply(&id_for_task)?;
+                            Ok(Some(outcome.id))
+                        })
+                        .await
+                        .map_err(|err| ApiError::internal(format!("update task failed: {err}")))??;
+
+                        match updated {
+                            Some(updated) => {
+                                ctx.step(80, "redeployed");
+                                crate::audit::record(
+                                    &audit_path,
+                                    "system",
+                                    "container.update",
+                                    &updated,
+                                    "scheduled",
+                                );
+                                Ok::<String, ApiError>(format!("{updated} updated"))
+                            }
+                            None => Ok::<String, ApiError>(format!("{id_label} already up to date")),
+                        }
+                    })
+                    .await;
 
                 match result {
-                    Ok(Ok(message)) => {
+                    Ok(message) => {
                         tracing::info!(stack = %id, %message, "scheduled container update");
-                        state.audit("container.update", &id, "scheduled");
                         state.notify.emit(NotificationRequest::info(
                             "container_update",
                             "Container updated",
                             &message,
                         ));
                     }
-                    Ok(Err(err)) => {
+                    Err(err) => {
                         tracing::warn!(stack = %id, %err, "scheduled container update failed");
                         state.notify.emit(NotificationRequest::error(
                             "container_update",
@@ -193,7 +238,6 @@ pub fn spawn_scheduler(state: AppState) {
                             format!("{id}: {err}"),
                         ));
                     }
-                    Err(err) => tracing::warn!(%err, "container update task failed"),
                 }
             }
         }

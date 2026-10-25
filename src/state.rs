@@ -7,12 +7,14 @@ use std::time::Duration;
 
 use tokio::sync::{broadcast, watch};
 
+use crate::alerts::AlertContext;
 use crate::auth::AuthContext;
 use crate::ca::CaContext;
 use crate::config::Config;
 use crate::containers::docker::DockerClient;
 use crate::containers::hub::{CurlHttp, HubSearch};
 use crate::files::FilesContext;
+use crate::jobs::JobManager;
 use crate::networking::NetworkContext;
 use crate::notify::{NotificationCenter, Notifier};
 use crate::runner::SystemRunner;
@@ -61,6 +63,10 @@ pub struct AppState {
     pub auth: AuthContext,
     /// Notification bus: the in-memory feed, live stream and optional webhook.
     pub notify: Arc<NotificationCenter>,
+    /// Universal background job registry: the activity drawer's data source.
+    pub jobs: JobManager,
+    /// Alerting rules document and the runner that reaches providers.
+    pub alerts: AlertContext,
     /// TLS front door: internal CA, SNI certificate map and listener ports.
     pub tls: TlsRuntime,
     /// File manager: guarded filesystem access and its roots document.
@@ -104,6 +110,11 @@ impl AppState {
             Arc::new(SystemRunner::new(Duration::from_secs(15))),
         ));
         let notifier: Arc<dyn Notifier> = notify.clone();
+        let jobs = JobManager::new(Some(notify.clone()));
+        let alerts = AlertContext::new(
+            std::path::PathBuf::from(&config.alerts_path),
+            Arc::new(SystemRunner::new(Duration::from_secs(20))),
+        );
         let network = NetworkContext::new(
             std::path::PathBuf::from(&config.network_path),
             Some(notifier),
@@ -199,6 +210,8 @@ impl AppState {
             virt,
             auth,
             notify,
+            jobs,
+            alerts,
             tls,
             files,
             samba,

@@ -1807,3 +1807,76 @@ export const tasksApi = {
   run: (id: string) =>
     request<TaskRunResult>(`/api/tasks/${encodeURIComponent(id)}/run`, { method: "POST" }),
 };
+
+// ---------------------------------------------------------------------------
+// Background jobs (activity drawer)
+// ---------------------------------------------------------------------------
+
+export type JobStatus = "pending" | "running" | "success" | "failed";
+
+export interface Job {
+  id: string;
+  name: string;
+  status: JobStatus;
+  progress: number;
+  logs: string[];
+  started_ms: number;
+  finished_ms: number | null;
+  message: string | null;
+  error: string | null;
+}
+
+export interface JobsState {
+  jobs: Job[];
+}
+
+export const jobsApi = {
+  list: () => request<JobsState>("/api/jobs"),
+  remove: (id: string) =>
+    request<{ ok: boolean }>(`/api/jobs/${encodeURIComponent(id)}`, { method: "DELETE" }),
+};
+
+// ---------------------------------------------------------------------------
+// Alerting rules + notification providers
+// ---------------------------------------------------------------------------
+
+export type AlertComparison = ">" | "<" | "==" | "!=";
+export type ProviderKind = "discord" | "slack" | "email" | "webhook";
+
+export interface AlertRule {
+  id: string;
+  name: string;
+  /** cpu_usage, memory_usage, load1, disk_usage, disk_usage:/mnt, container_status:<name>. */
+  metric: string;
+  condition: AlertComparison;
+  threshold: number;
+  duration_s: number;
+  /** Provider id. */
+  action: string;
+  enabled: boolean;
+  cooldown_s: number;
+  last_fired: number | null;
+}
+
+export interface ProviderConfig {
+  id: string;
+  name: string;
+  kind: ProviderKind;
+  url: string | null;
+  to: string | null;
+  enabled: boolean;
+}
+
+export interface AlertsState {
+  providers: ProviderConfig[];
+  rules: AlertRule[];
+  doc_error: string | null;
+}
+
+export const alertsApi = {
+  state: () => request<AlertsState>("/api/alerts"),
+  save: (doc: { providers: ProviderConfig[]; rules: AlertRule[] }) =>
+    jsonRequest<AlertsState>("/api/alerts", "PUT", doc),
+  test: (id: string) =>
+    post<TestResult>(`/api/alerts/test/${encodeURIComponent(id)}`),
+};
