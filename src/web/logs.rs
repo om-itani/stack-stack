@@ -53,6 +53,48 @@ pub async fn state(
     Json(collect(&state, &query).await)
 }
 
+/// systemd unit that runs this binary, so the app can show its own recent log.
+const SERVICE_UNIT: &str = "stack-stack.service";
+/// How many lines the "system log" panel shows.
+const SYSTEM_LINES: u32 = 50;
+
+#[derive(Debug, Serialize)]
+pub struct SystemLog {
+    pub available: bool,
+    pub unit: String,
+    pub entries: Vec<LogEntry>,
+    pub error: Option<String>,
+}
+
+/// The last [`SYSTEM_LINES`] journal lines for this service, so a crash can be
+/// diagnosed from the UI without an SSH session.
+pub async fn system(State(state): State<AppState>) -> Json<SystemLog> {
+    let runner = Arc::clone(&state.logs.runner);
+    let available = state.logs.available();
+    let (entries, error) = tokio::task::spawn_blocking(move || {
+        logs::tail(
+            runner.as_ref(),
+            Some(SERVICE_UNIT),
+            SYSTEM_LINES,
+            None,
+            Duration::from_secs(20),
+        )
+    })
+    .await
+    .map(|result| match result {
+        Ok(entries) => (entries, None),
+        Err(err) => (Vec::new(), Some(err.to_string())),
+    })
+    .unwrap_or_else(|err| (Vec::new(), Some(err.to_string())));
+
+    Json(SystemLog {
+        available,
+        unit: SERVICE_UNIT.to_string(),
+        entries,
+        error,
+    })
+}
+
 async fn collect(state: &AppState, query: &TailQuery) -> LogsState {
     let runner = Arc::clone(&state.logs.runner);
     let (units, units_error) =

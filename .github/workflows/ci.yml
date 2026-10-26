@@ -44,3 +44,57 @@ jobs:
       - name: Build (type-check + bundle)
         run: npm run build
         working-directory: frontend
+
+  # Headless browser tests against a real instance of the binary. The release
+  # build is booted in the background, the first-run password is created by the
+  # suite itself, and Playwright drives the UI (login, scheduled tasks, health
+  # checks). A broken button or a failed API call fails the pipeline here.
+  e2e:
+    runs-on: ubuntu-latest
+    needs: check-and-test
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq pkg-config libssl-dev
+      - name: Build the binary
+        run: cargo build --release --locked
+      - name: Boot stack-stack in the background
+        run: |
+          sudo mkdir -p /etc/stack-stack
+          sudo chown "$USER" /etc/stack-stack
+          ./target/release/stack-stack >/tmp/stack-stack.log 2>&1 &
+          echo $! >/tmp/stack-stack.pid
+          for _ in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:8553/api/health >/dev/null 2>&1; then
+              echo "backend is up"; break
+            fi
+            sleep 1
+          done
+          curl -fsS http://127.0.0.1:8553/api/health
+      - uses: actions/setup-node@v5
+        with:
+          node-version: "24"
+      - name: Install Playwright
+        run: npm install
+        working-directory: tests/e2e
+      - name: Install the Chromium browser
+        run: npx playwright install --with-deps chromium
+        working-directory: tests/e2e
+      - name: Run the E2E suite
+        run: npx playwright test
+        working-directory: tests/e2e
+        env:
+          STACK_STACK_URL: http://127.0.0.1:8553
+      - name: Show the backend log on failure
+        if: failure()
+        run: cat /tmp/stack-stack.log
+      - name: Upload the Playwright report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: tests/e2e/playwright-report
+          retention-days: 7

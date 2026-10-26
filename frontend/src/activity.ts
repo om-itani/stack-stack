@@ -2,17 +2,19 @@
  * Global activity drawer.
  *
  * The companion to the notification bell, but for work rather than events: it
- * polls the job registry and shows a live list of running operations with
- * progress bars, plus the last 24 hours of finished ones. A job that transitions
- * to success or failure while the drawer is closed raises a toast, so a long
- * pull or download that finishes in the background still tells the operator.
+ * shows a live list of running operations with progress bars, plus the last 24
+ * hours of finished ones. A job that transitions to success or failure raises a
+ * toast, so a long pull or download that finishes in the background still tells
+ * the operator.
  *
- * Polling is deliberate: the registry read is one short lock server-side, and a
- * socket would buy little over a 3-second refresh.
+ * Updates arrive over `/api/jobs/ws` (an initial snapshot then one frame per
+ * change); a slow poll runs underneath as a safety net so the drawer recovers
+ * even if the socket never opens.
  */
 
 import { jobsApi } from "./api";
 import type { Job } from "./api";
+import { showToast } from "./toast";
 import { el } from "./ui";
 
 export interface Activity {
@@ -21,8 +23,8 @@ export interface Activity {
   stop(): void;
 }
 
-const POLL_MS = 3000;
-const TOAST_MS = 6000;
+const POLL_MS = 15000;
+const RECONNECT_MS = 3000;
 
 function relativeTime(tsMs: number): string {
   const seconds = Math.max(0, Math.round((Date.now() - tsMs) / 1000));
@@ -65,17 +67,15 @@ export function createActivity(): Activity {
       "shadow-float absolute right-0 z-40 mt-1 hidden max-h-96 w-96 overflow-y-auto rounded-[10px] border border-white/10 bg-[#141414]",
   });
 
-  const toastHost = el("div", {
-    class: "fixed bottom-4 right-4 z-50 flex flex-col gap-2",
-  });
-
   root.append(trigger, panel);
 
   let jobs: Job[] = [];
-  let prevStatus = new Map<string, string>();
+  const prevStatus = new Map<string, string>();
   let open = false;
   let timer: number | null = null;
+  let reconnect: number | null = null;
   let polling = false;
+  let socket: WebSocket | null = null;
 
   function progressBar(progress: number): HTMLElement {
     const outer = el("div", {
@@ -89,36 +89,24 @@ export function createActivity(): Activity {
     return outer;
   }
 
-  function toast(job: Job): void {
-    const ok = job.status === "success";
-    const node = el("div", {
-      class: `w-72 border px-3 py-2 text-[11px] shadow-xl ${
-        ok
-          ? "border-emerald-500/40 bg-[#0d1512] text-emerald-300"
-          : "border-rose-500/40 bg-[#170d0f] text-rose-300"
-      }`,
-    });
-    node.append(
-      el("div", {
-        class: "font-semibold",
-        text: `${job.name} ${ok ? "finished" : "failed"}`,
-      }),
-      el("div", {
-        class: "mt-0.5 text-neutral-400",
-        text: job.error ?? job.message ?? (ok ? "done" : "failed"),
-      }),
-    );
-    toastHost.append(node);
-    window.setTimeout(() => node.remove(), TOAST_MS);
+  /** Toast on the running -> finished edge only, using the shared host so a
+   * failed job looks the same as a failed API call. */
+  function announceIfFinished(job: Job): void {
+    const previous = prevStatus.get(job.id);
+    if (previous && previous !== "success" && previous !== "failed" && isFinished(job)) {
+      const ok = job.status === "success";
+      showToast({
+        tone: ok ? "ok" : "error",
+        title: `${job.name} ${ok ? "finished" : "failed"}`,
+        message: job.error ?? job.message ?? (ok ? "done" : "failed"),
+      });
+    }
+    prevStatus.set(job.id, job.status);
   }
 
   function apply(next: Job[]): void {
     for (const job of next) {
-      const previous = prevStatus.get(job.id);
-      if (previous && previous !== "success" && previous !== "failed" && isFinished(job)) {
-        toast(job);
-      }
-      prevStatus.set(job.id, job.status);
+      announceIfFinished(job);
     }
     // Forget jobs that were cleared from history.
     const live = new Set(next.map((job) => job.id));
@@ -127,6 +115,19 @@ export function createActivity(): Activity {
     }
 
     jobs = next;
+    updateBadge();
+    if (open) renderPanel();
+  }
+
+  /** Merge one job from the socket into the list, keeping newest-first order. */
+  function applyJob(job: Job): void {
+    announceIfFinished(job);
+    const index = jobs.findIndex((existing) => existing.id === job.id);
+    if (index >= 0) {
+      jobs[index] = job;
+    } else {
+      jobs = [job, ...jobs];
+    }
     updateBadge();
     if (open) renderPanel();
   }
@@ -254,20 +255,88 @@ export function createActivity(): Activity {
     }
   }
 
+  let running = false;
+
+  function socketUrl(): string {
+    const protocol = location.protocol === "https:" ? "wss:" : "ws:";
+    return `${protocol}//${location.host}/api/jobs/ws`;
+  }
+
+  function connect(): void {
+    if (socket || !running) {
+      return;
+    }
+    let next: WebSocket;
+    try {
+      next = new WebSocket(socketUrl());
+    } catch {
+      scheduleReconnect();
+      return;
+    }
+    socket = next;
+
+    next.addEventListener("message", (event) => {
+      let frame: { type?: string; jobs?: Job[]; job?: Job };
+      try {
+        frame = JSON.parse(String(event.data)) as typeof frame;
+      } catch {
+        return;
+      }
+      if (frame.type === "snapshot" && Array.isArray(frame.jobs)) {
+        apply(frame.jobs);
+      } else if (frame.type === "job" && frame.job) {
+        applyJob(frame.job);
+      } else if (frame.type === "resync") {
+        void poll();
+      }
+    });
+    next.addEventListener("close", () => {
+      if (socket === next) {
+        socket = null;
+      }
+      if (running) {
+        scheduleReconnect();
+      }
+    });
+    next.addEventListener("error", () => next.close());
+  }
+
+  function scheduleReconnect(): void {
+    if (reconnect !== null || !running) {
+      return;
+    }
+    reconnect = window.setTimeout(() => {
+      reconnect = null;
+      connect();
+    }, RECONNECT_MS);
+  }
+
+  function disconnect(): void {
+    if (reconnect !== null) {
+      window.clearTimeout(reconnect);
+      reconnect = null;
+    }
+    const current = socket;
+    socket = null;
+    current?.close();
+  }
+
   return {
     root,
     start() {
-      document.body.append(toastHost);
+      running = true;
       void poll();
+      connect();
       timer = window.setInterval(() => void poll(), POLL_MS);
     },
     stop() {
+      running = false;
       document.removeEventListener("click", onDocumentClick);
       if (timer !== null) {
         window.clearInterval(timer);
         timer = null;
       }
-      toastHost.remove();
+      disconnect();
     },
   };
 }

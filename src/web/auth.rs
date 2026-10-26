@@ -66,9 +66,7 @@ pub async fn gate(State(state): State<AppState>, request: Request, next: Next) -
     };
     (
         StatusCode::UNAUTHORIZED,
-        Json(ErrorResponse {
-            error: message.to_string(),
-        }),
+        Json(ErrorResponse::new("Unauthorized", message)),
     )
         .into_response()
 }

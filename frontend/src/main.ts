@@ -15,6 +15,7 @@ import { createActivity } from "./activity";
 import type { Activity } from "./activity";
 import { createAlertsPage } from "./pages/alerts";
 import { createAppsPage } from "./pages/apps";
+import { createDeveloperPage } from "./pages/developer";
 import { createBackupsPage } from "./pages/backups";
 import { createContainersPage } from "./pages/containers";
 import { createFilesPage } from "./pages/files";
@@ -26,6 +27,7 @@ import { createStoragePage } from "./pages/storage";
 import { createVpnPage } from "./pages/vpn";
 import { createSystemPage } from "./pages/system";
 import { createTasksPage } from "./pages/tasks";
+import { clearToasts, showToast } from "./toast";
 import { createTerminalPage } from "./pages/terminal";
 import { createVirtualizationPage } from "./pages/virtualization";
 import { createBell } from "./notifications";
@@ -298,6 +300,7 @@ function startShell(): void {
     { id: "terminal", label: "Terminal", group: "System", glyph: "TM", create: () => createTerminalPage(() => hostEl.textContent ?? "") },
     { id: "tasks", label: "Tasks", group: "System", glyph: "TK", create: () => createTasksPage() },
     { id: "alerts", label: "Alerts", group: "System", glyph: "AL", create: () => createAlertsPage() },
+    { id: "developer", label: "Developer", group: "System", glyph: "DV", create: () => createDeveloperPage() },
     { id: "settings", label: "Settings", group: "System", glyph: "SE", create: () => createSettingsPage() },
   ];
 
@@ -448,8 +451,46 @@ window.addEventListener("stack-stack:unauthorized", () => {
   bell = null;
   activity?.stop();
   activity = null;
+  clearToasts();
   shellStarted = false;
   void boot();
 });
 
+/**
+ * Global error boundary.
+ *
+ * Anything that escapes a handler — a synchronous throw or an unhandled
+ * rejection — is logged in full and surfaced as a red toast, so a crash is
+ * never silent.
+ */
+function installGlobalErrorHandlers(): void {
+  window.addEventListener("error", (event) => {
+    // Resource-load errors (e.g. a missing image) arrive without an Error and
+    // carry a useless "Script error." message; skip those.
+    if (!event.error && (!event.message || event.message === "Script error.")) {
+      return;
+    }
+    const detail =
+      event.error instanceof Error ? (event.error.stack ?? event.error.message) : event.message;
+    console.error("[Frontend Error]", detail);
+    showToast({
+      tone: "error",
+      title: "A frontend error occurred",
+      message: "Check the console for the full stack trace.",
+    });
+  });
+
+  window.addEventListener("unhandledrejection", (event) => {
+    const reason: unknown = event.reason;
+    const detail = reason instanceof Error ? (reason.stack ?? reason.message) : String(reason);
+    console.error("[Unhandled Rejection]", detail);
+    showToast({
+      tone: "error",
+      title: "An unhandled error occurred",
+      message: "Check the console for the full stack trace.",
+    });
+  });
+}
+
+installGlobalErrorHandlers();
 void boot();

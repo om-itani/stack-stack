@@ -26,8 +26,13 @@ use std::sync::{Arc, RwLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
+use tokio::sync::broadcast;
 
 use crate::notify::{NotificationRequest, Notifier};
+
+/// How many in-flight job updates a slow WebSocket client may fall behind by
+/// before it is told it lagged and resynchronises from a fresh snapshot.
+const JOB_CHANNEL_CAPACITY: usize = 64;
 
 /// How long a finished job stays in the history the UI reads.
 pub const HISTORY_TTL_MS: u64 = 24 * 60 * 60 * 1000;
@@ -104,15 +109,25 @@ pub struct JobManager {
     /// Last time the registry was pruned, so the read path does not take the
     /// write lock on every poll.
     last_prune_ms: Arc<AtomicU64>,
+    /// Fan-out of every job change, for the activity WebSocket.
+    live: broadcast::Sender<Job>,
 }
 
 impl JobManager {
     pub fn new(notifier: Option<Arc<dyn Notifier>>) -> Self {
+        let (live, _) = broadcast::channel(JOB_CHANNEL_CAPACITY);
         Self {
             inner: Arc::new(RwLock::new(Inner::default())),
             notifier,
             last_prune_ms: Arc::new(AtomicU64::new(0)),
+            live,
         }
+    }
+
+    /// Subscribe to every subsequent job change. A receiver that falls behind is
+    /// told it lagged; the client then re-fetches the list.
+    pub fn subscribe(&self) -> broadcast::Receiver<Job> {
+        self.live.subscribe()
     }
 
     /// Register an operation and run it inline, forwarding progress to the job.
@@ -263,20 +278,32 @@ impl JobManager {
             error: None,
             announce,
         };
+        let created = job.clone();
         inner.jobs.insert(id.clone(), job);
         inner.order.push_back(id.clone());
         prune_locked(&mut inner);
+        let _ = self.live.send(created);
         let ctx = JobCtx {
             id: id.clone(),
             inner: Arc::clone(&self.inner),
+            live: self.live.clone(),
         };
         (id, ctx)
     }
 
     fn mark_running(&self, id: &str) {
-        let mut inner = self.inner.write().expect("jobs lock");
-        if let Some(job) = inner.jobs.get_mut(id) {
-            job.status = JobStatus::Running;
+        let updated = {
+            let mut inner = self.inner.write().expect("jobs lock");
+            match inner.jobs.get_mut(id) {
+                Some(job) => {
+                    job.status = JobStatus::Running;
+                    Some(job.clone())
+                }
+                None => None,
+            }
+        };
+        if let Some(job) = updated {
+            let _ = self.live.send(job);
         }
     }
 
@@ -297,6 +324,7 @@ impl JobManager {
                 None => return,
             }
         };
+        let _ = self.live.send(finished.clone());
         self.announce(&finished);
     }
 
@@ -344,26 +372,40 @@ impl JobManager {
 pub struct JobCtx {
     id: String,
     inner: Arc<RwLock<Inner>>,
+    live: broadcast::Sender<Job>,
 }
 
 impl JobCtx {
     /// Set completion percentage. Values are clamped to 0..=100.
     pub fn set_progress(&self, percent: u8) {
-        let mut inner = self.inner.write().expect("jobs lock");
-        if let Some(job) = inner.jobs.get_mut(&self.id) {
-            job.progress = percent.min(100);
+        let updated = {
+            let mut inner = self.inner.write().expect("jobs lock");
+            inner.jobs.get_mut(&self.id).map(|job| {
+                job.progress = percent.min(100);
+                job.clone()
+            })
+        };
+        if let Some(job) = updated {
+            let _ = self.live.send(job);
         }
     }
 
     /// Append one line to the job's log tail.
     pub fn log(&self, line: impl Into<String>) {
-        let mut inner = self.inner.write().expect("jobs lock");
-        if let Some(job) = inner.jobs.get_mut(&self.id) {
-            job.logs.push(line.into());
-            if job.logs.len() > MAX_LOGS {
-                let excess = job.logs.len() - MAX_LOGS;
-                job.logs.drain(0..excess);
-            }
+        let line = line.into();
+        let updated = {
+            let mut inner = self.inner.write().expect("jobs lock");
+            inner.jobs.get_mut(&self.id).map(|job| {
+                job.logs.push(line);
+                if job.logs.len() > MAX_LOGS {
+                    let excess = job.logs.len() - MAX_LOGS;
+                    job.logs.drain(0..excess);
+                }
+                job.clone()
+            })
+        };
+        if let Some(job) = updated {
+            let _ = self.live.send(job);
         }
     }
 

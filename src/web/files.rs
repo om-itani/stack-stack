@@ -130,7 +130,8 @@ pub async fn save_config(
         return Ok((
             StatusCode::BAD_REQUEST,
             Json(serde_json::json!({
-                "error": "file manager configuration is not valid",
+                "error": "BadRequest",
+                "message": "file manager configuration is not valid",
                 "problems": problems,
             })),
         )

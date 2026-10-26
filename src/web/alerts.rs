@@ -55,14 +55,15 @@ pub async fn save(
 ) -> Result<Json<AlertsState>, ApiError> {
     let problems = doc.validate();
     if !problems.is_empty() {
-        return Err(ApiError::bad_request(format!(
-            "alert configuration is not valid: {}",
-            problems
-                .iter()
-                .map(|problem| format!("{}: {}", problem.field, problem.message))
-                .collect::<Vec<_>>()
-                .join("; ")
-        )));
+        return Err(
+            ApiError::bad_request("alert configuration is not valid").with_details(
+                problems
+                    .iter()
+                    .map(|problem| format!("{}: {}", problem.field, problem.message))
+                    .collect::<Vec<_>>()
+                    .join("; "),
+            ),
+        );
     }
     state.alerts.save(&doc)?;
     state.audit(

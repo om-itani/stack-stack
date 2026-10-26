@@ -62,9 +62,7 @@ pub async fn timeout_requests(request: Request, next: Next) -> Response {
             tracing::warn!(%path, timeout_s = API_TIMEOUT.as_secs(), "api request timed out");
             (
                 StatusCode::GATEWAY_TIMEOUT,
-                Json(ErrorResponse {
-                    error: "request timed out".to_string(),
-                }),
+                Json(ErrorResponse::new("Timeout", "request timed out")),
             )
                 .into_response()
         }

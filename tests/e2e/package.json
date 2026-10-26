@@ -1,0 +1,14 @@
+{
+  "name": "stack-stack-e2e",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Headless browser (Playwright) end-to-end tests for the stack-stack UI.",
+  "scripts": {
+    "test": "playwright test",
+    "report": "playwright show-report"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.49.0"
+  }
+}

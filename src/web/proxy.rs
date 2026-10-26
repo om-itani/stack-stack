@@ -171,7 +171,8 @@ pub async fn enable(
             return Ok((
                 StatusCode::CONFLICT,
                 Json(serde_json::json!({
-                    "error": "the front-door ports are not free",
+                    "error": "Conflict",
+                    "message": "the front-door ports are not free",
                     "preflight": checks,
                 })),
             )

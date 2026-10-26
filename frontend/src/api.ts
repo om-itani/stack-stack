@@ -7,6 +7,8 @@
  * `Error` with the server's message.
  */
 
+import { showToast } from "./toast";
+
 export type ContainerSource = "app-store" | "manual";
 
 export interface ContainerPort {
@@ -103,6 +105,10 @@ export interface Problem {
 
 export interface ApiFailure extends Error {
   problems: Problem[];
+  /** Machine code from the backend (`error`), e.g. "NotFound". */
+  code?: string;
+  /** Extra diagnostic context from the backend (`details`). */
+  details?: string;
 }
 
 function apiFailure(message: string, problems: Problem[] = []): ApiFailure {
@@ -139,11 +145,13 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
       abort.name = "AbortError";
       throw abort;
     }
-    throw new Error(
+    const message =
       err instanceof DOMException && err.name === "AbortError"
         ? "request timed out"
-        : "network error",
-    );
+        : "network error";
+    console.error("[API Error]", { path, message, error: err });
+    showToast({ tone: "error", title: "Backend unreachable", message: `${path}: ${message}` });
+    throw new Error(message);
   } finally {
     window.clearTimeout(timer);
   }
@@ -159,21 +167,49 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   }
 
   if (!response.ok) {
+    const isAuthPath = path.startsWith("/api/auth/");
     // A 401 anywhere other than the auth endpoints means the session expired or
     // was dropped; the shell listens for this and returns to the login gate.
-    if (
-      response.status === 401 &&
-      !path.startsWith("/api/auth/")
-    ) {
+    if (response.status === 401 && !isAuthPath) {
       window.dispatchEvent(new CustomEvent("stack-stack:unauthorized"));
     }
+
     const record = body && typeof body === "object" ? (body as Record<string, unknown>) : null;
-    const message = record && "error" in record
-      ? String(record.error)
-      : `request failed (${response.status})`;
+    // Standard shape is { error: code, message, details }; older/manual error
+    // bodies carry only { error: <text> }, so `message` falls back to it.
+    const code = record && typeof record.error === "string" ? record.error : undefined;
+    const message =
+      record && typeof record.message === "string"
+        ? String(record.message)
+        : code ?? `request failed (${response.status})`;
+    const details =
+      record && typeof record.details === "string" ? String(record.details) : undefined;
     const problems =
       record && Array.isArray(record.problems) ? (record.problems as Problem[]) : [];
-    throw apiFailure(message, problems);
+
+    // Every failure is logged with enough context to debug from the console.
+    console.error("[API Error]", {
+      path,
+      status: response.status,
+      code,
+      message,
+      details,
+      body,
+    });
+    // Auth failures are shown inline by the login gate, and a 401 is handled by
+    // the session-expiry redirect; neither needs a toast.
+    if (!isAuthPath && response.status !== 401) {
+      showToast({
+        tone: "error",
+        title: `${message}`,
+        message: details ?? `${response.status} ${response.statusText}`.trim(),
+      });
+    }
+
+    const failure = apiFailure(message, problems);
+    failure.code = code;
+    failure.details = details;
+    throw failure;
   }
 
   return body as T;
@@ -1908,4 +1944,68 @@ export const healthApi = {
   state: () => request<HealthState>("/api/healthchecks"),
   save: (doc: { checks: HealthCheck[] }) =>
     jsonRequest<HealthState>("/api/healthchecks", "PUT", doc),
+};
+
+// ---------------------------------------------------------------------------
+// Developer / diagnostics
+// ---------------------------------------------------------------------------
+
+export interface DebugRoute {
+  method: string;
+  path: string;
+}
+
+export interface PingResult {
+  method: string;
+  path: string;
+  /** HTTP status, or 0 when the request could not be completed. */
+  status: number;
+  ok: boolean;
+  ms: number;
+  error: string | null;
+}
+
+export interface PingReport {
+  results: PingResult[];
+  ok_count: number;
+  fail_count: number;
+}
+
+export interface ConfigRef {
+  name: string;
+  path: string;
+  exists: boolean;
+  bytes: number | null;
+  modified_ms: number | null;
+}
+
+export interface ConfigBody {
+  name: string;
+  path: string;
+  json: unknown;
+}
+
+export interface SystemLogEntry {
+  ts_ms: number;
+  priority: number;
+  unit: string;
+  message: string;
+}
+
+export interface SystemLog {
+  available: boolean;
+  unit: string;
+  entries: SystemLogEntry[];
+  error: string | null;
+}
+
+export const debugApi = {
+  routes: () => request<{ routes: DebugRoute[] }>("/api/debug/routes"),
+  ping: () => request<PingReport>("/api/debug/ping"),
+  configs: () => request<{ configs: ConfigRef[] }>("/api/debug/configs"),
+  config: (name: string) =>
+    request<ConfigBody>(`/api/debug/config?name=${encodeURIComponent(name)}`),
+  systemLog: () => request<SystemLog>("/api/logs/system"),
+  /** Deliberately hits a route that does not exist, to exercise the error toast. */
+  forceError: () => request<unknown>("/api/debug/force-error", { method: "POST" }),
 };

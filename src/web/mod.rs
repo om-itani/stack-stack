@@ -8,6 +8,7 @@ pub mod auth;
 pub mod backup;
 pub mod containers;
 pub mod ddns;
+pub mod debug;
 pub mod files;
 pub mod healthchecks;
 pub mod jobs;
@@ -61,7 +62,12 @@ pub fn router(state: AppState) -> Router {
         .route("/api/notifications/test", post(notify::test))
         .route("/api/notifications/ws", get(notify::ws))
         .route("/api/jobs", get(jobs::list))
+        .route("/api/jobs/ws", get(jobs::ws))
         .route("/api/jobs/{id}", delete(jobs::remove))
+        .route("/api/debug/routes", get(debug::routes))
+        .route("/api/debug/ping", get(debug::ping))
+        .route("/api/debug/configs", get(debug::configs))
+        .route("/api/debug/config", get(debug::config))
         .route("/api/alerts", get(alerts::state).put(alerts::save))
         .route("/api/alerts/test/{id}", post(alerts::test))
         .route(
@@ -212,6 +218,7 @@ pub fn router(state: AppState) -> Router {
         .route("/api/smart/{device}", post(smart::start))
         .route("/api/smart/progress", get(smart::progress))
         .route("/api/logs", get(logs::state))
+        .route("/api/logs/system", get(logs::system))
         .route("/api/logs/units", get(logs::state))
         .route("/api/logs/ws", get(logs::ws))
         .route("/api/ddns", get(ddns::state))

@@ -43,14 +43,15 @@ pub async fn save(
 ) -> Result<Json<HealthState>, ApiError> {
     let problems = doc.validate();
     if !problems.is_empty() {
-        return Err(ApiError::bad_request(format!(
-            "health configuration is not valid: {}",
-            problems
-                .iter()
-                .map(|problem| format!("{}: {}", problem.field, problem.message))
-                .collect::<Vec<_>>()
-                .join("; ")
-        )));
+        return Err(
+            ApiError::bad_request("health configuration is not valid").with_details(
+                problems
+                    .iter()
+                    .map(|problem| format!("{}: {}", problem.field, problem.message))
+                    .collect::<Vec<_>>()
+                    .join("; "),
+            ),
+        );
     }
     state.health.save(&doc)?;
     state.audit(

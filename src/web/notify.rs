@@ -147,7 +147,8 @@ fn invalid(problems: Vec<crate::networking::model::Problem>) -> Response {
     (
         StatusCode::BAD_REQUEST,
         Json(serde_json::json!({
-            "error": "notification configuration is not valid",
+            "error": "BadRequest",
+            "message": "notification configuration is not valid",
             "problems": problems,
         })),
     )
