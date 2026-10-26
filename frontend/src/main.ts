@@ -157,7 +157,8 @@ function renderLogin(): void {
   const error = el("div", { class: "min-h-4 text-xs text-rose-400" });
 
   const input = textInput("", (value) => (password = value), { type: "password", class: "w-full" });
-  input.autofocus = true;
+  // Focused programmatically at the end of this function instead of via the
+  // `autofocus` attribute, which browsers warn about (and sometimes block).
   body.append(field("Password", input));
 
   const submit = button(

@@ -282,7 +282,54 @@ impl StorageContext {
                 output.combined().trim()
             )));
         }
-        Ok(format!("{target} unmounted"))
+
+        // A persisted mount would silently come back at the next boot; drop the
+        // entry we added for it. Only entries carrying our own marker are
+        // touched, so an operator-authored line is never edited.
+        if self.remove_fstab_entry(target)? {
+            Ok(format!("{target} unmounted and removed from /etc/fstab"))
+        } else {
+            Ok(format!("{target} unmounted"))
+        }
+    }
+
+    /// Remove the `# added by stack-stack` fstab entry for `target` (matched by
+    /// mount point, or by device when no UUID was used). Returns whether
+    /// anything was removed.
+    fn remove_fstab_entry(&self, target: &str) -> Result<bool, ApiError> {
+        let Ok(existing) = std::fs::read_to_string(&self.fstab) else {
+            return Ok(false);
+        };
+        let lines: Vec<&str> = existing.lines().collect();
+        let mut kept: Vec<String> = Vec::new();
+        let mut removed = false;
+        let mut index = 0;
+        while index < lines.len() {
+            let line = lines[index];
+            if line.trim() == "# added by stack-stack" && index + 1 < lines.len() {
+                let fields: Vec<&str> = lines[index + 1].split_whitespace().collect();
+                let matches = fields.len() >= 2 && (fields[1] == target || fields[0] == target);
+                if matches {
+                    removed = true;
+                    index += 2; // skip the marker and the entry it introduces
+                    continue;
+                }
+            }
+            kept.push(line.to_string());
+            index += 1;
+        }
+        if !removed {
+            return Ok(false);
+        }
+
+        let mut next = kept.join("\n");
+        if !next.is_empty() {
+            next.push('\n');
+        }
+        std::fs::write(&self.fstab, next).map_err(|err| {
+            ApiError::internal(format!("cannot update {}: {err}", self.fstab.display()))
+        })?;
+        Ok(true)
     }
 
     /// Append a boot-persistent entry for `device` if one is not already there.
@@ -684,6 +731,34 @@ mod tests {
         let (ctx, _) = context(vec![]);
         let err = ctx.unmount("/etc").expect_err("refuse");
         assert!(matches!(err, ApiError::BadRequest(_)), "{err:?}");
+    }
+
+    #[test]
+    fn unmount_removes_only_our_own_fstab_entry() {
+        let dir = std::env::temp_dir().join(format!("ss-storage-fstab-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("create temp dir");
+        let fstab = dir.join("fstab");
+        std::fs::write(
+            &fstab,
+            "UUID=aaaa / ext4 defaults 0 1\n\
+             # added by stack-stack\nUUID=bbbb /mnt/data ext4 defaults,nofail 0 2\n",
+        )
+        .expect("write fstab");
+        let runner = FakeRunner::new(vec![("umount", ok(""))]);
+        let ctx = StorageContext::with_fstab(runner, fstab.clone());
+
+        let message = ctx.unmount("/mnt/data").expect("unmount");
+        assert!(message.contains("removed from /etc/fstab"), "{message}");
+        let after = std::fs::read_to_string(&fstab).expect("read fstab");
+        assert!(after.contains("UUID=aaaa / ext4"), "operator entry kept");
+        assert!(!after.contains("/mnt/data"), "our entry removed");
+
+        // A mount point we never added is left alone.
+        std::fs::write(&fstab, "UUID=aaaa / ext4 defaults 0 1\n").expect("write fstab");
+        let message = ctx.unmount("/mnt/other").expect("unmount");
+        assert!(!message.contains("removed"), "{message}");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// The mount point is created with `create_dir_all`, so pointing this test at

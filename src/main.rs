@@ -6,6 +6,7 @@
 mod alerts;
 mod audit;
 mod auth;
+mod bootstrap;
 mod ca;
 mod config;
 mod containers;
@@ -56,6 +57,18 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
     // Create the audit trail (mode 0600) and record this boot, so `tail -f` works
     // before the first destructive action.
     audit::init(&cfg.audit_path);
+
+    // Seed any missing configuration document before the state is built, so a
+    // fresh box has a complete /etc/stack-stack tree and the Developer page
+    // never reports a document as missing. Best effort: a read-only box must
+    // still boot, it just logs.
+    match bootstrap::ensure_config_files(&cfg) {
+        Ok(written) if !written.is_empty() => {
+            tracing::info!(documents = ?written, "seeded default configuration documents");
+        }
+        Ok(_) => {}
+        Err(err) => tracing::warn!(%err, "could not seed default configuration documents"),
+    }
 
     let app_state = AppState::new(cfg.clone());
     web::ws::spawn_sampler(app_state.clone(), cfg.clone());

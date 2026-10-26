@@ -466,6 +466,14 @@ post_deploy_verification() {
     return 1
   fi
 
+  # The resolver is the most fragile dependency: unbound will not start while
+  # anything else holds :53. Surface a failed unit here (with its journal) rather
+  # than waiting for the first network apply to reveal it.
+  if systemctl is-failed --quiet unbound.service 2>/dev/null; then
+    warn_file "unbound.service is in a failed state (port 53 clash?):"
+    journalctl -u unbound.service --no-pager -n 20 >&2 || true
+  fi
+
   log_file "Post-deploy verification complete (${failed} endpoints need configuration)"
   return 0
 }
@@ -490,6 +498,63 @@ rollback_binary() {
   else
     warn_file "no previous binary found to restore"
   fi
+}
+
+# ---------------------------------------------------------------------------
+# DNS resolvers: unbound must own :53.
+#
+# The single most common boot failure is unbound crash-looping because
+# systemd-resolved (or a distro dnsmasq) already holds UDP/TCP 53. Free the port
+# here, keep dnsmasq out of the way, and make unbound wait for the network and
+# retry with a small backoff instead of giving up after the default burst.
+# ---------------------------------------------------------------------------
+stabilize_dns_resolvers() {
+  # 1) systemd-resolved's stub listener owns :53 on Ubuntu/Pop!_OS. Disable the
+  #    unit and, when /etc/resolv.conf pointed at the stub, replace it with a
+  #    static resolver so name resolution keeps working before unbound starts.
+  if systemctl list-unit-files systemd-resolved.service >/dev/null 2>&1; then
+    if systemctl is-enabled --quiet systemd-resolved 2>/dev/null \
+      || systemctl is-active --quiet systemd-resolved 2>/dev/null; then
+      log_file "freeing port 53: disabling systemd-resolved"
+      systemctl disable --now systemd-resolved >/dev/null 2>&1 \
+        || warn_file "could not disable systemd-resolved"
+      if [[ -e /etc/resolv.conf ]] && grep -q '127\.0\.0\.53' /etc/resolv.conf 2>/dev/null; then
+        rm -f /etc/resolv.conf
+        write_if_changed /etc/resolv.conf 'nameserver 1.1.1.1
+nameserver 1.0.0.1
+' >/dev/null || true
+        log_file "wrote a static /etc/resolv.conf (stub resolver removed)"
+      fi
+    fi
+  fi
+
+  # 2) dnsmasq is DHCP-only in this stack: its generated config sets `port=0`
+  #    whenever unbound is on. Make sure the fragment directory exists and is
+  #    actually read, so a distro default cannot quietly take :53 back.
+  if [[ -d /etc/dnsmasq.d || -f /etc/dnsmasq.conf ]]; then
+    install -d -m 0755 /etc/dnsmasq.d
+    if ! grep -q '^conf-dir=/etc/dnsmasq.d' /etc/dnsmasq.conf 2>/dev/null; then
+      printf '\n# stack-stack: load per-service dnsmasq fragments.\nconf-dir=/etc/dnsmasq.d/,*.conf\n' >> /etc/dnsmasq.conf
+      log_file "enabled /etc/dnsmasq.d includes in /etc/dnsmasq.conf"
+    fi
+  fi
+
+  # 3) unbound: start after the network and retry with a short backoff, so a
+  #    transient clash at boot self-heals instead of failing the deploy.
+  install -d -m 0755 /etc/systemd/system/unbound.service.d
+  write_if_changed /etc/systemd/system/unbound.service.d/stack-stack.conf \
+    '[Unit]
+After=network.target network-online.target
+Wants=network-online.target
+
+[Service]
+# Retry rather than give up after the default burst; the app restarts unbound
+# again on apply, but this covers the window before the first apply.
+Restart=on-failure
+RestartSec=3
+StartLimitIntervalSec=0
+' >/dev/null || true
+  systemctl daemon-reload >/dev/null 2>&1 || true
 }
 
 # ---------------------------------------------------------------------------
@@ -580,6 +645,7 @@ main() {
 
   preflight_checks
   install_packages
+  stabilize_dns_resolvers
   harden_system
   ensure_rust
   backup_binary

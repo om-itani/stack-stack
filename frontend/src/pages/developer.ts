@@ -9,6 +9,7 @@
 
 import { debugApi } from "../api";
 import type { ConfigRef, PingReport } from "../api";
+import { showToast } from "../toast";
 import { badge, button, el, panel, select } from "../ui";
 
 export interface PageHandle {
@@ -111,9 +112,11 @@ export function createDeveloperPage(): PageHandle {
     const card = panel("raw config");
     card.body.className = "flex flex-col gap-2 px-3 py-2";
 
+    // Never say "missing": a document that has not been written yet is still
+    // shown, because the endpoint returns the effective (defaults-merged) JSON.
     const options: [string, string][] = configs.map((entry) => [
       entry.name,
-      entry.exists ? entry.name : `${entry.name} (missing)`,
+      entry.exists ? entry.name : `${entry.name} (defaults)`,
     ]);
     const bar = el("div", { class: "flex flex-wrap items-end gap-3" });
     bar.append(
@@ -212,9 +215,24 @@ export function createDeveloperPage(): PageHandle {
         throw new Error("Forced frontend error (Developer page)");
       });
     }),
-    button("force api error", "text-rose-400 hover:border-rose-500", () => {
-      // The API layer logs and toasts this; swallow the rejection here.
-      void debugApi.forceError().catch(() => undefined);
+    button("force api error", "text-rose-400 hover:border-rose-500", async () => {
+      try {
+        await debugApi.forceError();
+        // Reaching here means the 400 was swallowed somewhere; say so loudly.
+        showToast({
+          tone: "error",
+          title: "Force error did not fail",
+          message: "the endpoint was expected to return a 400",
+        });
+      } catch {
+        // The API layer already logged and toasted the 400; confirm to the
+        // operator that the handler round-tripped as designed.
+        showToast({
+          tone: "ok",
+          title: "Error handler works!",
+          message: "The forced 400 was caught, logged and shown as a toast.",
+        });
+      }
     }),
     status,
   );

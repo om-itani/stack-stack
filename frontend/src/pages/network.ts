@@ -349,7 +349,11 @@ export function createNetworkPage(): PageHandle {
         panel.append(
           el("div", { class: step.ok ? "text-emerald-400" : "text-rose-400" }, [
             el("span", { class: "tabular", text: `${step.subsystem} ` }),
-            el("span", { class: "text-neutral-500", text: step.detail }),
+            // Failures carry a multi-line journal tail; keep the line breaks.
+            el("span", {
+              class: "whitespace-pre-wrap break-words text-neutral-500",
+              text: step.detail,
+            }),
           ]),
         );
       }

@@ -205,7 +205,49 @@ pub fn tail_raw(
             first_line(&output.combined())
         )));
     }
-    Ok(output.stdout)
+    Ok(strip_ansi(&output.stdout))
+}
+
+/// Remove ANSI/VT100 escape sequences (colour and cursor codes), so a log line
+/// renders as plain text in the browser instead of leaking `\x1b[1;32m`.
+pub fn strip_ansi(input: &str) -> String {
+    let mut out = String::with_capacity(input.len());
+    let mut chars = input.chars().peekable();
+    while let Some(ch) = chars.next() {
+        if ch != '\u{1b}' {
+            out.push(ch);
+            continue;
+        }
+        match chars.next() {
+            // CSI: parameters/intermediates then a final byte in 0x40..=0x7E.
+            Some('[') => {
+                while let Some(&next) = chars.peek() {
+                    chars.next();
+                    if ('@'..='~').contains(&next) {
+                        break;
+                    }
+                }
+            }
+            // OSC: terminated by BEL or ST (ESC \).
+            Some(']') => {
+                while let Some(next) = chars.next() {
+                    if next == '\u{7}' {
+                        break;
+                    }
+                    if next == '\u{1b}' {
+                        if chars.peek() == Some(&'\\') {
+                            chars.next();
+                        }
+                        break;
+                    }
+                }
+            }
+            // A bare ESC or an unknown introducer: drop the escape, keep the byte.
+            Some(other) => out.push(other),
+            None => {}
+        }
+    }
+    out
 }
 
 /// Parse newline-delimited `journalctl -o json`.
@@ -236,7 +278,11 @@ pub fn parse_entries(json_lines: &str) -> Result<Vec<LogEntry>, ApiError> {
             .and_then(|v| v.as_str())
             .unwrap_or("kernel")
             .to_string();
-        let message = value.get("MESSAGE").map(message_field).unwrap_or_default();
+        let message = value
+            .get("MESSAGE")
+            .map(message_field)
+            .map(|text| strip_ansi(&text))
+            .unwrap_or_default();
         entries.push(LogEntry {
             ts_ms,
             priority,
@@ -368,6 +414,16 @@ mod tests {
         assert_eq!(entries[1].priority, 3);
         assert_eq!(entries[1].unit, "ss-stack.service");
         assert_eq!(entries[1].ts_ms, 1_700_000_000_000);
+    }
+
+    #[test]
+    fn ansi_escapes_are_stripped() {
+        assert_eq!(strip_ansi("\u{1b}[1;32mok\u{1b}[0m"), "ok");
+        assert_eq!(strip_ansi("plain text"), "plain text");
+        // OSC terminated by BEL.
+        assert_eq!(strip_ansi("\u{1b}]0;title\u{7}after"), "after");
+        // A stray escape with no sequence keeps the following byte.
+        assert_eq!(strip_ansi("a\u{1b}b"), "ab");
     }
 
     #[test]
