@@ -62,7 +62,9 @@ const SYSTEM_LINES: u32 = 50;
 pub struct SystemLog {
     pub available: bool,
     pub unit: String,
-    pub entries: Vec<LogEntry>,
+    /// The journal tail as plain text lines, shown verbatim so no field the
+    /// parser does not know about is ever dropped.
+    pub raw: String,
     pub error: Option<String>,
 }
 
@@ -71,26 +73,25 @@ pub struct SystemLog {
 pub async fn system(State(state): State<AppState>) -> Json<SystemLog> {
     let runner = Arc::clone(&state.logs.runner);
     let available = state.logs.available();
-    let (entries, error) = tokio::task::spawn_blocking(move || {
-        logs::tail(
+    let (raw, error) = tokio::task::spawn_blocking(move || {
+        logs::tail_raw(
             runner.as_ref(),
             Some(SERVICE_UNIT),
             SYSTEM_LINES,
-            None,
             Duration::from_secs(20),
         )
     })
     .await
     .map(|result| match result {
-        Ok(entries) => (entries, None),
-        Err(err) => (Vec::new(), Some(err.to_string())),
+        Ok(raw) => (raw, None),
+        Err(err) => (String::new(), Some(err.to_string())),
     })
-    .unwrap_or_else(|err| (Vec::new(), Some(err.to_string())));
+    .unwrap_or_else(|err| (String::new(), Some(err.to_string())));
 
     Json(SystemLog {
         available,
         unit: SERVICE_UNIT.to_string(),
-        entries,
+        raw,
         error,
     })
 }

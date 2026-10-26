@@ -16,18 +16,6 @@ export interface PageHandle {
   onShow?: () => void;
 }
 
-const PRIORITY_LABELS = ["emerg", "alert", "crit", "err", "warning", "notice", "info", "debug"];
-
-function priorityLabel(priority: number): string {
-  return PRIORITY_LABELS[priority] ?? "info";
-}
-
-function priorityClass(priority: number): string {
-  if (priority <= 3) return "text-rose-400";
-  if (priority === 4) return "text-amber-400";
-  return "text-neutral-500";
-}
-
 function errorText(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
@@ -151,7 +139,16 @@ export function createDeveloperPage(): PageHandle {
       pre.textContent = "loading…";
       try {
         const body = await debugApi.config(selectedConfig);
-        pre.textContent = JSON.stringify(body.json, null, 2);
+        // Lead with where the values came from, so "defaults (no file)" is
+        // obvious when the document was never written.
+        const header = [
+          `// ${body.path}`,
+          `// source: ${body.source}`,
+          ...(body.error ? [`// error: ${body.error}`] : []),
+          "",
+          "",
+        ].join("\n");
+        pre.textContent = header + JSON.stringify(body.json, null, 2);
       } catch (err) {
         pre.textContent = errorText(err);
       }
@@ -191,25 +188,9 @@ export function createDeveloperPage(): PageHandle {
         logBox.textContent = "journalctl is not available on this host";
         return;
       }
-      if (log.entries.length === 0) {
-        logBox.textContent = log.error ?? "no recent entries";
-        return;
-      }
-      logBox.replaceChildren(
-        ...log.entries.map((entry) =>
-          el("div", { class: "flex gap-2" }, [
-            el("span", {
-              class: "tabular shrink-0 text-neutral-600",
-              text: new Date(entry.ts_ms).toLocaleTimeString(),
-            }),
-            el("span", {
-              class: `w-14 shrink-0 ${priorityClass(entry.priority)}`,
-              text: priorityLabel(entry.priority),
-            }),
-            el("span", { class: "min-w-0 break-words text-neutral-300", text: entry.message }),
-          ]),
-        ),
-      );
+      // Shown verbatim: journald's own line format is more reliable than any
+      // column splitting we could do here.
+      logBox.textContent = log.raw.trim() || (log.error ?? "no recent entries");
     } catch (err) {
       logBox.textContent = errorText(err);
     }

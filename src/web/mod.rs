@@ -66,6 +66,7 @@ pub fn router(state: AppState) -> Router {
         .route("/api/jobs/{id}", delete(jobs::remove))
         .route("/api/debug/routes", get(debug::routes))
         .route("/api/debug/ping", get(debug::ping))
+        .route("/api/debug/force-error", post(debug::force_error))
         .route("/api/debug/configs", get(debug::configs))
         .route("/api/debug/config", get(debug::config))
         .route("/api/alerts", get(alerts::state).put(alerts::save))

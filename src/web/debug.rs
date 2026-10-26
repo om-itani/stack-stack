@@ -192,6 +192,13 @@ pub async fn ping(State(state): State<AppState>, headers: HeaderMap) -> Json<Pin
     })
 }
 
+/// Always fails. Exists so the Developer page can exercise the whole error
+/// pipeline (JSON shape, console.error, red toast) on demand.
+pub async fn force_error() -> Result<Json<serde_json::Value>, ApiError> {
+    Err(ApiError::bad_request("forced for testing")
+        .with_details("POST /api/debug/force-error always fails by design"))
+}
+
 #[derive(Serialize)]
 pub struct ConfigRef {
     pub name: &'static str,
@@ -236,11 +243,101 @@ pub struct ConfigQuery {
 pub struct ConfigBody {
     pub name: String,
     pub path: String,
-    /// The parsed document, so a malformed file is an error rather than a blob.
+    /// `file` when the document exists on disk, otherwise `defaults (no file)`.
+    pub source: String,
+    /// A parse error from the loader, if the on-disk document is unreadable.
+    pub error: Option<String>,
+    /// The *effective* document: defaults merged with whatever is on disk.
     pub json: serde_json::Value,
 }
 
-/// The raw (but parsed) JSON of one configuration document.
+/// Serialise a value to JSON for the viewer.
+fn to_json<T: serde::Serialize>(value: &T) -> Result<serde_json::Value, ApiError> {
+    serde_json::to_value(value)
+        .map_err(|err| ApiError::internal(format!("cannot serialise config: {err}")))
+}
+
+/// Load one document through the same code path the service uses internally, so
+/// defaults are merged in even when the file was never written. Returns the
+/// effective document and any loader error.
+fn effective_config(
+    state: &AppState,
+    name: &str,
+) -> Result<(serde_json::Value, Option<String>), ApiError> {
+    use std::path::Path;
+
+    let cfg = &state.config;
+    match name {
+        "network" => {
+            let (value, err) = crate::networking::store::load(Path::new(&cfg.network_path));
+            Ok((to_json(&value)?, err))
+        }
+        "tasks" => {
+            let (value, err) = state.tasks.load();
+            Ok((to_json(&value)?, err))
+        }
+        "alerts" => {
+            let (value, err) = state.alerts.load();
+            Ok((to_json(&value)?, err))
+        }
+        "health" => {
+            let (value, err) = state.health.load();
+            Ok((to_json(&value)?, err))
+        }
+        "notify" => {
+            let (value, err) = crate::notify::load_config(Path::new(&cfg.notify_path));
+            Ok((to_json(&value)?, err))
+        }
+        "files" => {
+            let (value, err) = crate::files::load(Path::new(&cfg.files_path));
+            Ok((to_json(&value)?, err))
+        }
+        "proxy" => {
+            let (value, err) = crate::proxy::load(Path::new(&cfg.proxy_path));
+            Ok((to_json(&value)?, err))
+        }
+        "updates" => {
+            let (value, err) = state.updates.load();
+            Ok((to_json(&value)?, err))
+        }
+        "virtualization" => {
+            let (value, err) = crate::virtualization::store::load(Path::new(&cfg.virt_path));
+            Ok((to_json(&value)?, err))
+        }
+        "samba" => {
+            let (value, err) = crate::services::samba::load(Path::new(&cfg.samba_path));
+            Ok((to_json(&value)?, err))
+        }
+        "nfs" => {
+            let (value, err) = crate::services::nfs::load(Path::new(&cfg.nfs_path));
+            Ok((to_json(&value)?, err))
+        }
+        "backup" => {
+            let (value, err) = crate::services::backup::load(Path::new(&cfg.backup_path));
+            Ok((to_json(&value)?, err))
+        }
+        "ddns" => {
+            let (value, err) = crate::services::ddns::load(Path::new(&cfg.ddns_path));
+            Ok((to_json(&value)?, err))
+        }
+        "wireguard" => {
+            let (value, err) = crate::services::wireguard::load(Path::new(&cfg.wg_path));
+            Ok((to_json(&value)?, err))
+        }
+        "smart" => {
+            let (value, err) = crate::services::smart::load(Path::new(&cfg.smart_path));
+            Ok((to_json(&value)?, err))
+        }
+        // The guest catalog is embedded (with an optional operator override), so
+        // its effective form is the merged list rather than a single file.
+        "guest_catalog" => Ok((to_json(&crate::virtualization::images::catalog(cfg))?, None)),
+        other => Err(ApiError::not_found(format!(
+            "no inspectable config named {other}"
+        ))),
+    }
+}
+
+/// The effective JSON of one configuration document, defaults included.
 pub async fn config(
     State(state): State<AppState>,
     Query(query): Query<ConfigQuery>,
@@ -255,13 +352,17 @@ pub async fn config(
         )));
     };
 
-    let raw = std::fs::read_to_string(&path)
-        .map_err(|err| ApiError::not_found(format!("cannot read {path}: {err}")))?;
-    let json: serde_json::Value = serde_json::from_str(&raw)
-        .map_err(|err| ApiError::internal(format!("{path} is not valid JSON: {err}")))?;
+    let from_file = std::path::Path::new(&path).is_file();
+    let (json, error) = effective_config(&state, &query.name)?;
     Ok(Json(ConfigBody {
         name: query.name,
         path,
+        source: if from_file {
+            "file".to_string()
+        } else {
+            "defaults (no file)".to_string()
+        },
+        error,
         json,
     }))
 }
@@ -280,6 +381,38 @@ mod tests {
         assert!(names.contains(&"tasks"));
         assert!(!names.contains(&"auth"), "auth.json must not be exposed");
         assert!(!names.iter().any(|name| name.contains("secrets")));
+    }
+
+    #[test]
+    fn effective_config_falls_back_to_defaults_without_a_file() {
+        let dir = std::env::temp_dir().join(format!("ss-debug-config-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let state = AppState::new(Config {
+            network_path: dir.join("network.json").to_string_lossy().into_owned(),
+            ..Config::default()
+        });
+        // The file does not exist, but the effective config is still returned.
+        let (json, error) = effective_config(&state, "network").expect("loads");
+        assert!(error.is_none());
+        assert!(json.is_object(), "defaults serialise as an object");
+    }
+
+    #[test]
+    fn effective_guest_catalog_is_the_merged_list() {
+        let state = AppState::new(Config::default());
+        let (json, _) = effective_config(&state, "guest_catalog").expect("loads");
+        assert!(
+            json.as_array()
+                .map(|items| items.len() >= 30)
+                .unwrap_or(false),
+            "the embedded catalog is returned"
+        );
+    }
+
+    #[tokio::test]
+    async fn force_error_is_a_bad_request() {
+        let error = force_error().await.expect_err("must fail");
+        assert_eq!(error.code(), "BadRequest");
     }
 
     #[tokio::test]

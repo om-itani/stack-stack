@@ -34,6 +34,9 @@ pub struct DeviceProgress {
 
 #[derive(Deserialize)]
 pub struct DeviceQuery {
+    /// Optional: with no device, `progress` reports an idle result instead of
+    /// failing to deserialize the query.
+    #[serde(default)]
     pub device: String,
 }
 
@@ -86,6 +89,17 @@ pub async fn progress(
     State(state): State<AppState>,
     Query(query): Query<DeviceQuery>,
 ) -> Result<Json<TestProgress>, ApiError> {
+    // A device-less request (e.g. the Developer ping) is answered as "idle"
+    // rather than probing an empty device name.
+    if query.device.trim().is_empty() {
+        return Ok(Json(TestProgress {
+            running: false,
+            percent_remaining: None,
+            detail: "no device specified".to_string(),
+            last_result: None,
+            last_percent: None,
+        }));
+    }
     Ok(Json(state.smart.progress(&query.device).await?))
 }
 

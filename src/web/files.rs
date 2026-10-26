@@ -40,6 +40,10 @@ pub struct OkResult {
 
 #[derive(Deserialize)]
 pub struct PathQuery {
+    /// Optional: the state endpoint falls back to the first configured root, so
+    /// `GET /api/files` with no query (e.g. the Developer ping) is a 200, not a
+    /// deserialization error.
+    #[serde(default)]
     pub path: String,
 }
 

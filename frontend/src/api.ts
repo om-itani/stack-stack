@@ -1982,20 +1982,18 @@ export interface ConfigRef {
 export interface ConfigBody {
   name: string;
   path: string;
+  /** "file" or "defaults (no file)". */
+  source: string;
+  /** A loader error, if the on-disk document could not be parsed. */
+  error: string | null;
   json: unknown;
-}
-
-export interface SystemLogEntry {
-  ts_ms: number;
-  priority: number;
-  unit: string;
-  message: string;
 }
 
 export interface SystemLog {
   available: boolean;
   unit: string;
-  entries: SystemLogEntry[];
+  /** Plain journal lines, shown verbatim. */
+  raw: string;
   error: string | null;
 }
 

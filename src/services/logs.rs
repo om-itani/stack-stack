@@ -173,6 +173,41 @@ pub fn tail(
     parse_entries(&output.stdout)
 }
 
+/// Tail the journal as plain `short-iso` lines, for surfaces that want the raw
+/// text. Column-splitting journald output is fragile, so the Developer page
+/// shows these verbatim.
+pub fn tail_raw(
+    runner: &dyn Runner,
+    unit: Option<&str>,
+    lines: u32,
+    timeout: Duration,
+) -> Result<String, ApiError> {
+    let mut args: Vec<String> = vec![
+        "-o".to_string(),
+        "short-iso".to_string(),
+        "--no-pager".to_string(),
+        "-n".to_string(),
+        lines.min(MAX_LINES).to_string(),
+    ];
+    if let Some(unit) = unit.map(str::trim).filter(|u| !u.is_empty()) {
+        args.push("-u".to_string());
+        args.push(unit.to_string());
+    }
+    let output = runner
+        .run_timeout("journalctl", &args, timeout)
+        .map_err(|err| ApiError::unavailable(format!("journalctl is not available: {err}")))?;
+    if output.timed_out {
+        return Err(ApiError::internal("journalctl timed out"));
+    }
+    if !output.success() {
+        return Err(ApiError::internal(format!(
+            "journalctl failed: {}",
+            first_line(&output.combined())
+        )));
+    }
+    Ok(output.stdout)
+}
+
 /// Parse newline-delimited `journalctl -o json`.
 pub fn parse_entries(json_lines: &str) -> Result<Vec<LogEntry>, ApiError> {
     let mut entries: Vec<LogEntry> = Vec::new();
@@ -201,11 +236,7 @@ pub fn parse_entries(json_lines: &str) -> Result<Vec<LogEntry>, ApiError> {
             .and_then(|v| v.as_str())
             .unwrap_or("kernel")
             .to_string();
-        let message = value
-            .get("MESSAGE")
-            .and_then(|v| v.as_str())
-            .unwrap_or("")
-            .to_string();
+        let message = value.get("MESSAGE").map(message_field).unwrap_or_default();
         entries.push(LogEntry {
             ts_ms,
             priority,
@@ -284,6 +315,23 @@ fn string_of(value: &serde_json::Value, key: &str) -> Option<String> {
     value.get(key).and_then(|v| v.as_str()).map(str::to_string)
 }
 
+/// journald encodes `MESSAGE` as a string for UTF-8 text, but as an array of
+/// byte values when the message contains non-UTF-8 data. Handle both, so a
+/// message is never silently dropped.
+fn message_field(value: &serde_json::Value) -> String {
+    match value {
+        serde_json::Value::String(text) => text.clone(),
+        serde_json::Value::Array(items) => {
+            let bytes: Vec<u8> = items
+                .iter()
+                .filter_map(|item| item.as_u64().map(|number| number as u8))
+                .collect();
+            String::from_utf8_lossy(&bytes).to_string()
+        }
+        other => other.to_string(),
+    }
+}
+
 fn first_line(text: &str) -> String {
     text.lines()
         .find(|line| !line.trim().is_empty())
@@ -320,6 +368,15 @@ mod tests {
         assert_eq!(entries[1].priority, 3);
         assert_eq!(entries[1].unit, "ss-stack.service");
         assert_eq!(entries[1].ts_ms, 1_700_000_000_000);
+    }
+
+    #[test]
+    fn byte_array_messages_are_decoded() {
+        // journald hands non-UTF-8 messages back as an array of byte values.
+        let json = "{\"__REALTIME_TIMESTAMP\":\"5\",\"MESSAGE\":[104,101,108,108,111]}\n";
+        let entries = parse_entries(json).expect("parse");
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].message, "hello");
     }
 
     #[test]
