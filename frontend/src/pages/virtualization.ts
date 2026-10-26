@@ -140,15 +140,17 @@ export function createVirtualizationPage(): PageHandle {
   ]);
 
   const noticeBox = el("div", { class: "flex flex-col gap-1" });
-  const tabBar = el("div", { class: "flex flex-wrap gap-1 border-b border-white/5 pb-1" });
+  const tabBar = el("div", { class: "flex flex-wrap gap-1.5 border-b border-white/10 pb-2" });
   const tabBody = el("div", { class: "min-h-0 flex-1" });
   root.append(header, noticeBox, tabBar, tabBody);
 
   const tabs: Tab[] = [
     { id: "guests", label: "guests", build: buildGuests },
+    // Named in caps and kept near the front: this is where custom OS images and
+    // the download cache live, and it is easy to miss in a long tab strip.
+    { id: "images", label: "Images", build: buildImages },
     { id: "new-vm", label: "new vm", build: buildNewVm },
     { id: "new-ct", label: "new container", build: buildNewCt },
-    { id: "images", label: "images", build: buildImages },
     { id: "preview", label: "preview", build: buildPreview },
     { id: "host", label: "host", build: buildHost },
   ];
@@ -173,27 +175,48 @@ export function createVirtualizationPage(): PageHandle {
 
   function buildImages(): HTMLElement {
     const layout = el("div", { class: "flex flex-col gap-3" });
-    const host = el("div", { class: "flex flex-col divide-y divide-white/5 border border-white/5" });
+    const host = el("div", {
+      class: "flex flex-col divide-y divide-white/10 border border-white/10 bg-[#141414]",
+    });
 
-    const actions = el("section", { class: "panel flex flex-wrap items-center gap-2 px-3 py-2" });
-    const urlBtn = button("add from url", "text-emerald-400 hover:border-emerald-500");
+    const intro = el("section", { class: "panel flex flex-col gap-1 px-3 py-2.5" });
+    intro.append(
+      el("div", {
+        class: "text-[12px] font-medium text-neutral-100",
+        text: "Custom OS images",
+      }),
+      el("div", {
+        class: "text-[11px] text-neutral-400",
+        text: "Download an OS image once and create as many VMs from it as you like, or point a VM at any image already on this host.",
+      }),
+      el("div", {
+        class: "text-[10px] text-neutral-500",
+        text: "Add any image by URL or import one from this host (validated with qemu-img). Catalog entries whose checksum is not pinned carry an [unverified] badge.",
+      }),
+    );
+
+    const actions = el("section", { class: "panel flex flex-wrap items-center gap-2 px-3 py-2.5" });
+    const urlBtn = button(
+      "+ Add from URL",
+      "border-emerald-600/60 bg-emerald-500/10 font-medium text-emerald-300 hover:border-emerald-500",
+    );
     urlBtn.addEventListener("click", openAddUrl);
-    const pathBtn = button("import from host path");
+    const pathBtn = button(
+      "Import from Host Path",
+      "border-white/20 bg-white/5 font-medium text-neutral-100",
+    );
     pathBtn.addEventListener("click", openImportPath);
     const refreshBtn = button("refresh");
     refreshBtn.addEventListener("click", () => void refreshImages(host));
     actions.append(
-      el("span", { class: "panel-title text-[10px]", text: "guest images" }),
+      el("span", { class: "panel-title text-[10px]", text: "download cache" }),
       urlBtn,
       pathBtn,
+      el("span", { class: "ml-auto" }),
       refreshBtn,
-      el("span", {
-        class: "text-[10px] text-neutral-600",
-        text: "downloaded into the images directory; validated with qemu-img",
-      }),
     );
 
-    layout.append(actions, host);
+    layout.append(intro, actions, host);
     void refreshImages(host);
     return layout;
   }
@@ -396,8 +419,15 @@ export function createVirtualizationPage(): PageHandle {
     tabBar.replaceChildren();
     for (const tab of tabs) {
       const active = tab.id === activeTab;
+      // The Images tab gets a filled idle style so custom image sources and the
+      // download cache are obvious rather than buried in the strip.
+      const style = active
+        ? "border-emerald-500 bg-emerald-500/15 font-semibold text-emerald-300"
+        : tab.id === "images"
+          ? "border-white/15 bg-white/5 text-neutral-100"
+          : "text-neutral-400";
       tabBar.append(
-        button(tab.label, active ? "border-emerald-600 text-emerald-400" : "", () => {
+        button(tab.label, style, () => {
           activeTab = tab.id;
           renderTabs();
         }),
@@ -849,7 +879,8 @@ export function createVirtualizationPage(): PageHandle {
     if (image.verified === false) {
       top.append(
         el("span", {
-          class: "border border-amber-700 px-1 text-[9px] text-amber-500",
+          class:
+            "rounded-full border border-amber-500/40 bg-amber-500/10 px-1.5 text-[9px] font-medium uppercase tracking-wide text-amber-400",
           text: "unverified",
         }),
       );

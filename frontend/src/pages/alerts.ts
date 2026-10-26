@@ -8,11 +8,14 @@
  * other document-backed pages.
  */
 
-import { alertsApi } from "../api";
+import { alertsApi, healthApi } from "../api";
 import type {
   AlertComparison,
   AlertRule,
   AlertsState,
+  HealthCheck,
+  HealthState,
+  ProbeKind,
   ProviderConfig,
   ProviderKind,
 } from "../api";
@@ -74,6 +77,7 @@ export function createAlertsPage(): PageHandle {
   const root = el("div", { class: "flex min-h-0 flex-1 flex-col gap-3 overflow-auto p-4" });
 
   let draft: AlertsState = { providers: [], rules: [], doc_error: null };
+  let healthDraft: HealthState = { checks: [], doc_error: null };
   const status = el("div", { class: "tabular text-[11px] text-neutral-500" });
 
   const toolbar = el("section", { class: "panel flex flex-wrap items-center gap-3 px-3 py-2" });
@@ -85,6 +89,7 @@ export function createAlertsPage(): PageHandle {
 
   const providersHost = el("div", { class: "flex flex-col gap-2" });
   const rulesHost = el("div", { class: "flex flex-col gap-2" });
+  const healthHost = el("div", { class: "flex flex-col gap-2" });
 
   function setStatus(text: string, tone: "muted" | "ok" | "error" = "muted"): void {
     status.textContent = text;
@@ -99,7 +104,9 @@ export function createAlertsPage(): PageHandle {
   async function load(): Promise<void> {
     setStatus("loading…");
     try {
-      draft = await alertsApi.state();
+      const [alerts, health] = await Promise.all([alertsApi.state(), healthApi.state()]);
+      draft = alerts;
+      healthDraft = health;
       render();
       setStatus("");
     } catch (err) {
@@ -110,7 +117,12 @@ export function createAlertsPage(): PageHandle {
   async function save(): Promise<void> {
     setStatus("saving…");
     try {
-      draft = await alertsApi.save({ providers: draft.providers, rules: draft.rules });
+      const [alerts, health] = await Promise.all([
+        alertsApi.save({ providers: draft.providers, rules: draft.rules }),
+        healthApi.save({ checks: healthDraft.checks }),
+      ]);
+      draft = alerts;
+      healthDraft = health;
       render();
       setStatus("saved", "ok");
     } catch (err) {
@@ -127,6 +139,7 @@ export function createAlertsPage(): PageHandle {
       renderProviders();
     }
     renderRules();
+    renderHealth();
   }
 
   // -------------------------------------------------------------------------
@@ -322,12 +335,103 @@ export function createAlertsPage(): PageHandle {
     return wrap;
   }
 
+  // -------------------------------------------------------------------------
+  // Container health checks
+  // -------------------------------------------------------------------------
+
+  function renderHealth(): void {
+    healthHost.replaceChildren();
+    const card = panel("container health checks");
+    card.body.className = "flex flex-col gap-2 px-3 py-2";
+
+    card.body.append(
+      el("div", {
+        class: "text-[11px] text-neutral-500",
+        text: "Probe a stack every 30 seconds. After the retry count is reached the stack is restarted through the job runner and a notification is raised; the cooldown prevents a restart loop.",
+      }),
+    );
+    if (healthDraft.doc_error) {
+      card.body.append(
+        el("div", { class: "text-[11px] text-rose-400", text: healthDraft.doc_error }),
+      );
+    }
+    if (healthDraft.checks.length === 0) {
+      card.body.append(emptyNote("no health checks configured"));
+    }
+    for (const check of healthDraft.checks) {
+      card.body.append(healthRow(check));
+    }
+    card.body.append(
+      button("add health check", "text-emerald-400 hover:border-emerald-500", () => {
+        healthDraft.checks.push({
+          stack: "",
+          enabled: true,
+          kind: "http",
+          target: "",
+          timeout_s: 5,
+          retries: 3,
+          cooldown_s: 300,
+          last_restart: null,
+        });
+        renderHealth();
+      }),
+    );
+    healthHost.append(card.root);
+  }
+
+  function healthRow(check: HealthCheck): HTMLElement {
+    const wrap = el("div", { class: "flex flex-col gap-1 border border-white/5 px-2 py-2" });
+    const head = el("div", { class: "flex flex-wrap items-end gap-3" });
+    head.append(
+      field("stack", textInput(check.stack, (value) => (check.stack = value.trim()), {
+        placeholder: "web",
+      })),
+      field(
+        "probe",
+        select(check.kind, [["http", "HTTP"], ["tcp", "TCP connect"]], (value) => {
+          check.kind = value as ProbeKind;
+          renderHealth();
+        }),
+      ),
+      field(
+        "target",
+        textInput(check.target, (value) => (check.target = value.trim()), {
+          placeholder: check.kind === "http" ? "http://10.0.0.5:8080/health" : "10.0.0.5:8080",
+          class: "w-64",
+        }),
+      ),
+      field("enabled", checkbox(check.enabled, (value) => (check.enabled = value))),
+    );
+    wrap.append(head);
+
+    const second = el("div", { class: "flex flex-wrap items-end gap-3" });
+    second.append(
+      field("timeout (s)", numberInput(check.timeout_s, (value) => (check.timeout_s = value))),
+      field("retries", numberInput(check.retries, (value) => (check.retries = value))),
+      field("cooldown (s)", numberInput(check.cooldown_s, (value) => (check.cooldown_s = value))),
+    );
+    if (check.last_restart) {
+      second.append(
+        badge(`last restarted ${new Date(check.last_restart * 1000).toLocaleString()}`, "muted"),
+      );
+    }
+    second.append(el("div", { class: "ml-auto" }));
+    second.append(
+      button("remove", "text-rose-400 hover:border-rose-500", () => {
+        healthDraft.checks = healthDraft.checks.filter((c) => c !== check);
+        renderHealth();
+      }),
+    );
+    wrap.append(second);
+    return wrap;
+  }
+
   const saveBtn = button("save", "text-emerald-400 hover:border-emerald-500", () => void save());
   const reloadBtn = button("reload", "", () => void load());
   toolbar.insertBefore(reloadBtn, status);
   toolbar.insertBefore(saveBtn, status);
 
-  root.append(toolbar, providersHost, rulesHost);
+  root.append(toolbar, providersHost, rulesHost, healthHost);
 
   return { root, onShow: () => void load() };
 }

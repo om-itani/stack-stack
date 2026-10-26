@@ -38,6 +38,8 @@ pub const DEFAULT_SESSION_TTL_H: u64 = 168;
 pub const DEFAULT_NOTIFY_PATH: &str = "/etc/stack-stack/notify.json";
 /// Alerting rules and notification providers.
 pub const DEFAULT_ALERTS_PATH: &str = "/etc/stack-stack/alerts.json";
+/// Container / stack health-check probes.
+pub const DEFAULT_HEALTH_PATH: &str = "/etc/stack-stack/health.json";
 pub const DEFAULT_CA_DIR: &str = "/etc/stack-stack/ca";
 pub const DEFAULT_PROXY_PATH: &str = "/etc/stack-stack/proxy.json";
 pub const DEFAULT_FILES_PATH: &str = "/etc/stack-stack/files.json";
@@ -117,6 +119,8 @@ pub struct Config {
     pub notify_path: String,
     /// Alerting document: rules and the providers they target.
     pub alerts_path: String,
+    /// Health-check document: optional probes per stack.
+    pub health_path: String,
     /// Whether the TLS front door (`:80` redirect + `:443` HTTPS) is enabled.
     /// Off by default so a box already running nginx/apache is not taken over.
     pub tls_enabled: bool,
@@ -211,6 +215,7 @@ impl Default for Config {
             session_ttl_h: DEFAULT_SESSION_TTL_H,
             notify_path: DEFAULT_NOTIFY_PATH.to_string(),
             alerts_path: DEFAULT_ALERTS_PATH.to_string(),
+            health_path: DEFAULT_HEALTH_PATH.to_string(),
             tls_enabled: false,
             tls_http_port: DEFAULT_TLS_HTTP_PORT,
             tls_https_port: DEFAULT_TLS_HTTPS_PORT,

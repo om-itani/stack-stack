@@ -118,6 +118,13 @@ pub fn catalog(cfg: &Config) -> Vec<GuestImage> {
         }
     }
 
+    // `verified` is derived, never trusted from the document: an entry is only
+    // verified when a pinned SHA-256 exists, so the UI's [Unverified] badge is
+    // always truthful even for an operator override.
+    for image in &mut images {
+        image.verified = image.sha256.is_some();
+    }
+
     images.sort_by(|a, b| {
         (a.kind_rank(), a.category.as_str(), a.name.as_str()).cmp(&(
             b.kind_rank(),
@@ -219,6 +226,19 @@ mod tests {
         assert!(images.iter().any(|i| i.kind == GuestImageKind::Vm));
         assert!(images.iter().any(|i| i.kind == GuestImageKind::Lxc));
         assert!(images.iter().any(|i| i.category == "appliance"));
+    }
+
+    #[test]
+    fn verification_is_derived_from_the_checksum() {
+        let cfg = temp_cfg("verified");
+        for image in catalog(&cfg) {
+            assert_eq!(
+                image.verified,
+                image.sha256.is_some(),
+                "{} must be verified only with a pinned checksum",
+                image.id
+            );
+        }
     }
 
     #[test]

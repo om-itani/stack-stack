@@ -9,6 +9,7 @@ pub mod backup;
 pub mod containers;
 pub mod ddns;
 pub mod files;
+pub mod healthchecks;
 pub mod jobs;
 pub mod layers;
 pub mod logs;
@@ -63,6 +64,10 @@ pub fn router(state: AppState) -> Router {
         .route("/api/jobs/{id}", delete(jobs::remove))
         .route("/api/alerts", get(alerts::state).put(alerts::save))
         .route("/api/alerts/test/{id}", post(alerts::test))
+        .route(
+            "/api/healthchecks",
+            get(healthchecks::state).put(healthchecks::save),
+        )
         .route("/api/health", get(health))
         .route("/api/system/snapshot", get(system_snapshot))
         .route("/api/ws/telemetry", get(ws::telemetry_ws))

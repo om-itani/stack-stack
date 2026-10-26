@@ -7,6 +7,7 @@
 
 pub mod backup;
 pub mod ddns;
+pub mod health;
 pub mod logs;
 pub mod nfs;
 pub mod pty;

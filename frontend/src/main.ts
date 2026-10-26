@@ -43,6 +43,8 @@ interface PageDef {
   id: string;
   label: string;
   group: string;
+  /** Short monospace mark shown when the sidebar is collapsed to icons. */
+  glyph: string;
   create: () => PageHandle;
 }
 
@@ -196,8 +198,9 @@ function renderGateMessage(title: string, detail: string): void {
 
 /** Top-nav item styling. The active state is a soft press, not a glowing pill. */
 const NAV_IDLE =
-  "shrink-0 rounded-md px-2.5 py-1 text-neutral-400 transition-colors duration-150 hover:bg-white/5 hover:text-neutral-100";
-const NAV_ACTIVE = "shrink-0 rounded-md bg-white/10 px-2.5 py-1 font-medium text-white";
+  "flex items-center gap-2 rounded-md px-2 py-1.5 text-left text-[12px] text-neutral-400 transition-colors duration-200 hover:bg-white/5 hover:text-neutral-100";
+const NAV_ACTIVE =
+  "flex items-center gap-2 rounded-md bg-white/10 px-2 py-1.5 text-left text-[12px] font-medium text-white";
 
 function startShell(): void {
   if (shellStarted) {
@@ -206,23 +209,30 @@ function startShell(): void {
   shellStarted = true;
 
   app.innerHTML = `
-<div class="flex h-screen flex-col">
-  <header class="z-20 flex items-center gap-x-3 border-b border-white/5 bg-[#0e0e0e] px-4 py-2">
-    <span class="shrink-0 text-sm font-semibold tracking-[0.2em] text-white">STACK-STACK</span>
-    <nav data-ref="nav" class="flex min-w-0 flex-1 items-center gap-0.5 overflow-x-auto px-1"></nav>
-    <span data-ref="host" class="text-neutral-300">—</span>
-    <span data-ref="uptime" class="tabular text-neutral-500">up —</span>
-    <span data-ref="load" class="tabular text-neutral-500">load —</span>
-    <span data-ref="actions" class="ml-auto flex shrink-0 items-center gap-3">
-      <span data-ref="clock" class="tabular text-[11px] text-neutral-500"></span>
-      <span data-ref="frame" class="tabular text-neutral-600"></span>
-      <span data-ref="version" class="text-neutral-600"></span>
-      <span data-ref="dot" class="inline-block size-2 rounded-full bg-neutral-600"></span>
-      <span data-ref="link" class="text-neutral-400">connecting</span>
-      <button data-ref="logout" type="button" class="rounded-lg border border-white/10 bg-white/5 px-2 py-0.5 text-neutral-400 transition-all duration-200 hover:border-rose-500/50 hover:text-rose-400">sign out</button>
-    </span>
-  </header>
-  <main data-ref="view" class="min-h-0 flex-1 overflow-auto"></main>
+<div class="flex h-screen">
+  <aside data-ref="sidebar" class="flex w-56 shrink-0 flex-col border-r border-white/10 bg-[#0d0d0d] transition-[width] duration-200 ease-out">
+    <div class="flex items-center gap-2 border-b border-white/10 px-3 py-2.5">
+      <span data-ref="brand" class="min-w-0 truncate text-sm font-semibold tracking-[0.18em] text-white">STACK-STACK</span>
+      <button data-ref="collapse" type="button" class="ml-auto rounded-md border border-white/10 px-1.5 py-0.5 text-[11px] text-neutral-400 transition-colors duration-200 hover:border-white/20 hover:text-neutral-100" title="Collapse sidebar">&laquo;</button>
+    </div>
+    <nav data-ref="nav" class="flex min-h-0 flex-1 flex-col gap-5 overflow-y-auto px-2 py-3"></nav>
+  </aside>
+  <div class="flex min-w-0 flex-1 flex-col">
+    <header class="z-20 flex items-center gap-x-3 border-b border-white/10 bg-[#0d0d0d] px-4 py-2">
+      <span data-ref="host" class="font-medium text-neutral-100">—</span>
+      <span data-ref="uptime" class="tabular text-neutral-500">up —</span>
+      <span data-ref="load" class="tabular text-neutral-500">load —</span>
+      <span data-ref="actions" class="ml-auto flex shrink-0 items-center gap-3">
+        <span data-ref="clock" class="tabular text-[11px] text-neutral-500"></span>
+        <span data-ref="frame" class="tabular text-neutral-600"></span>
+        <span data-ref="version" class="text-neutral-600"></span>
+        <span data-ref="dot" class="inline-block size-2 rounded-full bg-neutral-600"></span>
+        <span data-ref="link" class="text-neutral-400">connecting</span>
+        <button data-ref="logout" type="button" class="rounded-lg border border-white/10 bg-white/5 px-2 py-0.5 text-neutral-400 transition-all duration-200 hover:border-rose-500/50 hover:text-rose-400">sign out</button>
+      </span>
+    </header>
+    <main data-ref="view" class="min-h-0 flex-1 overflow-auto"></main>
+  </div>
 </div>
 `;
 
@@ -241,6 +251,9 @@ function startShell(): void {
   const viewEl = ref<HTMLElement>("view");
   const logoutEl = ref<HTMLButtonElement>("logout");
   const actionsEl = ref<HTMLElement>("actions");
+  const sidebarEl = ref<HTMLElement>("sidebar");
+  const brandEl = ref<HTMLElement>("brand");
+  const collapseEl = ref<HTMLButtonElement>("collapse");
 
   // A wall clock in the global header, the way an OS menu bar has one.
   const clockEl = ref<HTMLElement>("clock");
@@ -271,44 +284,78 @@ function startShell(): void {
   });
 
   const pages: PageDef[] = [
-    { id: "system", label: "System", group: "Monitor", create: () => createSystemPage(tl) },
-    { id: "logs", label: "Logs", group: "Monitor", create: () => createLogsPage() },
-    { id: "containers", label: "Containers", group: "Data", create: () => createContainersPage() },
-    { id: "apps", label: "App Store", group: "Data", create: () => createAppsPage() },
-    { id: "files", label: "Files", group: "Data", create: () => createFilesPage() },
-    { id: "storage", label: "Storage", group: "Data", create: () => createStoragePage() },
-    { id: "shares", label: "Shares", group: "Data", create: () => createSharesPage() },
-    { id: "backups", label: "Backups", group: "Data", create: () => createBackupsPage() },
-    { id: "network", label: "Network", group: "Services", create: () => createNetworkPage() },
-    { id: "virtualization", label: "Virtualization", group: "Services", create: () => createVirtualizationPage() },
-    { id: "vpn", label: "VPN", group: "Services", create: () => createVpnPage() },
-    { id: "terminal", label: "Terminal", group: "Admin", create: () => createTerminalPage(() => hostEl.textContent ?? "") },
-    { id: "tasks", label: "Tasks", group: "Admin", create: () => createTasksPage() },
-    { id: "alerts", label: "Alerts", group: "Admin", create: () => createAlertsPage() },
-    { id: "settings", label: "Settings", group: "Admin", create: () => createSettingsPage() },
+    { id: "system", label: "System", group: "Overview", glyph: "SY", create: () => createSystemPage(tl) },
+    { id: "containers", label: "Containers", group: "Compute", glyph: "CT", create: () => createContainersPage() },
+    { id: "apps", label: "App Store", group: "Compute", glyph: "AP", create: () => createAppsPage() },
+    { id: "virtualization", label: "Virtualization", group: "Compute", glyph: "VM", create: () => createVirtualizationPage() },
+    { id: "files", label: "Files", group: "Storage", glyph: "FL", create: () => createFilesPage() },
+    { id: "storage", label: "Storage", group: "Storage", glyph: "ST", create: () => createStoragePage() },
+    { id: "shares", label: "Shares", group: "Storage", glyph: "SH", create: () => createSharesPage() },
+    { id: "backups", label: "Backups", group: "Storage", glyph: "BK", create: () => createBackupsPage() },
+    { id: "network", label: "Network", group: "Network", glyph: "NW", create: () => createNetworkPage() },
+    { id: "vpn", label: "VPN", group: "Network", glyph: "VP", create: () => createVpnPage() },
+    { id: "logs", label: "Logs", group: "System", glyph: "LG", create: () => createLogsPage() },
+    { id: "terminal", label: "Terminal", group: "System", glyph: "TM", create: () => createTerminalPage(() => hostEl.textContent ?? "") },
+    { id: "tasks", label: "Tasks", group: "System", glyph: "TK", create: () => createTasksPage() },
+    { id: "alerts", label: "Alerts", group: "System", glyph: "AL", create: () => createAlertsPage() },
+    { id: "settings", label: "Settings", group: "System", glyph: "SE", create: () => createSettingsPage() },
   ];
 
   const built = new Map<string, PageHandle>();
   const navButtons = new Map<string, HTMLButtonElement>();
   let activeId = "";
 
-  // Horizontal navigation: groups are separated by a hairline, the way Netflix
-  // separates "TV Shows | Movies" rather than labelling the groups.
-  const groups = [...new Set(pages.map((page) => page.group))];
-  groups.forEach((group, index) => {
-    if (index > 0) {
-      navEl.append(el("span", { class: "mx-1 h-4 w-px shrink-0 bg-white/10" }));
-    }
+  // Grouped sidebar: a hairline-separated section per group, each item a glyph
+  // plus label. Group names are hidden when the sidebar is collapsed to icons.
+  for (const group of [...new Set(pages.map((page) => page.group))]) {
+    const section = el("div", { class: "flex flex-col gap-0.5" });
+    const header = el("span", {
+      class: "px-2 pb-1 text-[10px] uppercase tracking-[0.12em] text-neutral-600",
+      text: group,
+    });
+    header.setAttribute("data-group-header", "");
+    section.append(header);
+
     for (const def of pages.filter((page) => page.group === group)) {
       const navButton = document.createElement("button");
       navButton.type = "button";
-      navButton.textContent = def.label;
+      navButton.title = def.label;
       navButton.className = NAV_IDLE;
+      const glyph = el("span", {
+        class: "w-6 shrink-0 text-center text-[10px] tracking-wider text-neutral-500",
+        text: def.glyph,
+      });
+      const label = el("span", { class: "truncate", text: def.label });
+      label.setAttribute("data-nav-label", "");
+      navButton.append(glyph, label);
       navButton.addEventListener("click", () => show(def.id));
-      navEl.append(navButton);
+      section.append(navButton);
       navButtons.set(def.id, navButton);
     }
+    navEl.append(section);
+  }
+
+  // Collapse to icons only; the choice survives a reload.
+  let collapsed = localStorage.getItem("stack-stack:sidebar") === "collapsed";
+  const applyCollapse = (): void => {
+    sidebarEl.classList.toggle("w-56", !collapsed);
+    sidebarEl.classList.toggle("w-14", collapsed);
+    for (const node of navEl.querySelectorAll<HTMLElement>("[data-group-header]")) {
+      node.style.display = collapsed ? "none" : "";
+    }
+    for (const node of navEl.querySelectorAll<HTMLElement>("[data-nav-label]")) {
+      node.style.display = collapsed ? "none" : "";
+    }
+    brandEl.style.display = collapsed ? "none" : "";
+    collapseEl.textContent = collapsed ? "»" : "«";
+    collapseEl.title = collapsed ? "Expand sidebar" : "Collapse sidebar";
+  };
+  collapseEl.addEventListener("click", () => {
+    collapsed = !collapsed;
+    localStorage.setItem("stack-stack:sidebar", collapsed ? "collapsed" : "expanded");
+    applyCollapse();
   });
+  applyCollapse();
 
   function show(id: string, updateHash = true): void {
     const resolved = pages.some((page) => page.id === id) ? id : pages[0].id;

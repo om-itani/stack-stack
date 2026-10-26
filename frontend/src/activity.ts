@@ -62,7 +62,7 @@ export function createActivity(): Activity {
 
   const panel = el("div", {
     class:
-      "absolute right-0 z-40 mt-1 hidden max-h-96 w-96 overflow-y-auto border border-white/5 bg-[#0e0e0e] shadow-xl",
+      "shadow-float absolute right-0 z-40 mt-1 hidden max-h-96 w-96 overflow-y-auto rounded-[10px] border border-white/10 bg-[#141414]",
   });
 
   const toastHost = el("div", {

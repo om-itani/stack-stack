@@ -110,7 +110,9 @@ export function openModal(title: string, width = "max-w-lg"): Modal {
   const overlay = el("div", {
     class: "fixed inset-0 z-50 flex items-start justify-center overflow-auto bg-black/70 p-4",
   });
-  const modal = el("div", { class: `panel mt-8 flex w-full ${width} flex-col gap-3 p-4` });
+  const modal = el("div", {
+    class: `panel shadow-float mt-8 flex w-full ${width} flex-col gap-3 p-4`,
+  });
 
   const head = el("div", { class: "flex items-baseline gap-2" });
   head.append(el("span", { class: "text-sm font-medium text-neutral-100", text: title }));

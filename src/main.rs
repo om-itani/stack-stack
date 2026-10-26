@@ -62,6 +62,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
     web::auth::spawn_session_sweeper(app_state.clone());
     notify::spawn_threshold_watcher(app_state.notify.clone(), app_state.telemetry.subscribe());
     web::alerts::spawn_evaluator(app_state.clone());
+    web::healthchecks::spawn_evaluator(app_state.clone());
     web::backup::spawn_scheduler(app_state.clone());
     web::smart::spawn_scheduler(app_state.clone());
     web::ddns::spawn_scheduler(app_state.clone());

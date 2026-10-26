@@ -57,7 +57,7 @@ export function createBell(): Bell {
 
   const panel = el("div", {
     class:
-      "absolute right-0 z-40 mt-1 hidden max-h-96 w-80 overflow-y-auto border border-white/5 bg-[#0e0e0e] shadow-xl",
+      "shadow-float absolute right-0 z-40 mt-1 hidden max-h-96 w-80 overflow-y-auto rounded-[10px] border border-white/10 bg-[#141414]",
   });
 
   root.append(trigger, panel);

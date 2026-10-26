@@ -1880,3 +1880,32 @@ export const alertsApi = {
   test: (id: string) =>
     post<TestResult>(`/api/alerts/test/${encodeURIComponent(id)}`),
 };
+
+// ---------------------------------------------------------------------------
+// Container / stack health checks
+// ---------------------------------------------------------------------------
+
+export type ProbeKind = "http" | "tcp";
+
+export interface HealthCheck {
+  stack: string;
+  enabled: boolean;
+  kind: ProbeKind;
+  /** An http(s):// URL, or host:port for a TCP connect. */
+  target: string;
+  timeout_s: number;
+  retries: number;
+  cooldown_s: number;
+  last_restart: number | null;
+}
+
+export interface HealthState {
+  checks: HealthCheck[];
+  doc_error: string | null;
+}
+
+export const healthApi = {
+  state: () => request<HealthState>("/api/healthchecks"),
+  save: (doc: { checks: HealthCheck[] }) =>
+    jsonRequest<HealthState>("/api/healthchecks", "PUT", doc),
+};

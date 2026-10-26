@@ -150,7 +150,8 @@ impl AlertsDoc {
             if !valid_id(&provider.id) {
                 problems.push(Problem {
                     field: format!("provider {}", provider.id),
-                    message: "id must be 1-64 characters of letters, digits, '-' or '_'".to_string(),
+                    message: "id must be 1-64 characters of letters, digits, '-' or '_'"
+                        .to_string(),
                 });
             }
             if provider_ids.contains(&provider.id.as_str()) {
@@ -187,7 +188,9 @@ impl AlertsDoc {
                     .as_deref()
                     .filter(|to| crate::notifications::valid_email_address(to))
                     .map(|_| None)
-                    .unwrap_or(Some("needs a plain recipient email address (no spaces or control characters)")),
+                    .unwrap_or(Some(
+                        "needs a plain recipient email address (no spaces or control characters)",
+                    )),
             };
             if let Some(message) = issue {
                 problems.push(Problem {
@@ -203,7 +206,8 @@ impl AlertsDoc {
             if !valid_id(&rule.id) {
                 problems.push(Problem {
                     field: field.clone(),
-                    message: "id must be 1-64 characters of letters, digits, '-' or '_'".to_string(),
+                    message: "id must be 1-64 characters of letters, digits, '-' or '_'"
+                        .to_string(),
                 });
             }
             if rule_ids.contains(&rule.id.as_str()) {
@@ -353,7 +357,13 @@ pub fn metric_value(metric: &str, snapshot: &Snapshot, containers: &[Container])
             containers
                 .iter()
                 .find(|container| container.name == target)
-                .map(|container| if container.state == "running" { 1.0 } else { 0.0 })
+                .map(|container| {
+                    if container.state == "running" {
+                        1.0
+                    } else {
+                        0.0
+                    }
+                })
                 // A missing container is reported as not running, which is the
                 // answer an operator wants from `container_status:nginx == 1`.
                 .unwrap_or(0.0),
@@ -533,10 +543,7 @@ mod tests {
         assert_eq!(metric_value("load1", &snap, &containers), Some(2.5));
         // Aggregate disk usage is the worst mount.
         assert_eq!(metric_value("disk_usage", &snap, &containers), Some(91.0));
-        assert_eq!(
-            metric_value("disk_usage:/", &snap, &containers),
-            Some(80.0)
-        );
+        assert_eq!(metric_value("disk_usage:/", &snap, &containers), Some(80.0));
         // Unknown mount and unknown metric yield nothing.
         assert_eq!(metric_value("disk_usage:/nope", &snap, &containers), None);
         assert_eq!(metric_value("bogus", &snap, &containers), None);
@@ -620,7 +627,11 @@ mod tests {
                 rule("cpu", "memory_usage", Comparison::Greater, 90.0),
             ],
         };
-        assert!(doc.validate().iter().any(|p| p.message.contains("duplicate rule id")));
+        assert!(
+            doc.validate()
+                .iter()
+                .any(|p| p.message.contains("duplicate rule id"))
+        );
     }
 
     #[test]
@@ -636,7 +647,11 @@ mod tests {
             }],
             rules: vec![rule("cpu", "cpu_usage", Comparison::Equal, 50.0)],
         };
-        assert!(doc.validate().iter().any(|p| p.field.starts_with("rule cpu")));
+        assert!(
+            doc.validate()
+                .iter()
+                .any(|p| p.field.starts_with("rule cpu"))
+        );
 
         doc.rules[0].metric = "container_status:nginx".to_string();
         doc.rules[0].condition = Comparison::Equal;
@@ -669,7 +684,10 @@ mod tests {
             std::process::id()
         ));
         let _ = std::fs::remove_file(&path);
-        let ctx = AlertContext::new(path.clone(), Arc::new(crate::runner::SystemRunner::default()));
+        let ctx = AlertContext::new(
+            path.clone(),
+            Arc::new(crate::runner::SystemRunner::default()),
+        );
         let doc = AlertsDoc {
             providers: vec![ProviderConfig {
                 id: "discord".to_string(),

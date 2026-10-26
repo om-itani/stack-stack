@@ -120,11 +120,7 @@ impl JobManager {
     /// The operation's own result type and error type are preserved, so an HTTP
     /// handler keeps its existing contract; the job records the error text and,
     /// on success, the last line the worker logged (if any).
-    pub async fn track_with<T, F, Fut, E>(
-        &self,
-        name: impl Into<String>,
-        work: F,
-    ) -> Result<T, E>
+    pub async fn track_with<T, F, Fut, E>(&self, name: impl Into<String>, work: F) -> Result<T, E>
     where
         F: FnOnce(JobCtx) -> Fut,
         Fut: std::future::Future<Output = Result<T, E>>,
@@ -229,12 +225,7 @@ impl JobManager {
 
     pub fn get(&self, id: &str) -> Option<Job> {
         self.maybe_prune();
-        self.inner
-            .read()
-            .expect("jobs lock")
-            .jobs
-            .get(id)
-            .cloned()
+        self.inner.read().expect("jobs lock").jobs.get(id).cloned()
     }
 
     /// Forget one job. Finished jobs can be cleared from history; a running job
@@ -289,13 +280,7 @@ impl JobManager {
         }
     }
 
-    fn finish(
-        &self,
-        id: &str,
-        status: JobStatus,
-        message: Option<String>,
-        error: Option<String>,
-    ) {
+    fn finish(&self, id: &str, status: JobStatus, message: Option<String>, error: Option<String>) {
         let finished = {
             let mut inner = self.inner.write().expect("jobs lock");
             match inner.jobs.get_mut(id) {
@@ -558,12 +543,11 @@ mod tests {
         let jobs = JobManager::new(None);
         let runtime = tokio::runtime::Runtime::new().expect("runtime");
         for index in 0..(MAX_JOBS + 10) {
-            runtime.block_on(
-                jobs.track_with(format!("job {index}"), |_ctx| async {
+            runtime
+                .block_on(jobs.track_with(format!("job {index}"), |_ctx| async {
                     Ok::<String, String>("done".to_string())
-                }),
-            )
-            .unwrap();
+                }))
+                .unwrap();
         }
         assert!(jobs.list().len() <= MAX_JOBS);
     }

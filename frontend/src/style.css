@@ -11,10 +11,10 @@
   color-scheme: dark;
 
   --bg: #0a0a0a; /* near-black canvas */
-  --surface: #161616; /* cards */
-  --surface-hover: #1f1f1f; /* hover wash */
-  --line: rgb(255 255 255 / 0.05); /* hairline */
-  --line-strong: rgb(255 255 255 / 0.12);
+  --surface: #141414; /* cards */
+  --surface-hover: #1c1c1c; /* hover wash */
+  --line: rgb(255 255 255 / 0.1); /* hairline */
+  --line-strong: rgb(255 255 255 / 0.18);
 
   --text: #fafafa;
   --text-dim: #888888;
@@ -23,9 +23,11 @@
 
   --radius-card: 10px;
   --radius-control: 8px;
-  --shadow-card: 0 1px 2px rgb(0 0 0 / 0.6);
+  /* Depth from a soft, layered shadow rather than a glowing border. */
+  --shadow-card: 0 1px 2px rgb(0 0 0 / 0.4), 0 8px 24px -16px rgb(0 0 0 / 0.7);
+  --shadow-float: 0 8px 16px rgb(0 0 0 / 0.45), 0 24px 48px -16px rgb(0 0 0 / 0.7);
 
-  /* Ease-out, shared by every transition so motion feels consistent. */
+  /* Snappy ease-out, shared by every transition so motion feels consistent. */
   --ease: cubic-bezier(0.25, 1, 0.5, 1);
 
   --ui-font: Inter, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
@@ -72,13 +74,18 @@ body {
   border-radius: var(--radius-card);
   box-shadow: var(--shadow-card);
   transition:
-    border-color 160ms var(--ease),
-    background-color 160ms var(--ease);
+    border-color 200ms var(--ease),
+    background-color 200ms var(--ease);
 }
 
-/* No lift: only the border and surface brighten, the way a real app behaves. */
+/* No lift: only the border brightens, the way a real app behaves. */
 .panel:hover {
   border-color: var(--line-strong);
+}
+
+/* Floating elements (modals, dropdowns, drawers) get the deeper shadow. */
+.shadow-float {
+  box-shadow: var(--shadow-float);
 }
 
 .panel-title {
@@ -97,17 +104,23 @@ select,
 textarea {
   border-radius: var(--radius-control);
   transition:
-    background-color 160ms var(--ease),
-    border-color 160ms var(--ease),
-    color 160ms var(--ease);
+    background-color 200ms var(--ease),
+    border-color 200ms var(--ease),
+    color 200ms var(--ease),
+    transform 120ms var(--ease);
 }
 
 button:not(:disabled) {
   cursor: pointer;
 }
 
+/* Soft brighten on hover; a small press on click. */
 button:not(:disabled):hover {
   background-color: rgb(255 255 255 / 0.06);
+}
+
+button:not(:disabled):active {
+  transform: scale(0.98);
 }
 
 :focus-visible {

@@ -40,8 +40,8 @@ pub trait NotificationProvider: Send + Sync {
 /// Build a `curl` request whose URL and JSON body ride in a `-K -` config on
 /// stdin, so a webhook secret never appears in the process argument list.
 fn curl_prepared(url: &str, payload: &serde_json::Value) -> Result<Prepared, String> {
-    let json = serde_json::to_string(payload)
-        .map_err(|err| format!("cannot serialise payload: {err}"))?;
+    let json =
+        serde_json::to_string(payload).map_err(|err| format!("cannot serialise payload: {err}"))?;
     let args: Vec<String> = [
         "-s",
         "--fail",
@@ -150,7 +150,10 @@ impl NotificationProvider for EmailProvider {
         // other control or whitespace) is rejected rather than escaped: it could
         // otherwise smuggle extra headers such as Bcc into the message.
         if !valid_email_address(to) {
-            return Err("email recipient must be a plain address with no spaces or control characters".to_string());
+            return Err(
+                "email recipient must be a plain address with no spaces or control characters"
+                    .to_string(),
+            );
         }
 
         let subject = message.title.replace(['\r', '\n'], " ");
@@ -300,8 +303,17 @@ mod tests {
         assert!(config.contains("data-binary"));
         assert!(config.contains("CPU high"));
         assert_eq!(prepared.program, "curl");
-        assert!(prepared.args.iter().any(|arg| arg == "-K"), "{:?}", prepared.args);
-        assert!(!prepared.args.iter().any(|arg| arg.contains("hooks.example.test")));
+        assert!(
+            prepared.args.iter().any(|arg| arg == "-K"),
+            "{:?}",
+            prepared.args
+        );
+        assert!(
+            !prepared
+                .args
+                .iter()
+                .any(|arg| arg.contains("hooks.example.test"))
+        );
     }
 
     #[test]
@@ -321,7 +333,9 @@ mod tests {
         assert!(EmailProvider.prepare(&config, &message()).is_err());
         // An embedded CR/LF (the dangerous case) is rejected; surrounding
         // whitespace is trimmed, which is safe.
-        assert!(!valid_email_address("ops@example.test\r\nBcc: evil@example.test"));
+        assert!(!valid_email_address(
+            "ops@example.test\r\nBcc: evil@example.test"
+        ));
         assert!(valid_email_address("  ops+alerts@example.test  "));
     }
 
@@ -330,7 +344,9 @@ mod tests {
         let mut config = provider(ProviderKind::Email);
         config.url = None;
         config.to = Some("ops@example.test".to_string());
-        let prepared = EmailProvider.prepare(&config, &message()).expect("prepared");
+        let prepared = EmailProvider
+            .prepare(&config, &message())
+            .expect("prepared");
         let body = String::from_utf8(prepared.body).expect("utf8");
         assert!(body.contains("To: ops@example.test"));
         assert!(body.contains("Subject: CPU high"));

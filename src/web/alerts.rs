@@ -13,8 +13,8 @@ use axum::extract::{Path, State};
 use serde::Serialize;
 
 use crate::alerts::{
-    ALERT_EVENT, AlertMessage, AlertRule, AlertsDoc, EVALUATOR_INTERVAL_S, cooldown_elapsed,
-    condition_holds, describe, metric_value,
+    ALERT_EVENT, AlertMessage, AlertRule, AlertsDoc, EVALUATOR_INTERVAL_S, condition_holds,
+    cooldown_elapsed, describe, metric_value,
 };
 use crate::error::ApiError;
 use crate::notify::NotificationRequest;
@@ -68,7 +68,11 @@ pub async fn save(
     state.audit(
         "alerts.save",
         "alerts.json",
-        &format!("{} rules, {} providers", doc.rules.len(), doc.providers.len()),
+        &format!(
+            "{} rules, {} providers",
+            doc.rules.len(),
+            doc.providers.len()
+        ),
     );
     Ok(Json(state_of(&state)))
 }
@@ -97,7 +101,10 @@ pub async fn test(
 
     Ok(Json(TestResult {
         ok: true,
-        detail: format!("delivered via {}", crate::notifications::describe(&provider_for_log)),
+        detail: format!(
+            "delivered via {}",
+            crate::notifications::describe(&provider_for_log)
+        ),
     }))
 }
 
@@ -131,11 +138,7 @@ async fn evaluate_once(state: &AppState, active: &mut HashMap<String, u64>) {
         .iter()
         .any(|rule| rule.enabled && rule.metric.starts_with("container_status"));
     let containers = if needs_containers {
-        state
-            .docker
-            .list("", &[], &[])
-            .await
-            .unwrap_or_default()
+        state.docker.list("", &[], &[]).await.unwrap_or_default()
     } else {
         Vec::new()
     };

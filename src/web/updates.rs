@@ -192,17 +192,20 @@ pub fn spawn_scheduler(state: AppState) {
                     .jobs
                     .track_with(format!("Auto-update {id}"), move |ctx| async move {
                         ctx.step(10, "docker compose pull");
-                        let updated = tokio::task::spawn_blocking(move || -> Result<_, ApiError> {
-                            let outcome = updates.check(&id_for_task)?;
-                            if !outcome.changed {
-                                // An up-to-date stack is never bounced.
-                                return Ok(None);
-                            }
-                            updates.apply(&id_for_task)?;
-                            Ok(Some(outcome.id))
-                        })
-                        .await
-                        .map_err(|err| ApiError::internal(format!("update task failed: {err}")))??;
+                        let updated =
+                            tokio::task::spawn_blocking(move || -> Result<_, ApiError> {
+                                let outcome = updates.check(&id_for_task)?;
+                                if !outcome.changed {
+                                    // An up-to-date stack is never bounced.
+                                    return Ok(None);
+                                }
+                                updates.apply(&id_for_task)?;
+                                Ok(Some(outcome.id))
+                            })
+                            .await
+                            .map_err(|err| {
+                                ApiError::internal(format!("update task failed: {err}"))
+                            })??;
 
                         match updated {
                             Some(updated) => {
@@ -216,7 +219,9 @@ pub fn spawn_scheduler(state: AppState) {
                                 );
                                 Ok::<String, ApiError>(format!("{updated} updated"))
                             }
-                            None => Ok::<String, ApiError>(format!("{id_label} already up to date")),
+                            None => {
+                                Ok::<String, ApiError>(format!("{id_label} already up to date"))
+                            }
                         }
                     })
                     .await;

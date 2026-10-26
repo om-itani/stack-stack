@@ -20,6 +20,7 @@ use crate::notify::{NotificationCenter, Notifier};
 use crate::runner::SystemRunner;
 use crate::services::backup::{BackupEngine, SourceDirs};
 use crate::services::ddns::DdnsContext;
+use crate::services::health::HealthContext;
 use crate::services::logs::LogsContext;
 use crate::services::nfs::NfsContext;
 use crate::services::samba::SambaContext;
@@ -67,6 +68,8 @@ pub struct AppState {
     pub jobs: JobManager,
     /// Alerting rules document and the runner that reaches providers.
     pub alerts: AlertContext,
+    /// Optional per-stack health probes and the runner they use.
+    pub health: HealthContext,
     /// TLS front door: internal CA, SNI certificate map and listener ports.
     pub tls: TlsRuntime,
     /// File manager: guarded filesystem access and its roots document.
@@ -113,6 +116,10 @@ impl AppState {
         let jobs = JobManager::new(Some(notify.clone()));
         let alerts = AlertContext::new(
             std::path::PathBuf::from(&config.alerts_path),
+            Arc::new(SystemRunner::new(Duration::from_secs(20))),
+        );
+        let health = HealthContext::new(
+            std::path::PathBuf::from(&config.health_path),
             Arc::new(SystemRunner::new(Duration::from_secs(20))),
         );
         let network = NetworkContext::new(
@@ -212,6 +219,7 @@ impl AppState {
             notify,
             jobs,
             alerts,
+            health,
             tls,
             files,
             samba,

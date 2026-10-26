@@ -305,6 +305,34 @@ pub async fn deploy_stack(cfg: &Config, raw_name: &str, yaml: &str) -> Result<St
     Ok(output)
 }
 
+/// Restart a stack's containers in place (`docker compose restart`), for the
+/// health-check evaluator. Blocking, so it runs on the job runner's pool.
+pub fn restart_stack_blocking(
+    cfg: &Config,
+    raw_name: &str,
+    timeout_s: u64,
+) -> Result<String, ApiError> {
+    let name = sanitize_stack_name(raw_name)?.to_string();
+    if !stack_compose_path(cfg, &name).is_file() {
+        return Err(ApiError::not_found(format!("stack {name} does not exist")));
+    }
+    let dir = stack_dir(cfg, &name);
+    let compose_file = stack_compose_path(cfg, &name);
+    let mut full = compose_cli().prefix.clone();
+    full.extend([
+        "-p".to_string(),
+        name.clone(),
+        "-f".to_string(),
+        compose_file.to_string_lossy().into_owned(),
+        "restart".to_string(),
+    ]);
+    let timeout = Duration::from_secs(timeout_s.clamp(30, 1800));
+    let program = compose_cli().program.clone();
+    let output = run_blocking(&program, &full, &dir, timeout)?;
+    tracing::info!(stack = %name, "compose stack restarted by health check");
+    Ok(output)
+}
+
 /// Stop and remove a stack.
 ///
 /// A failed `docker compose down` **leaves the stack directory in place**: the
