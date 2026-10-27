@@ -77,6 +77,11 @@ APT_PACKAGES=(
   docker.io
   docker-compose
   unbound
+  # unbound-anchor generates the root trust anchor; without it the
+  # root_trust_anchor_update pre-start script fails forever. dns-root-data ships
+  # the IANA root hints the anchor is built from.
+  unbound-anchor
+  dns-root-data
   dnsmasq
   nftables
   iptables
@@ -539,20 +544,42 @@ nameserver 1.0.0.1
     fi
   fi
 
-  # 3) unbound: start after the network and retry with a short backoff, so a
+  # 3) A fresh Debian install starts dnsmasq, which binds :53 and makes unbound
+  #    crash with "Address already in use". Stop and disable the background unit
+  #    so the port is unbound's; stack-stack still starts dnsmasq on demand (with
+  #    an inert port=0 config) when the operator configures LAN DHCP.
+  if systemctl list-unit-files dnsmasq.service >/dev/null 2>&1; then
+    systemctl stop dnsmasq >/dev/null 2>&1 || true
+    systemctl disable dnsmasq >/dev/null 2>&1 || true
+    log_file "stopped and disabled the dnsmasq service (port 53 belongs to unbound)"
+  fi
+
+  # 4) unbound-anchor needs a writable /var/lib/unbound and a generated root
+  #    trust anchor, or its root_trust_anchor_update pre-start script fails on
+  #    every boot on a fresh box.
+  install -d -m 0755 /var/lib/unbound
+  if command -v unbound-anchor >/dev/null 2>&1; then
+    unbound-anchor -a /var/lib/unbound/root.key >/dev/null 2>&1 || true
+    chown unbound:unbound /var/lib/unbound/root.key >/dev/null 2>&1 || true
+    log_file "generated the unbound trust anchor at /var/lib/unbound/root.key"
+  else
+    warn_file "unbound-anchor is missing; unbound's trust-anchor pre-start will fail"
+  fi
+
+  # 5) unbound: start after the network and retry with a short backoff, so a
   #    transient clash at boot self-heals instead of failing the deploy.
   install -d -m 0755 /etc/systemd/system/unbound.service.d
   write_if_changed /etc/systemd/system/unbound.service.d/stack-stack.conf \
     '[Unit]
 After=network.target network-online.target
 Wants=network-online.target
+# StartLimit* keys are only valid under [Unit]; under [Service] systemd warns
+# "Unknown key" and ignores them. Never give up: retry with a short backoff.
+StartLimitIntervalSec=0
 
 [Service]
-# Retry rather than give up after the default burst; the app restarts unbound
-# again on apply, but this covers the window before the first apply.
 Restart=on-failure
 RestartSec=3
-StartLimitIntervalSec=0
 ' >/dev/null || true
   systemctl daemon-reload >/dev/null 2>&1 || true
 }

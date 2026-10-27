@@ -386,16 +386,26 @@ pub async fn blocklists_update(
         } else {
             format!("{} domains compiled, {failed} list(s) failed", stats.total)
         };
-        Ok::<_, ApiError>((message, blocklist_state(&config, &path)))
+        Ok::<_, ApiError>((message, blocklist_state(&config, &path), config))
     })
     .await
     .map_err(|err| ApiError::internal(format!("blocklist task failed: {err}")))??;
 
-    state.audit("dns.blocklist_update", "unbound", &result.0);
+    let (message, blocklist, config) = result;
+    // Re-render unbound.conf and restart unbound, so the `include:` line is
+    // present even when the first blocklist is added after DNS was already
+    // configured (a plain reload would not pick up a line that is not there yet).
+    let message = match state.network.apply.apply_dns(&config).await {
+        Ok(step) if step.ok => message,
+        Ok(step) => format!("{message} (unbound: {})", step.detail),
+        Err(err) => format!("{message} (unbound apply failed: {err})"),
+    };
+
+    state.audit("dns.blocklist_update", "unbound", &message);
     Ok(Json(BlocklistUpdateResult {
         ok: true,
-        message: result.0,
-        state: result.1,
+        message,
+        state: blocklist,
     }))
 }
 
@@ -435,27 +445,37 @@ pub fn spawn_blocklist_scheduler(state: AppState) {
             ticker.tick().await;
             let ctx = state.network.clone();
             let path = ctx.config_path.clone();
-            let result = tokio::task::spawn_blocking(move || {
-                let (mut config, _) = store::load(&path);
-                let stats = BlocklistStats::load(&path);
-                let now = std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .map(|duration| duration.as_secs())
-                    .unwrap_or(0);
-                if !blocklists::refresh_due(stats.updated_at, now, blocklists::local_hour()) {
-                    return Ok::<_, ApiError>(None);
-                }
-                if !config.dns.blocklists.iter().any(|source| source.enabled) {
-                    return Ok(None);
-                }
-                let stats = blocklists::update(&mut config, &path, ctx.runner.as_ref())?;
-                store::save(&path, &config)?;
-                Ok(Some(stats.total))
-            })
+            let result = tokio::task::spawn_blocking(
+                move || -> Result<Option<(usize, crate::networking::model::NetworkConfig)>, ApiError> {
+                    let (mut config, _) = store::load(&path);
+                    let stats = BlocklistStats::load(&path);
+                    let now = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .map(|duration| duration.as_secs())
+                        .unwrap_or(0);
+                    if !blocklists::refresh_due(stats.updated_at, now, blocklists::local_hour()) {
+                        return Ok(None);
+                    }
+                    if !config.dns.blocklists.iter().any(|source| source.enabled) {
+                        return Ok(None);
+                    }
+                    let stats = blocklists::update(&mut config, &path, ctx.runner.as_ref())?;
+                    store::save(&path, &config)?;
+                    Ok(Some((stats.total, config)))
+                },
+            )
             .await;
 
             match result {
-                Ok(Ok(Some(total))) => {
+                Ok(Ok(Some((total, config)))) => {
+                    // Restart unbound with the refreshed include, for the same
+                    // reason as the manual update: a reload alone cannot add an
+                    // `include:` line that was not in the running config.
+                    if let Ok(step) = state.network.apply.apply_dns(&config).await
+                        && !step.ok
+                    {
+                        tracing::warn!(detail = %step.detail, "blocklist refreshed but unbound did not restart cleanly");
+                    }
                     tracing::info!(domains = total, "scheduled blocklist refresh complete");
                 }
                 Ok(Ok(None)) => {}

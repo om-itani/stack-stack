@@ -1259,15 +1259,29 @@ export function createNetworkPage(): PageHandle {
       services.append(el("div", { class: "px-3 py-2 text-neutral-600", text: "no status yet" }));
     } else {
       for (const service of status.services) {
+        // Inactive is often correct, so explain the two that surprise people.
+        const note = serviceNote(service.unit);
         services.append(
-          el("div", { class: "flex items-baseline justify-between border-b border-white/5 px-3 py-2 text-[11px]" }, [
-            el("span", { class: "text-neutral-300", text: service.unit }),
-            el("span", {
-              class: service.active ? "text-emerald-400" : "text-neutral-500",
-              text: service.state,
-            }),
-          ]),
+          el(
+            "div",
+            {
+              class: "flex items-baseline justify-between border-b border-white/5 px-3 py-2 text-[11px]",
+              ...(note ? { title: note } : {}),
+            },
+            [
+              el("span", { class: "text-neutral-300", text: service.unit }),
+              el("span", {
+                class: service.active ? "text-emerald-400" : "text-neutral-500",
+                text: service.state,
+              }),
+            ],
+          ),
         );
+        if (note) {
+          services.append(
+            el("div", { class: "px-3 pb-2 text-[10px] text-neutral-600", text: note }),
+          );
+        }
       }
     }
     layout.append(services);
@@ -1411,6 +1425,21 @@ export function createNetworkPage(): PageHandle {
     root,
     onShow: () => void load(),
   };
+}
+
+/**
+ * Explain the daemon states that look alarming but are usually correct:
+ * dnsmasq is DHCP-only here (so inactive is expected when the router does DHCP),
+ * and unbound is the resolver that must hold :53.
+ */
+function serviceNote(unit: string): string | undefined {
+  if (unit.startsWith("dnsmasq")) {
+    return "inactive is expected when your router handles DHCP. Enabling the DHCP server on this page and applying starts dnsmasq on demand, DHCP-only, so it never takes port 53 from unbound.";
+  }
+  if (unit.startsWith("unbound")) {
+    return "the resolver: must be active for adblock and local DNS rewrites. If it is failed, another daemon is holding port 53 (check `ss -lunp | grep :53`).";
+  }
+  return undefined;
 }
 
 function sectionTitle(text: string): HTMLElement {
