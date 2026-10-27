@@ -44,6 +44,10 @@ impl TestKind {
 #[serde(default)]
 pub struct DevicePlan {
     pub device: String,
+    /// `smartctl -d` type for a disk that needs one (e.g. `sat` for an ATA disk
+    /// behind a SAT bridge). Detected on first use and remembered here.
+    #[serde(default)]
+    pub device_type: Option<String>,
     pub short_weekday: Option<u8>,
     pub short_at: String,
     pub long_day: Option<u8>,
@@ -54,6 +58,7 @@ impl Default for DevicePlan {
     fn default() -> Self {
         Self {
             device: String::new(),
+            device_type: None,
             short_weekday: Some(0),
             short_at: "02:30".to_string(),
             long_day: Some(1),
@@ -89,6 +94,14 @@ impl SmartConfig {
                 });
             }
             seen.push(device);
+            if let Some(kind) = plan.device_type.as_deref()
+                && !valid_device_type(kind)
+            {
+                problems.push(Problem {
+                    field: format!("{field}.device_type"),
+                    message: "device type may only contain letters, digits and + , - _".to_string(),
+                });
+            }
             if let Some(weekday) = plan.short_weekday
                 && weekday > 6
             {
@@ -168,6 +181,51 @@ pub fn parse_scan(output: &str) -> Vec<String> {
             first.starts_with("/dev/").then(|| first.to_string())
         })
         .collect()
+}
+
+/// A `-d` device type is a short token that goes straight into argv, so it is
+/// restricted to the characters smartctl itself uses (`sat`, `ata`, `nvme`,
+/// `sat,12`, `scsi`, ...).
+pub fn valid_device_type(value: &str) -> bool {
+    let value = value.trim();
+    !value.is_empty()
+        && value.len() <= 32
+        && value
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '+' | ',' | '-' | '_'))
+}
+
+/// True when smartctl is telling us the disk needs an explicit type argument,
+/// e.g. "Probable ATA device behind a SAT layer. Try an additional '-d ata'".
+pub fn is_sat_hint(text: &str) -> bool {
+    let text = text.to_ascii_lowercase();
+    text.contains("behind a sat layer") || text.contains("try an additional '-d")
+}
+
+/// True when smartctl refused to start a test because one is already running.
+pub fn is_running_hint(text: &str) -> bool {
+    let text = text.to_ascii_lowercase();
+    text.contains("without aborting current test") || text.contains("in progress")
+}
+
+/// `[device]`, with a leading `-d <type>` when the disk needs one.
+fn device_args(device: &str, device_type: Option<&str>) -> Vec<String> {
+    let mut args = Vec::new();
+    if let Some(kind) = device_type.map(str::trim).filter(|kind| !kind.is_empty()) {
+        args.push("-d".to_string());
+        args.push(kind.to_string());
+    }
+    args.push(device.to_string());
+    args
+}
+
+/// Ask smartctl what kind of disk this is. Today it only answers the SAT case:
+/// a disk behind a bridge that needs `-d sat` to be read at all.
+pub fn probe_device_type(runner: &dyn Runner, device: &str, timeout: Duration) -> Option<String> {
+    let output = runner
+        .run_timeout("smartctl", &["-i".to_string(), device.to_string()], timeout)
+        .ok()?;
+    is_sat_hint(&output.combined()).then(|| "sat".to_string())
 }
 
 /// One remembered test result.
@@ -259,17 +317,73 @@ impl SmartContext {
     }
 
     /// Start a self-test and remember the outcome.
+    ///
+    /// A disk behind a SAT bridge needs `-d sat`; the first attempt discovers
+    /// that, records it in the schedule (so the next call reuses it), and retries.
     pub async fn run_test(&self, device: &str, kind: TestKind) -> TestRecord {
         let started_ms = now_ms();
         let _guard = self.lock.lock().await;
-        let runner = Arc::clone(&self.runner);
-        let timeout = self.timeout;
-        let device_owned = device.to_string();
-        let outcome = tokio::task::spawn_blocking(move || {
-            start_test(runner.as_ref(), &device_owned, kind, timeout)
-        })
-        .await
-        .unwrap_or_else(|err| Err(format!("smart task failed: {err}")));
+
+        let mut config = self.config();
+        let device_type = config
+            .plan_for(device)
+            .and_then(|plan| plan.device_type.clone());
+
+        let mut outcome = {
+            let runner = Arc::clone(&self.runner);
+            let timeout = self.timeout;
+            let device_owned = device.to_string();
+            let dtype = device_type.clone();
+            tokio::task::spawn_blocking(move || {
+                start_test(
+                    runner.as_ref(),
+                    &device_owned,
+                    kind,
+                    dtype.as_deref(),
+                    timeout,
+                )
+            })
+            .await
+            .unwrap_or_else(|err| Err(format!("smart task failed: {err}")))
+        };
+
+        if let Err(err) = &outcome
+            && device_type.is_none()
+            && is_sat_hint(err)
+        {
+            let probed = {
+                let runner = Arc::clone(&self.runner);
+                let timeout = self.timeout;
+                let device_owned = device.to_string();
+                tokio::task::spawn_blocking(move || {
+                    probe_device_type(runner.as_ref(), &device_owned, timeout)
+                })
+                .await
+                .ok()
+                .flatten()
+            };
+            if let Some(flag) = probed {
+                // Persist so the scheduler and every later call reuse it.
+                if let Some(plan) = config
+                    .devices
+                    .iter_mut()
+                    .find(|plan| plan.device.eq_ignore_ascii_case(device))
+                {
+                    plan.device_type = Some(flag.clone());
+                    let _ = save(&self.config_path, &config);
+                }
+                outcome = {
+                    let runner = Arc::clone(&self.runner);
+                    let timeout = self.timeout;
+                    let device_owned = device.to_string();
+                    tokio::task::spawn_blocking(move || {
+                        start_test(runner.as_ref(), &device_owned, kind, Some(&flag), timeout)
+                    })
+                    .await
+                    .unwrap_or_else(|err| Err(format!("smart task failed: {err}")))
+                };
+            }
+        }
 
         let record = match outcome {
             Ok(detail) => TestRecord {
@@ -297,12 +411,34 @@ impl SmartContext {
 
     /// Live progress for one device.
     pub async fn progress(&self, device: &str) -> Result<TestProgress, ApiError> {
+        let device_type = self
+            .config()
+            .plan_for(device)
+            .and_then(|plan| plan.device_type.clone());
         let runner = Arc::clone(&self.runner);
         let device = device.to_string();
         let timeout = self.timeout;
-        tokio::task::spawn_blocking(move || read_progress(runner.as_ref(), &device, timeout))
-            .await
-            .map_err(|err| ApiError::internal(format!("smart task failed: {err}")))?
+        tokio::task::spawn_blocking(move || {
+            read_progress(runner.as_ref(), &device, device_type.as_deref(), timeout)
+        })
+        .await
+        .map_err(|err| ApiError::internal(format!("smart task failed: {err}")))?
+    }
+
+    /// Abort a running self-test (`smartctl -X`).
+    pub async fn abort(&self, device: &str) -> Result<String, ApiError> {
+        let device_type = self
+            .config()
+            .plan_for(device)
+            .and_then(|plan| plan.device_type.clone());
+        let runner = Arc::clone(&self.runner);
+        let device = device.to_string();
+        let timeout = self.timeout;
+        tokio::task::spawn_blocking(move || {
+            abort_test(runner.as_ref(), &device, device_type.as_deref(), timeout)
+        })
+        .await
+        .map_err(|err| ApiError::internal(format!("smart task failed: {err}")))?
     }
 }
 
@@ -311,18 +447,13 @@ pub fn start_test(
     runner: &dyn Runner,
     device: &str,
     kind: TestKind,
+    device_type: Option<&str>,
     timeout: Duration,
 ) -> Result<String, String> {
+    let mut args = vec!["-t".to_string(), kind.flag().to_string()];
+    args.extend(device_args(device, device_type));
     let output = runner
-        .run_timeout(
-            "smartctl",
-            &[
-                "-t".to_string(),
-                kind.flag().to_string(),
-                device.to_string(),
-            ],
-            timeout,
-        )
+        .run_timeout("smartctl", &args, timeout)
         .map_err(|err| format!("smartctl is not available: {err}"))?;
     if output.timed_out {
         return Err("smartctl timed out".to_string());
@@ -337,25 +468,74 @@ pub fn start_test(
     Ok(trimmed(&output.stdout))
 }
 
+/// Abort a running self-test (`smartctl -X`).
+pub fn abort_test(
+    runner: &dyn Runner,
+    device: &str,
+    device_type: Option<&str>,
+    timeout: Duration,
+) -> Result<String, ApiError> {
+    let mut args = vec!["-X".to_string()];
+    args.extend(device_args(device, device_type));
+    let output = runner
+        .run_timeout("smartctl", &args, timeout)
+        .map_err(|err| ApiError::unavailable(format!("smartctl is not available: {err}")))?;
+    if output.timed_out {
+        return Err(ApiError::internal("smartctl timed out"));
+    }
+    if !output.success() {
+        return Err(ApiError::internal(format!(
+            "smartctl -X failed: {}",
+            trimmed(&output.combined())
+        )));
+    }
+    Ok(trimmed(&output.stdout))
+}
+
 /// Live self-test state parsed from `smartctl -a`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct TestProgress {
     pub running: bool,
-    /// Percent of the test still to run, when one is in flight.
+    /// `short`, `long`, or the raw description, when a test is in flight.
+    pub running_kind: Option<String>,
+    /// Percent of the test still to run.
     pub percent_remaining: Option<u32>,
+    /// Percent of the test already done (100 - remaining).
+    pub percent_complete: Option<u32>,
     pub detail: String,
     /// The most recent completed entry from the self-test log.
     pub last_result: Option<String>,
     pub last_percent: Option<String>,
 }
 
+impl TestProgress {
+    /// An idle result with no log, used when a device is unknown or unreadable.
+    pub fn idle(detail: impl Into<String>) -> Self {
+        Self {
+            running: false,
+            running_kind: None,
+            percent_remaining: None,
+            percent_complete: None,
+            detail: detail.into(),
+            last_result: None,
+            last_percent: None,
+        }
+    }
+}
+
 pub fn read_progress(
     runner: &dyn Runner,
     device: &str,
+    device_type: Option<&str>,
     timeout: Duration,
 ) -> Result<TestProgress, ApiError> {
+    // `-a` carries both the execution-status line and the self-test log (which
+    // is where the *type* of a running test lives), so one call answers
+    // everything the panel needs.
+    let mut args = vec!["-a".to_string()];
+    args.extend(device_args(device, device_type));
     let output = runner
-        .run_timeout("smartctl", &["-a".to_string(), device.to_string()], timeout)
+        .run_timeout("smartctl", &args, timeout)
         .map_err(|err| ApiError::unavailable(format!("smartctl is not available: {err}")))?;
     if output.timed_out {
         return Err(ApiError::internal("smartctl timed out"));
@@ -370,102 +550,150 @@ pub fn read_progress(
 }
 
 /// Parse self-test state from `smartctl -a` text output.
+///
+/// The running test's *type* is not in the execution-status line, so the
+/// self-test log's in-progress row is the source of truth for it; the
+/// execution-status line is the fallback (and the only signal in `-c` output,
+/// where the percentage is on the line after it).
 pub fn parse_progress(text: &str) -> TestProgress {
-    let mut progress = TestProgress {
-        running: false,
-        percent_remaining: None,
-        detail: "no self-test information".to_string(),
-        last_result: None,
-        last_percent: None,
-    };
+    let lines: Vec<&str> = text.lines().collect();
+    let mut running = false;
+    let mut running_kind: Option<String> = None;
+    let mut remaining: Option<u32> = None;
+    let mut last_result: Option<String> = None;
+    let mut last_percent: Option<String> = None;
 
     let mut in_log = false;
-    for line in text.lines() {
-        let trimmed = line.trim();
-        if let Some(rest) = trimmed.strip_prefix("Self-test execution status") {
-            // A running test reads "(  90)% of test remaining."; anything else
-            // (including the "(   0) The previous self-test routine completed"
-            // idiom) means the disk is idle.
-            let percent = parse_percent_remaining(rest);
+    for (index, raw) in lines.iter().enumerate() {
+        let line = raw.trim();
+
+        if let Some(rest) = line.strip_prefix("Self-test execution status") {
             let tail = rest
                 .split_once(')')
                 .map(|(_, tail)| tail.trim())
-                .unwrap_or("");
-            if percent.is_some() && tail.starts_with("% of test remaining") {
-                progress.running = true;
-                progress.percent_remaining = percent;
-                progress.detail = format!("{}% of test remaining", percent.unwrap_or(0));
-            } else {
-                progress.running = false;
-                progress.detail = if tail.is_empty() {
-                    trimmed.to_string()
-                } else {
-                    tail.to_string()
-                };
+                .unwrap_or("")
+                .to_ascii_lowercase();
+            let looks_running =
+                tail.contains("% of test remaining") || tail.contains("in progress");
+            if looks_running {
+                running = true;
+                // The parenthesised number is only a percentage when it is
+                // immediately followed by `%` — otherwise it is the status code
+                // ("( 245) Self-test routine in progress"), and the real
+                // percentage is on the next line in `-c` output.
+                remaining = paren_percent(rest).or_else(|| {
+                    lines
+                        .get(index + 1)
+                        .and_then(|next| percent_token(next.trim()))
+                });
             }
             continue;
         }
-        if trimmed.starts_with("Num  Test_Description") {
+
+        if line.starts_with("Num  Test_Description") || line.starts_with("Num Test_Description") {
             in_log = true;
             continue;
         }
-        if in_log {
-            if trimmed.is_empty() {
-                in_log = false;
-                continue;
+        if !in_log {
+            continue;
+        }
+        if line.is_empty() {
+            in_log = false;
+            continue;
+        }
+        if !line.starts_with('#') {
+            continue;
+        }
+
+        let segments: Vec<&str> = line
+            .trim_start_matches('#')
+            .split("  ")
+            .map(str::trim)
+            .filter(|segment| !segment.is_empty())
+            .collect();
+        if segments.len() < 3 {
+            continue;
+        }
+        let description = segments[1];
+        let status = segments[2];
+
+        if status.to_ascii_lowercase().contains("in progress") {
+            running = true;
+            // The remaining percent may sit inside the status segment
+            // ("Self-test routine in progress 10%").
+            if remaining.is_none() {
+                remaining = status.split_whitespace().rev().find_map(percent_token);
             }
-            if trimmed.starts_with('#')
-                && let Some(result) = parse_log_entry(trimmed)
-            {
-                // Entries are newest first.
-                if progress.last_result.is_none() {
-                    progress.last_result = Some(result.status);
-                    progress.last_percent = Some(result.life_percent);
-                }
+            if running_kind.is_none() {
+                running_kind = Some(kind_word(description));
             }
+        } else if last_result.is_none() {
+            // The percentage is its own column ("00%"), so scan the whole line.
+            let percent = line
+                .split_whitespace()
+                .find(|token| token.ends_with('%'))
+                .map(str::to_string);
+            last_result = Some(format!("{} — {}", kind_word(description), status));
+            last_percent = percent;
         }
     }
 
-    if progress.last_result.is_none() {
-        progress.last_result = Some("no completed tests logged".to_string());
-        progress.last_percent = None;
+    if last_result.is_none() {
+        last_result = Some("no completed tests logged".to_string());
     }
-    progress
-}
 
-struct LogEntry {
-    status: String,
-    life_percent: String,
-}
+    let percent_complete = remaining.map(|percent| 100u32.saturating_sub(percent));
+    let detail = if !running {
+        "idle".to_string()
+    } else {
+        match (running_kind.as_deref(), percent_complete) {
+            (Some(kind), Some(done)) => format!("Self-test in progress: {kind}, {done}% complete"),
+            (Some(kind), None) => format!("Self-test in progress: {kind}"),
+            (None, Some(done)) => format!("Self-test in progress: {done}% complete"),
+            (None, None) => "Self-test in progress".to_string(),
+        }
+    };
 
-/// `# 1  Short offline       Completed without error       00%        0   -`
-fn parse_log_entry(line: &str) -> Option<LogEntry> {
-    let rest = line.trim_start_matches('#').trim();
-    // The columns are fixed width, so fields are separated by runs of spaces,
-    // not single spaces — splitting on two-or-more keeps multi-word
-    // descriptions ("Short offline") intact.
-    let segments: Vec<&str> = rest
-        .split("  ")
-        .map(str::trim)
-        .filter(|segment| !segment.is_empty())
-        .collect();
-    if segments.len() < 3 {
-        return None;
+    TestProgress {
+        running,
+        running_kind,
+        percent_remaining: remaining,
+        percent_complete,
+        detail,
+        last_result,
+        last_percent,
     }
-    // segments[0] is the entry number, [1] the description, [2] the status.
-    let percent = segments.iter().rev().find(|token| token.ends_with('%'))?;
-    Some(LogEntry {
-        status: format!("{} {}", segments[1], segments[2]),
-        life_percent: (*percent).to_string(),
-    })
 }
 
-/// `(  90)% of test remaining` → 90.
-fn parse_percent_remaining(line: &str) -> Option<u32> {
+/// Map a self-test log description to the short/long wording the API uses.
+fn kind_word(description: &str) -> String {
+    let lower = description.to_ascii_lowercase();
+    if lower.contains("extended") || lower.contains("long") {
+        "long".to_string()
+    } else if lower.contains("short") {
+        "short".to_string()
+    } else {
+        lower
+    }
+}
+
+/// A whitespace token that is a percentage, e.g. `10%` → 10.
+fn percent_token(token: &str) -> Option<u32> {
+    token.trim().strip_suffix('%')?.trim().parse::<u32>().ok()
+}
+
+/// The number inside the first `( ... )`, but only when it is followed by `%`.
+///
+/// This distinguishes the percentage form `(  90)% of test remaining` from the
+/// status code form `( 245) Self-test routine in progress`, where the number in
+/// the parentheses is not a percentage at all.
+fn paren_percent(line: &str) -> Option<u32> {
     let open = line.find('(')?;
     let close = line[open..].find(')')? + open;
-    let inside = &line[open + 1..close];
-    inside.trim().parse::<u32>().ok()
+    if !line[close + 1..].trim_start().starts_with('%') {
+        return None;
+    }
+    line[open + 1..close].trim().parse::<u32>().ok()
 }
 
 /// Next due time (unix seconds) for a planned test, at or after `from`.
@@ -598,21 +826,62 @@ Num  Test_Description    Status                  LifeTime  LBA_of_first_err\n\
     fn progress_is_parsed_from_smartctl_text() {
         let progress = parse_progress(SAMPLE);
         assert!(!progress.running);
+        assert_eq!(progress.detail, "idle");
         assert_eq!(progress.percent_remaining, None);
         assert_eq!(
             progress.last_result.as_deref(),
-            Some("Short offline Completed without error")
+            Some("short — Completed without error")
         );
         assert_eq!(progress.last_percent.as_deref(), Some("00%"));
     }
 
     #[test]
-    fn a_running_test_is_reported() {
+    fn a_running_test_is_reported_with_type_and_progress() {
+        // A full `smartctl -a` while a long test runs: the type comes from the
+        // self-test log, the percentage from the status column.
+        let running = "Self-test execution status:      ( 245) Self-test routine in progress...\n\
+                                        10% of test remaining.\n\
+Num  Test_Description    Status                  Remaining  LifeTime(hours)\n\
+# 1  Extended offline    Self-test routine in progress 10%        0   -\n\
+# 2  Short offline       Completed without error       00%        0   -\n";
+        let progress = parse_progress(running);
+        assert!(progress.running);
+        assert_eq!(progress.running_kind.as_deref(), Some("long"));
+        assert_eq!(progress.percent_remaining, Some(10));
+        assert_eq!(progress.percent_complete, Some(90));
+        assert_eq!(progress.detail, "Self-test in progress: long, 90% complete");
+        // The newest *completed* entry is still reported.
+        assert_eq!(
+            progress.last_result.as_deref(),
+            Some("short — Completed without error")
+        );
+    }
+
+    #[test]
+    fn execution_status_alone_is_enough() {
         let running = "Self-test execution status: (  90)% of test remaining.\n";
         let progress = parse_progress(running);
         assert!(progress.running);
         assert_eq!(progress.percent_remaining, Some(90));
-        assert!(progress.detail.contains("90%"));
+        assert_eq!(progress.percent_complete, Some(10));
+        assert!(
+            progress.detail.contains("10% complete"),
+            "{}",
+            progress.detail
+        );
+    }
+
+    #[test]
+    fn sat_hint_is_detected() {
+        assert!(is_sat_hint(
+            "Probable ATA device behind a SAT layer. Try an additional '-d ata' or '-d sat'"
+        ));
+        assert!(!is_sat_hint(
+            "SMART overall-health self-assessment test result: PASSED"
+        ));
+        assert!(valid_device_type("sat"));
+        assert!(valid_device_type("sat,12"));
+        assert!(!valid_device_type("sat;rm -rf /"));
     }
 
     #[test]
@@ -623,6 +892,7 @@ Num  Test_Description    Status                  LifeTime  LBA_of_first_err\n\
                 &runner,
                 "/dev/sda",
                 TestKind::Short,
+                None,
                 Duration::from_secs(10)
             )
             .is_err()
@@ -632,10 +902,78 @@ Num  Test_Description    Status                  LifeTime  LBA_of_first_err\n\
     #[test]
     fn starting_a_test_returns_the_output() {
         let runner = FakeRunner::new().respond("smartctl", Some(0), "Testing has begun", "");
-        let detail = start_test(&runner, "/dev/sda", TestKind::Long, Duration::from_secs(10))
-            .expect("started");
+        let detail = start_test(
+            &runner,
+            "/dev/sda",
+            TestKind::Long,
+            None,
+            Duration::from_secs(10),
+        )
+        .expect("started");
         assert_eq!(detail, "Testing has begun");
         assert!(runner.ran_with("smartctl", &["-t", "long", "/dev/sda"]));
+    }
+
+    #[test]
+    fn a_remembered_device_type_is_passed_through() {
+        let runner = FakeRunner::new().respond("smartctl", Some(0), "Testing has begun", "");
+        start_test(
+            &runner,
+            "/dev/sda",
+            TestKind::Short,
+            Some("sat"),
+            Duration::from_secs(10),
+        )
+        .expect("started");
+        assert!(runner.ran_with("smartctl", &["-t", "short", "-d", "sat", "/dev/sda"]));
+    }
+
+    #[test]
+    fn the_device_type_is_probed_and_persisted() {
+        let dir = std::env::temp_dir().join(format!("ss-smart-probe-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let config_path = dir.join("smart.json");
+        let config = SmartConfig {
+            devices: vec![DevicePlan {
+                device: "/dev/sda".to_string(),
+                ..DevicePlan::default()
+            }],
+        };
+        save(&config_path, &config).expect("save");
+
+        // The first `-t` fails with the SAT hint, `-i` confirms it, the retry
+        // succeeds — and the type is written back into the schedule.
+        // The retry (which carries `-d sat`) succeeds and is matched first; the
+        // `-i` probe answers with the SAT hint; everything else fails with it.
+        let runner = Arc::new(
+            FakeRunner::new()
+                .respond_when("smartctl", "-d sat", Some(0), "Testing has begun", "")
+                .respond_when(
+                    "smartctl",
+                    "-i",
+                    Some(1),
+                    "Probable ATA device behind a SAT layer. Try an additional '-d ata' or '-d sat'",
+                    "",
+                )
+                .respond(
+                    "smartctl",
+                    Some(1),
+                    "",
+                    "Probable ATA device behind a SAT layer. Try an additional '-d ata' or '-d sat'",
+                ),
+        );
+        let context = SmartContext::new(config_path.clone(), runner, Duration::from_secs(10));
+        let runtime = tokio::runtime::Runtime::new().expect("rt");
+        let record = runtime.block_on(context.run_test("/dev/sda", TestKind::Short));
+        assert!(record.accepted, "{}", record.detail);
+        let (saved, _) = load(&config_path);
+        assert_eq!(
+            saved
+                .plan_for("/dev/sda")
+                .and_then(|plan| plan.device_type.clone()),
+            Some("sat".to_string())
+        );
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

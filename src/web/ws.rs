@@ -28,9 +28,13 @@ const HEARTBEAT: Duration = Duration::from_secs(30);
 pub fn spawn_sampler(state: AppState, cfg: Config) {
     let telemetry = state.telemetry.clone();
     let latest = state.latest.clone();
+    let history = state.history.clone();
 
     tokio::spawn(async move {
         let mut sampler = Sampler::new();
+        // When the last minute-resolution history point was recorded; 0 means the
+        // very first sample seeds the buffer immediately.
+        let mut last_history_ms: u64 = 0;
         let mut ticker =
             tokio::time::interval(Duration::from_millis(cfg.sample_interval_ms.max(100)));
         ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
@@ -52,6 +56,27 @@ pub fn spawn_sampler(state: AppState, cfg: Config) {
             match collected {
                 Ok((restored, snapshot)) => {
                     sampler = restored;
+                    // Collapse the 1 Hz stream into one point per minute for the
+                    // 1h/6h/24h graphs, so the ring buffer covers a full day.
+                    if snapshot.ts_ms.saturating_sub(last_history_ms)
+                        >= crate::system::history::INTERVAL_MS
+                    {
+                        last_history_ms = snapshot.ts_ms;
+                        let (rx_bps, tx_bps) =
+                            snapshot
+                                .networks
+                                .iter()
+                                .fold((0u64, 0u64), |(rx, tx), net| {
+                                    (rx.saturating_add(net.rx_bps), tx.saturating_add(net.tx_bps))
+                                });
+                        history.push(crate::system::history::HistoryPoint {
+                            ts_ms: snapshot.ts_ms,
+                            cpu_pct: snapshot.cpu.usage_pct,
+                            mem_pct: snapshot.memory.used_pct,
+                            rx_bps,
+                            tx_bps,
+                        });
+                    }
                     // `latest` feeds the REST endpoint; `telemetry` feeds the sockets.
                     latest.send_replace(Some(snapshot.clone()));
                     // Err just means nobody is connected right now.

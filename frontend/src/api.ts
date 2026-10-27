@@ -709,6 +709,8 @@ export type SmartKind = "short" | "long";
 
 export interface DevicePlan {
   device: string;
+  /** `smartctl -d` type, e.g. `sat`; detected on first use. */
+  device_type: string | null;
   short_weekday: number | null;
   short_at: string;
   long_day: number | null;
@@ -721,19 +723,17 @@ export interface SmartConfig {
 
 export interface TestProgress {
   running: boolean;
+  /** `short`, `long`, or the raw description, when a test is in flight. */
+  running_kind: string | null;
   percent_remaining: number | null;
+  percent_complete: number | null;
   detail: string;
   last_result: string | null;
   last_percent: string | null;
 }
 
-export interface DeviceProgress {
+export interface DeviceProgress extends TestProgress {
   device: string;
-  running: boolean;
-  percent_remaining: number | null;
-  detail: string;
-  last_result: string | null;
-  last_percent: string | null;
 }
 
 export interface TestRecord {
@@ -752,6 +752,19 @@ export interface SmartState {
   progress: DeviceProgress[];
   available: boolean;
   running: boolean;
+  /** Disks smartctl can see that are not scheduled yet. */
+  detected: string[];
+}
+
+/** A start attempt plus the state read back afterwards. */
+export interface SmartStartResult extends TestProgress {
+  accepted: boolean;
+  detail: string;
+}
+
+export interface SmartAbortResult extends TestProgress {
+  ok: boolean;
+  detail: string;
 }
 
 export const smartApi = {
@@ -759,9 +772,40 @@ export const smartApi = {
   saveConfig: (config: SmartConfig) =>
     jsonRequest<SmartState>("/api/smart/config", "PUT", config),
   start: (device: string, kind: SmartKind) =>
-    jsonRequest<TestRecord>(`/api/smart/${encodeURIComponent(device)}`, "POST", kind),
+    jsonRequest<SmartStartResult>(`/api/smart/${encodeURIComponent(device)}`, "POST", kind),
+  /** The running self-test's state and the last completed one. */
+  selftest: (device: string) =>
+    request<TestProgress>(`/api/smart/selftest?device=${encodeURIComponent(device)}`),
+  abort: (device: string) =>
+    jsonRequest<SmartAbortResult>("/api/smart/selftest/abort", "POST", { device }),
   progress: (device: string) =>
     request<TestProgress>(`/api/smart/progress?device=${encodeURIComponent(device)}`),
+};
+
+// ---------------------------------------------------------------------------
+// Telemetry history (1h / 6h / 24h graphs)
+// ---------------------------------------------------------------------------
+
+export type HistoryRange = "1h" | "6h" | "24h";
+
+export interface HistoryPoint {
+  ts_ms: number;
+  cpu_pct: number;
+  mem_pct: number;
+  rx_bps: number;
+  tx_bps: number;
+}
+
+export interface HistoryResponse {
+  range: string;
+  interval_ms: number;
+  total: number;
+  points: HistoryPoint[];
+}
+
+export const metricsApi = {
+  history: (range: HistoryRange) =>
+    request<HistoryResponse>(`/api/metrics/history?range=${range}`),
 };
 
 // ---------------------------------------------------------------------------

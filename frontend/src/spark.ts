@@ -86,6 +86,22 @@ export class Sparkline {
     this.draw();
   }
 
+  /** Replace the whole series at once, for a range fetched from the server. */
+  set(values: number[]): void {
+    this.values.length = 0;
+    for (const value of values.slice(-this.capacity)) {
+      this.values.push(Number.isFinite(value) ? value : 0);
+    }
+    this.draw();
+  }
+
+  /** Drop the series, e.g. when returning to the live view. */
+  clear(): void {
+    this.values.length = 0;
+    this.line.removeAttribute("d");
+    this.area.removeAttribute("d");
+  }
+
   private draw(): void {
     const count = this.values.length;
     if (count === 0) {

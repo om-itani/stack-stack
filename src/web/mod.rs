@@ -14,6 +14,7 @@ pub mod healthchecks;
 pub mod jobs;
 pub mod layers;
 pub mod logs;
+pub mod metrics;
 pub mod network;
 pub mod notify;
 pub mod proxy;
@@ -61,6 +62,7 @@ pub fn router(state: AppState) -> Router {
         .route("/api/notifications/config", put(notify::update_config))
         .route("/api/notifications/test", post(notify::test))
         .route("/api/notifications/ws", get(notify::ws))
+        .route("/api/metrics/history", get(metrics::history))
         .route("/api/jobs", get(jobs::list))
         .route("/api/jobs/ws", get(jobs::ws))
         .route("/api/jobs/{id}", delete(jobs::remove))
@@ -218,6 +220,8 @@ pub fn router(state: AppState) -> Router {
         .route("/api/smart/config", put(smart::save_config))
         .route("/api/smart/{device}", post(smart::start))
         .route("/api/smart/progress", get(smart::progress))
+        .route("/api/smart/selftest", get(smart::selftest))
+        .route("/api/smart/selftest/abort", post(smart::abort))
         .route("/api/logs", get(logs::state))
         .route("/api/logs/system", get(logs::system))
         .route("/api/logs/units", get(logs::state))

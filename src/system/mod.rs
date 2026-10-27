@@ -4,5 +4,6 @@
 //! and `/sys` parsing instead of the heavyweight `sysinfo`-style crates, because
 //! we only ever need a handful of fields and the binary should stay small.
 
+pub mod history;
 pub mod metrics;
 pub mod storage;

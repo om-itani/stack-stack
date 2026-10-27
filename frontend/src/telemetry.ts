@@ -15,6 +15,10 @@ export interface Cpu {
   cores: number;
   per_core: number[];
   model: string | null;
+  /** Average core clock, when the kernel reports it. */
+  freq_mhz: number | null;
+  /** Package temperature, when a sensor exposes one. */
+  temp_c: number | null;
 }
 
 export interface Memory {

@@ -31,6 +31,11 @@ pub struct Cpu {
     /// Per-core busy percentage, index == cpuN.
     pub per_core: Vec<f32>,
     pub model: Option<String>,
+    /// Average current core clock from `/proc/cpuinfo`, when the kernel reports
+    /// it (arm64 and some virtualised guests do not).
+    pub freq_mhz: Option<u32>,
+    /// Package temperature from hwmon/thermal, when a sensor exposes one.
+    pub temp_c: Option<f32>,
 }
 
 #[derive(Debug, Clone, Default, Serialize)]
@@ -186,6 +191,8 @@ fn sample_cpu(prev: Option<CpuTimes>, prev_cores: &[CpuTimes]) -> (CpuSample, Ve
         cores: cores.len(),
         model: cpu_model(),
         per_core: Vec::with_capacity(cores.len()),
+        freq_mhz: cpu_frequency_mhz(),
+        temp_c: cpu_temperature_c(),
         ..Default::default()
     };
 
@@ -306,6 +313,94 @@ fn cpu_model() -> Option<String> {
         }
     }
     None
+}
+
+/// Average current core clock from `/proc/cpuinfo`. Returns `None` when the
+/// field is absent or every core reports zero, which is normal on arm64 and in
+/// some virtualised guests.
+fn cpu_frequency_mhz() -> Option<u32> {
+    let info = read("/proc/cpuinfo")?;
+    let mut total = 0.0f64;
+    let mut count = 0u32;
+    for line in info.lines() {
+        let Some((_, value)) = line.split_once(':') else {
+            continue;
+        };
+        if !line.starts_with("cpu MHz") {
+            continue;
+        }
+        if let Ok(mhz) = value.trim().parse::<f64>()
+            && mhz > 0.0
+        {
+            total += mhz;
+            count += 1;
+        }
+    }
+    (count > 0).then(|| (total / f64::from(count)).round() as u32)
+}
+
+/// Package temperature, preferring a CPU hwmon chip (coretemp/k10temp/zenpower)
+/// and falling back to a CPU-ish thermal zone. Millidegrees become whole tenths
+/// of a degree.
+fn cpu_temperature_c() -> Option<f32> {
+    if let Ok(entries) = fs::read_dir("/sys/class/hwmon") {
+        let mut chips: Vec<std::path::PathBuf> =
+            entries.flatten().map(|entry| entry.path()).collect();
+        chips.sort();
+        for chip in chips {
+            let name = fs::read_to_string(chip.join("name"))
+                .unwrap_or_default()
+                .trim()
+                .to_ascii_lowercase();
+            let is_cpu = [
+                "coretemp",
+                "k10temp",
+                "zenpower",
+                "cpu_thermal",
+                "cpu-thermal",
+            ]
+            .iter()
+            .any(|needle| name.contains(needle));
+            if is_cpu && let Some(temp) = read_millidegrees(&chip.join("temp1_input")) {
+                return Some(temp);
+            }
+        }
+    }
+
+    if let Ok(entries) = fs::read_dir("/sys/class/thermal") {
+        let mut zones: Vec<std::path::PathBuf> =
+            entries.flatten().map(|entry| entry.path()).collect();
+        zones.sort();
+        for zone in zones {
+            let is_zone = zone
+                .file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name.starts_with("thermal_zone"));
+            if !is_zone {
+                continue;
+            }
+            let kind = fs::read_to_string(zone.join("type"))
+                .unwrap_or_default()
+                .trim()
+                .to_ascii_lowercase();
+            let is_cpu = ["x86_pkg_temp", "cpu", "soc", "package"]
+                .iter()
+                .any(|needle| kind.contains(needle));
+            if is_cpu && let Some(temp) = read_millidegrees(&zone.join("temp")) {
+                return Some(temp);
+            }
+        }
+    }
+    None
+}
+
+/// Read a millidegree sensor file, rejecting absurd values so a bogus sensor
+/// cannot render nonsense.
+fn read_millidegrees(path: &std::path::Path) -> Option<f32> {
+    let raw = fs::read_to_string(path).ok()?;
+    let value: f32 = raw.trim().parse().ok()?;
+    let celsius = value / 1000.0;
+    (celsius > -50.0 && celsius < 200.0).then_some((celsius * 10.0).round() / 10.0)
 }
 
 // ---------------------------------------------------------------------------
@@ -684,6 +779,19 @@ fn round2(v: f32) -> f32 {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn millidegrees_are_converted_and_clamped() {
+        let dir = std::env::temp_dir().join(format!("ss-metrics-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        let path = dir.join("temp1_input");
+        std::fs::write(&path, "45000\n").expect("write");
+        assert_eq!(super::read_millidegrees(&path), Some(45.0));
+        // A bogus sensor reading is rejected rather than rendered.
+        std::fs::write(&path, "999999\n").expect("write");
+        assert_eq!(super::read_millidegrees(&path), None);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     use super::*;
 
     #[test]

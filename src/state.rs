@@ -28,6 +28,7 @@ use crate::services::smart::SmartContext;
 use crate::services::tasks::TaskContext;
 use crate::services::updates::UpdateContext;
 use crate::services::wireguard::WgContext;
+use crate::system::history::History;
 use crate::system::metrics::Snapshot;
 use crate::system::storage::StorageContext;
 use crate::tls::TlsRuntime;
@@ -50,6 +51,8 @@ pub struct AppState {
     /// Most recent sample, so REST callers get an instant answer without
     /// waiting up to one full tick.
     pub latest: watch::Sender<Option<Arc<Snapshot>>>,
+    /// Rolling once-a-minute telemetry history for the 1h/6h/24h graphs.
+    pub history: History,
     /// Runtime configuration, shared with the container/app-store handlers.
     pub config: Config,
     /// Lazily-connected Docker daemon client.
@@ -101,6 +104,7 @@ impl AppState {
     pub fn new(config: Config) -> Self {
         let (telemetry, _) = broadcast::channel(TELEMETRY_BACKLOG);
         let (latest, _) = watch::channel(None);
+        let history = History::new();
         let docker = DockerClient::new(config.docker_socket.clone(), DOCKER_TIMEOUT_S);
         let hub = HubSearch::new(Arc::new(CurlHttp::new()));
         if !hub.available() {
@@ -210,6 +214,7 @@ impl AppState {
             started_at: Instant::now(),
             telemetry,
             latest,
+            history,
             config,
             docker,
             hub,

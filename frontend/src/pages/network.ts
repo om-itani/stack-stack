@@ -125,6 +125,9 @@ export function createNetworkPage(): PageHandle {
     class:
       "border border-amber-700 bg-amber-950/40 px-3 py-2 text-[11px] text-amber-300",
   });
+  // Hidden until there is a firewall confirmation to show; otherwise an empty
+  // amber bar flashes on mount, which reads as an error.
+  pendingBox.style.display = "none";
   const tabBar = el("div", { class: "flex flex-wrap gap-1 border-b border-white/5 pb-1" });
   const tabBody = el("div", { class: "min-h-0 flex-1" });
 
@@ -400,9 +403,20 @@ export function createNetworkPage(): PageHandle {
     tabBody.replaceChildren(tab.build());
   }
 
+  /** Placeholder shown until the first fetch resolves, so the page never paints
+   * an error (or an empty flash) before it knows anything. */
+  function skeleton(): HTMLElement {
+    const wrap = el("div", { class: "flex flex-col gap-3 p-1" });
+    for (const width of ["w-1/3", "w-full", "w-5/6", "w-2/3"]) {
+      wrap.append(el("div", { class: `h-6 animate-pulse rounded bg-white/5 ${width}` }));
+    }
+    return wrap;
+  }
+
   function renderAll(): void {
     if (!draft) {
-      tabBody.replaceChildren(el("div", { class: "text-neutral-600", text: "loading…" }));
+      // A skeleton, not an error: an error is only shown once a fetch fails.
+      tabBody.replaceChildren(skeleton());
       renderChrome();
       return;
     }
@@ -1420,6 +1434,10 @@ export function createNetworkPage(): PageHandle {
       renderChrome();
     }
   }, 1000);
+
+  // Paint the skeleton once, before the shell calls onShow, so navigating here
+  // never shows a bare or error-tinted panel while the first fetch is in flight.
+  renderAll();
 
   return {
     root,

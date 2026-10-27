@@ -3,16 +3,24 @@
  *
  * Shows live progress and the last logged result per device, the run history,
  * and the weekly-short / monthly-long schedule. Starting a test asks the disk
- * to run it in the background; progress comes from `smartctl -a`.
+ * to run it in the background; progress comes from `smartctl -a`, and a running
+ * test can be aborted.
  */
 
 import { smartApi } from "../api";
-import type { DevicePlan, SmartKind, SmartState } from "../api";
-import { button, el, emptyNote, panel, textInput } from "../ui";
+import type { SmartKind, SmartState, TestProgress } from "../api";
+import { button, el, emptyNote, panel, select, textInput } from "../ui";
 
 const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
+/** Devices that smartctl can see but that are not scheduled yet. */
+const ADD_PLACEHOLDER = "";
+
 function errorText(err: unknown): string {
+  const problems = (err as { problems?: Array<{ field: string; message: string }> }).problems;
+  if (Array.isArray(problems) && problems.length > 0) {
+    return problems.map((problem) => problem.message).join("; ");
+  }
   return err instanceof Error ? err.message : String(err);
 }
 
@@ -20,14 +28,16 @@ function formatTime(ms: number): string {
   return new Date(ms).toLocaleString();
 }
 
-function freshPlan(): DevicePlan {
-  return {
-    device: "/dev/sda",
-    short_weekday: 0,
-    short_at: "02:30",
-    long_day: 1,
-    long_at: "03:30",
-  };
+/** One line describing a device's self-test state. */
+function statusText(progress: TestProgress): string {
+  if (!progress.running) {
+    return "idle";
+  }
+  const kind = progress.running_kind ?? "self-test";
+  const done = progress.percent_complete;
+  return done === null
+    ? `self-test in progress: ${kind}`
+    : `self-test in progress: ${kind}, ${done}% complete`;
 }
 
 export function buildSmartPanel(): HTMLElement {
@@ -37,18 +47,35 @@ export function buildSmartPanel(): HTMLElement {
   let state: SmartState | null = null;
   let busy = false;
   let status = "";
+  let selected = ADD_PLACEHOLDER;
 
   const statusLine = el("span", { class: "text-[10px] text-neutral-500" });
-  const refresh = button("refresh", "", () => void load());
-  const add = button("add device", "", () => {
-    if (!state) return;
-    state.config.devices.push(freshPlan());
-    void save();
+  const devicePicker = select(ADD_PLACEHOLDER, [[ADD_PLACEHOLDER, "add device…"]], (value) => {
+    selected = value;
+    updateAddButton();
   });
+  const add = button("add", "", () => void addDevice());
+
+  function updateAddButton(): void {
+    const options = state?.detected ?? [];
+    devicePicker.replaceChildren(
+      el("option", { value: ADD_PLACEHOLDER, text: "add device…" }),
+      ...options.map((device) => el("option", { value: device, text: device })),
+    );
+    devicePicker.value = selected;
+    const canAdd = Boolean(state && selected !== ADD_PLACEHOLDER);
+    devicePicker.disabled = !state || options.length === 0;
+    add.disabled = !canAdd;
+    devicePicker.title =
+      options.length === 0 ? "no unscheduled disks detected" : "choose a disk to schedule";
+  }
+
+  const refresh = button("refresh", "", () => void load());
   const head = el("div", { class: "flex items-center gap-2" }, [
     el("span", { class: "ml-auto" }),
-    refresh,
+    devicePicker,
     add,
+    refresh,
     statusLine,
   ]);
   cardBody.append(head);
@@ -70,13 +97,47 @@ export function buildSmartPanel(): HTMLElement {
   }
 
   async function save(): Promise<void> {
-    if (!state) return;
+    if (!state || busy) return;
     busy = true;
     status = "saving…";
     render();
     try {
       state = await smartApi.saveConfig(state.config);
       status = "saved";
+    } catch (err) {
+      // A validation failure names the offending field, so show that.
+      status = errorText(err);
+    } finally {
+      busy = false;
+      render();
+    }
+  }
+
+  async function addDevice(): Promise<void> {
+    if (!state || selected === ADD_PLACEHOLDER) return;
+    const device = selected;
+    // The picker only offers unscheduled disks, so this cannot duplicate an
+    // entry (which is what made the old hardcoded `/dev/sda` fail validation).
+    state.config.devices.push({
+      device,
+      device_type: null,
+      short_weekday: 0,
+      short_at: "02:30",
+      long_day: 1,
+      long_at: "03:30",
+    });
+    selected = ADD_PLACEHOLDER;
+    await save();
+  }
+
+  async function start(device: string, kind: SmartKind): Promise<void> {
+    busy = true;
+    status = `starting ${kind} test on ${device}…`;
+    render();
+    try {
+      const result = await smartApi.start(device, kind);
+      status = result.detail;
+      state = await smartApi.state();
     } catch (err) {
       status = errorText(err);
     } finally {
@@ -85,13 +146,13 @@ export function buildSmartPanel(): HTMLElement {
     }
   }
 
-  async function start(device: string, kind: SmartKind): Promise<void> {
+  async function abort(device: string): Promise<void> {
     busy = true;
-    status = `starting ${kind} test on ${device}…`;
+    status = `aborting the test on ${device}…`;
     render();
     try {
-      const record = await smartApi.start(device, kind);
-      status = record.accepted ? `${kind} test started on ${device}` : record.detail;
+      const result = await smartApi.abort(device);
+      status = result.detail || "aborted";
       state = await smartApi.state();
     } catch (err) {
       status = errorText(err);
@@ -103,9 +164,8 @@ export function buildSmartPanel(): HTMLElement {
 
   function render(): void {
     statusLine.textContent = status;
-    cardBody
-      .querySelectorAll("[data-body]")
-      .forEach((node) => node.remove());
+    updateAddButton();
+    cardBody.querySelectorAll("[data-body]").forEach((node) => node.remove());
 
     const body = el("div", { class: "flex flex-col gap-2", "data-body": "" });
     cardBody.append(body);
@@ -126,27 +186,26 @@ export function buildSmartPanel(): HTMLElement {
     }
 
     for (const device of state.progress) {
-      const running = device.running
-        ? `running — ${device.percent_remaining ?? "?"}% remaining`
-        : device.detail;
-      body.append(
-        el("div", { class: "flex flex-col gap-0.5" }, [
-          el("div", { class: "flex items-baseline gap-2" }, [
-            el("span", { class: "text-neutral-300", text: device.device }),
-            el("span", {
-              class: device.running ? "text-amber-400" : "text-neutral-500",
-              text: running,
-            }),
-            el("span", { class: "ml-auto" }),
-            button("short", "text-[10px]", () => void start(device.device, "short")),
-            button("long", "ml-1 text-[10px]", () => void start(device.device, "long")),
-          ]),
-          el("div", {
-            class: "text-neutral-500",
-            text: `last: ${device.last_result ?? "unknown"}${device.last_percent ? ` (${device.last_percent} life)` : ""}`,
+      const row = el("div", { class: "flex flex-col gap-0.5" }, [
+        el("div", { class: "flex items-baseline gap-2" }, [
+          el("span", { class: "text-neutral-300", text: device.device }),
+          el("span", {
+            class: device.running ? "text-amber-400" : "text-neutral-500",
+            text: statusText(device),
           }),
+          el("span", { class: "ml-auto" }),
+          ...(device.running
+            ? [button("abort", "text-[10px] text-rose-400", () => void abort(device.device))]
+            : []),
+          button("short", "ml-1 text-[10px]", () => void start(device.device, "short")),
+          button("long", "ml-1 text-[10px]", () => void start(device.device, "long")),
         ]),
-      );
+        el("div", {
+          class: "text-neutral-500",
+          text: `last: ${device.last_result ?? "unknown"}${device.last_percent ? ` (${device.last_percent} remaining)` : ""}`,
+        }),
+      ]);
+      body.append(row);
     }
 
     if (state.config.devices.length > 0) {
@@ -155,6 +214,7 @@ export function buildSmartPanel(): HTMLElement {
         el("thead", {}, [
           el("tr", {}, [
             el("th", { class: "px-1 py-0.5 text-left text-[10px] uppercase text-neutral-600", text: "device" }),
+            el("th", { class: "px-1 py-0.5 text-left text-[10px] uppercase text-neutral-600", text: "type" }),
             el("th", { class: "px-1 py-0.5 text-left text-[10px] uppercase text-neutral-600", text: "short" }),
             el("th", { class: "px-1 py-0.5 text-left text-[10px] uppercase text-neutral-600", text: "long" }),
             el("th", { class: "px-1 py-0.5" }),
@@ -182,6 +242,7 @@ export function buildSmartPanel(): HTMLElement {
         tbody.append(
           el("tr", { class: "border-b border-white/5" }, [
             el("td", { class: "px-1 py-0.5", text: plan.device }),
+            el("td", { class: "px-1 py-0.5 text-neutral-500", text: plan.device_type ?? "auto" }),
             el("td", { class: "px-1 py-0.5" }, [weekdaySelect]),
             el("td", { class: "px-1 py-0.5" }, [dayInput]),
             el("td", { class: "px-1 py-0.5 text-right" }, [
@@ -194,7 +255,13 @@ export function buildSmartPanel(): HTMLElement {
         );
       });
       table.append(tbody);
-      body.append(el("div", { class: "text-[10px] uppercase tracking-wide text-neutral-600", text: "schedule (weekly short / monthly long, day of month)" }), table);
+      body.append(
+        el("div", {
+          class: "text-[10px] uppercase tracking-wide text-neutral-600",
+          text: "schedule (weekly short / monthly long, day of month)",
+        }),
+        table,
+      );
     }
 
     if (state.history.length > 0) {

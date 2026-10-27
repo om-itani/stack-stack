@@ -23,6 +23,9 @@ pub struct SmartState {
     pub progress: Vec<DeviceProgress>,
     pub available: bool,
     pub running: bool,
+    /// Disks `smartctl` can see but that are not scheduled yet, so the UI can
+    /// offer a picker instead of guessing a path.
+    pub detected: Vec<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -41,9 +44,24 @@ pub struct DeviceQuery {
 }
 
 #[derive(Serialize)]
-struct ValidationError {
-    error: String,
-    problems: Vec<Problem>,
+pub struct StartResult {
+    pub accepted: bool,
+    pub detail: String,
+    #[serde(flatten)]
+    pub status: TestProgress,
+}
+
+#[derive(Deserialize)]
+pub struct AbortRequest {
+    pub device: String,
+}
+
+#[derive(Serialize)]
+pub struct AbortResult {
+    pub ok: bool,
+    pub detail: String,
+    #[serde(flatten)]
+    pub status: TestProgress,
 }
 
 pub async fn state(State(state): State<AppState>) -> Json<SmartState> {
@@ -70,7 +88,7 @@ pub async fn start(
     State(state): State<AppState>,
     AxumPath(device): AxumPath<String>,
     Json(kind): Json<TestKind>,
-) -> Result<Json<TestRecord>, ApiError> {
+) -> Result<Json<StartResult>, ApiError> {
     if !state.smart.available() {
         return Err(ApiError::unavailable(
             "smartctl is not installed; install smartmontools to run self-tests",
@@ -82,25 +100,76 @@ pub async fn start(
             "{device} is not in the SMART schedule; add it first"
         )));
     }
-    Ok(Json(state.smart.run_test(&device, kind).await))
+
+    let record = state.smart.run_test(&device, kind).await;
+    // Read the state back: if a test was already running, that is the useful
+    // answer, not the raw "cannot start" error smartctl printed.
+    let status = state
+        .smart
+        .progress(&device)
+        .await
+        .unwrap_or_else(|err| TestProgress::idle(err.to_string()));
+    let already_running = status.running;
+    let detail = if already_running {
+        status.detail.clone()
+    } else if smart::is_running_hint(&record.detail) {
+        format!("a self-test is already running on {device}")
+    } else {
+        record.detail.clone()
+    };
+    Ok(Json(StartResult {
+        accepted: record.accepted || already_running,
+        detail,
+        status,
+    }))
 }
 
-pub async fn progress(
+/// The running self-test's state and the last completed one.
+pub async fn selftest(
     State(state): State<AppState>,
     Query(query): Query<DeviceQuery>,
 ) -> Result<Json<TestProgress>, ApiError> {
     // A device-less request (e.g. the Developer ping) is answered as "idle"
     // rather than probing an empty device name.
     if query.device.trim().is_empty() {
-        return Ok(Json(TestProgress {
-            running: false,
-            percent_remaining: None,
-            detail: "no device specified".to_string(),
-            last_result: None,
-            last_percent: None,
-        }));
+        return Ok(Json(TestProgress::idle("no device specified")));
     }
     Ok(Json(state.smart.progress(&query.device).await?))
+}
+
+/// Abort a running self-test.
+pub async fn abort(
+    State(state): State<AppState>,
+    Json(request): Json<AbortRequest>,
+) -> Result<Json<AbortResult>, ApiError> {
+    let device = request.device.trim();
+    if device.is_empty() {
+        return Err(ApiError::bad_request("device is required"));
+    }
+    if !state.smart.available() {
+        return Err(ApiError::unavailable(
+            "smartctl is not installed; install smartmontools to run self-tests",
+        ));
+    }
+    let detail = state.smart.abort(device).await?;
+    state.audit("smart.selftest_abort", device, "aborted");
+    let status = state
+        .smart
+        .progress(device)
+        .await
+        .unwrap_or_else(|err| TestProgress::idle(err.to_string()));
+    Ok(Json(AbortResult {
+        ok: true,
+        detail,
+        status,
+    }))
+}
+
+pub async fn progress(
+    State(state): State<AppState>,
+    Query(query): Query<DeviceQuery>,
+) -> Result<Json<TestProgress>, ApiError> {
+    selftest(State(state), Query(query)).await
 }
 
 async fn collect(state: &AppState) -> SmartState {
@@ -117,18 +186,19 @@ async fn collect(state: &AppState) -> SmartState {
             .smart
             .progress(&plan.device)
             .await
-            .unwrap_or_else(|err| TestProgress {
-                running: false,
-                percent_remaining: None,
-                detail: err.to_string(),
-                last_result: None,
-                last_percent: None,
-            });
+            .unwrap_or_else(|err| TestProgress::idle(err.to_string()));
         progress.push(DeviceProgress {
             device: plan.device.clone(),
             progress: progress_value,
         });
     }
+
+    let detected = {
+        let smart = state.smart.clone();
+        tokio::task::spawn_blocking(move || smart.detect_devices())
+            .await
+            .unwrap_or_default()
+    };
 
     SmartState {
         config,
@@ -138,6 +208,7 @@ async fn collect(state: &AppState) -> SmartState {
         progress,
         available: state.smart.available(),
         running: state.smart.busy().await,
+        detected,
     }
 }
 
@@ -215,12 +286,21 @@ fn now_secs() -> u64 {
 }
 
 fn invalid(problems: Vec<Problem>) -> Response {
+    // Name the fields in `message`/`details` so the UI can say *what* is wrong
+    // even when it only surfaces the flattened error string.
+    let details = problems
+        .iter()
+        .map(|problem| format!("{}: {}", problem.field, problem.message))
+        .collect::<Vec<_>>()
+        .join("; ");
     (
         StatusCode::BAD_REQUEST,
-        Json(ValidationError {
-            error: "SMART configuration is not valid".to_string(),
-            problems,
-        }),
+        Json(serde_json::json!({
+            "error": "BadRequest",
+            "message": "SMART configuration is not valid",
+            "details": details,
+            "problems": problems,
+        })),
     )
         .into_response()
 }
