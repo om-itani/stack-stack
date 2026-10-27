@@ -545,13 +545,23 @@ nameserver 1.0.0.1
   fi
 
   # 3) A fresh Debian install starts dnsmasq, which binds :53 and makes unbound
-  #    crash with "Address already in use". Stop and disable the background unit
-  #    so the port is unbound's; stack-stack still starts dnsmasq on demand (with
-  #    an inert port=0 config) when the operator configures LAN DHCP.
+  #    crash with "Address already in use". Rather than disable the unit (which
+  #    would drop LAN DHCP at the next reboot), make it inert: a base fragment
+  #    with `port=0` and no dhcp-range. The unit stays enabled, so once DHCP is
+  #    enabled in the UI (which writes /etc/dnsmasq.d/stack-stack.conf, read
+  #    after this file) it survives a reboot.
+  install -d -m 0755 /etc/dnsmasq.d
+  write_if_changed /etc/dnsmasq.d/00-stack-stack-base.conf '# Managed by deploy-stack-stack.sh — edits are overwritten on the next deploy.
+# DNS is owned by unbound, so dnsmasq must not bind :53 unless the generated
+# config says otherwise. No dhcp-range here means it offers no leases until
+# stack-stack enables the DHCP server.
+port=0
+' >/dev/null || true
   if systemctl list-unit-files dnsmasq.service >/dev/null 2>&1; then
-    systemctl stop dnsmasq >/dev/null 2>&1 || true
-    systemctl disable dnsmasq >/dev/null 2>&1 || true
-    log_file "stopped and disabled the dnsmasq service (port 53 belongs to unbound)"
+    systemctl enable dnsmasq >/dev/null 2>&1 || warn_file "could not enable dnsmasq"
+    systemctl restart dnsmasq >/dev/null 2>&1 \
+      || warn_file "could not (re)start dnsmasq; DHCP will start on the next apply"
+    log_file "dnsmasq enabled (inert port=0); DHCP survives a reboot once enabled in the UI"
   fi
 
   # 4) unbound-anchor needs a writable /var/lib/unbound and a generated root
