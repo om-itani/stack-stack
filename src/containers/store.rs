@@ -270,10 +270,12 @@ pub fn stack_infos(cfg: &Config) -> Vec<crate::containers::model::StackInfo> {
         .collect()
 }
 
-/// Write the stack's compose file and bring it up with an explicit project name.
-/// Returns the compose output.
-pub async fn deploy_stack(cfg: &Config, raw_name: &str, yaml: &str) -> Result<String, ApiError> {
-    let name = sanitize_stack_name(raw_name)?.to_string();
+/// Full pre-flight check for an operator-authored stack: the cheap shape check,
+/// then a real YAML parse by compose itself. The parse runs against stdin, so
+/// nothing is written to the stacks directory until the document is known good —
+/// and a syntax error is the caller's bad input (400) rather than a 500 from
+/// `compose up`.
+pub async fn check_stack_document(yaml: &str, timeout_s: u64) -> Result<(), ApiError> {
     if yaml.trim().is_empty() {
         return Err(ApiError::bad_request("compose document must not be empty"));
     }
@@ -282,6 +284,62 @@ pub async fn deploy_stack(cfg: &Config, raw_name: &str, yaml: &str) -> Result<St
             "compose document does not look like a YAML `services:` document",
         ));
     }
+    validate_compose(yaml, timeout_s).await
+}
+
+/// Parse `yaml` with `compose config -q`, reading the document from stdin.
+///
+/// If compose is not installed the check is skipped: the deploy that follows
+/// produces the real "no docker" error, which is far more useful than a
+/// validation failure caused by a missing tool.
+pub async fn validate_compose(yaml: &str, timeout_s: u64) -> Result<(), ApiError> {
+    let yaml = yaml.to_string();
+    tokio::task::spawn_blocking(move || validate_compose_blocking(&yaml, timeout_s))
+        .await
+        .map_err(|err| ApiError::internal(format!("compose validation task failed: {err}")))?
+}
+
+fn validate_compose_blocking(yaml: &str, timeout_s: u64) -> Result<(), ApiError> {
+    let cli = compose_cli();
+    let mut args = cli.prefix.clone();
+    args.extend([
+        "-f".to_string(),
+        "-".to_string(),
+        "config".to_string(),
+        "-q".to_string(),
+    ]);
+    let timeout = Duration::from_secs(timeout_s.clamp(5, 60));
+
+    let output =
+        match crate::proc::run_with_input(&cli.program, &args, None, timeout, yaml.as_bytes()) {
+            Ok(output) => output,
+            // Compose is unavailable; let the deploy report that.
+            Err(_) => return Ok(()),
+        };
+
+    if output.timed_out {
+        return Err(ApiError::internal(format!(
+            "validating the compose document timed out after {}s",
+            timeout.as_secs()
+        )));
+    }
+    if !output.success() {
+        // Compose's message carries the line ("yaml: line 1: did not find ..."),
+        // which the editor uses to jump to the error.
+        return Err(
+            ApiError::bad_request("the compose document is not valid YAML")
+                .with_details(tail(&output.combined())),
+        );
+    }
+    Ok(())
+}
+
+/// Write the stack's compose file and bring it up with an explicit project name.
+/// Returns the compose output.
+pub async fn deploy_stack(cfg: &Config, raw_name: &str, yaml: &str) -> Result<String, ApiError> {
+    let name = sanitize_stack_name(raw_name)?.to_string();
+    // Validate before anything is written, so bad YAML never creates a directory.
+    check_stack_document(yaml, cfg.compose_timeout_s).await?;
 
     let dir = stack_dir(cfg, &name);
     let dir_for_write = dir.clone();
@@ -612,6 +670,38 @@ mod tests {
         ));
         // None of the rejected calls may have written anything.
         assert!(!stack_compose_path(&cfg, "web").exists());
+    }
+
+    /// The YAML parse is done by compose, so this only asserts anything when
+    /// compose is actually installed; without it the check is skipped by design.
+    #[tokio::test]
+    async fn broken_yaml_is_a_bad_request_when_compose_is_available() {
+        let has_compose = command_succeeds("docker", &["compose", "version"])
+            || command_succeeds("docker-compose", &["version"]);
+        if !has_compose {
+            return;
+        }
+        let err = check_stack_document("services: [ broken\n", 30)
+            .await
+            .expect_err("broken YAML must be rejected");
+        assert!(matches!(err, ApiError::BadRequest(_)), "{err:?}");
+        assert!(
+            check_stack_document("services:\n  web:\n    image: nginx:alpine\n", 30)
+                .await
+                .is_ok()
+        );
+    }
+
+    #[tokio::test]
+    async fn a_bad_document_never_creates_a_stack_directory() {
+        let cfg = temp_cfg("stacks-no-dir");
+        // A document rejected before it reaches compose must leave no directory
+        // behind (the syntax-error case is covered above when compose exists).
+        assert!(
+            deploy_stack(&cfg, "web", "version: '3'\n").await.is_err(),
+            "a non-services document must be rejected"
+        );
+        assert!(!stack_dir(&cfg, "web").exists());
     }
 
     #[tokio::test]

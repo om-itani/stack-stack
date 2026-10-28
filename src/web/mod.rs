@@ -100,6 +100,11 @@ pub fn router(state: AppState) -> Router {
                 .layer(axum::extract::DefaultBodyLimit::max(STACK_BODY_LIMIT)),
         )
         .route(
+            "/api/containers/stacks/validate",
+            post(containers::validate_stack)
+                .layer(axum::extract::DefaultBodyLimit::max(STACK_BODY_LIMIT)),
+        )
+        .route(
             "/api/containers/stacks/{name}",
             delete(containers::delete_stack),
         )

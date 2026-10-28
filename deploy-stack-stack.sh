@@ -34,6 +34,9 @@ BACKUP_DIR="/var/lib/stack-stack/deploy-backups"
 
 BINARY_NAME="stack-stack"
 SERVICE_NAME="stack-stack.service"
+# Group that owns the state directories, so the installing admin can inspect
+# the stacks/images without sudo while they stay unreadable to other users.
+SERVICE_GROUP="stack-stack"
 INSTALL_BIN="/usr/local/bin/${BINARY_NAME}"
 CONFIG_DIR="/etc/stack-stack"
 STATE_DIR="/var/lib/stack-stack"
@@ -295,15 +298,39 @@ install_binary() {
 
 create_directories() {
   log_file "creating directories"
+
+  # The state directories hold compose files, which may carry secrets, so they
+  # are group-readable rather than world-readable. The installing admin is added
+  # to that group so they can inspect a stack without sudo.
+  local state_group="root"
+  if ! getent group "${SERVICE_GROUP}" >/dev/null 2>&1; then
+    groupadd --system "${SERVICE_GROUP}" 2>/dev/null || true
+  fi
+  if getent group "${SERVICE_GROUP}" >/dev/null 2>&1; then
+    state_group="${SERVICE_GROUP}"
+    local admin="${SUDO_USER:-}"
+    if [[ -n "${admin}" && "${admin}" != "root" ]] && id -u "${admin}" >/dev/null 2>&1; then
+      if ! id -nG "${admin}" 2>/dev/null | tr ' ' '\n' | grep -qx "${SERVICE_GROUP}"; then
+        # `set -e` is live, so the failure of usermod is handled explicitly.
+        if usermod -aG "${SERVICE_GROUP}" "${admin}" 2>/dev/null; then
+          log_file "added ${admin} to the ${SERVICE_GROUP} group (re-login to pick it up)"
+        fi
+      fi
+    fi
+  else
+    warn_file "could not create the ${SERVICE_GROUP} group; state stays root-only"
+  fi
+
   install -d -m 0755 "${CONFIG_DIR}"
   install -d -m 0700 "${CONFIG_DIR}/apps"
   install -d -m 0700 "${CONFIG_DIR}/ca"
   install -d -m 0755 "${STATE_DIR}"
-  install -d -m 0750 "${STATE_DIR}/guests"
-  install -d -m 0750 "${STATE_DIR}/images"
+  install -d -m 0750 -o root -g "${state_group}" "${STATE_DIR}/guests"
+  install -d -m 0750 -o root -g "${state_group}" "${STATE_DIR}/images"
   # Operator-authored compose stacks (see the "Create Stack" UI).
-  install -d -m 0750 "${STATE_DIR}/stacks"
-  # Append-only audit trail for destructive operations.
+  install -d -m 0750 -o root -g "${state_group}" "${STATE_DIR}/stacks"
+  # Append-only audit trail for destructive operations. The file itself is
+  # 0600 (written by the service), so the directory stays root-only too.
   install -d -m 0750 /var/log/stack-stack
   install -d -m 0755 "${BACKUP_DIR}"
   # The systemd unit references /run/libvirt; create it now so the first deploy

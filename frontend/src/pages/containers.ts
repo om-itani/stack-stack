@@ -618,14 +618,92 @@ function openStackEditor(deps: StackEditorDeps, prefill: StackEditorPrefill = {}
     "h-72 w-full resize-y border border-white/5 bg-black/40 p-2 font-mono text-[11px] text-neutral-300 outline-none focus:border-neutral-500";
   area.spellcheck = false;
   area.value = compose;
-  area.addEventListener("input", () => {
-    compose = area.value;
-  });
+
+  const validation = el("div", { class: "tabular text-[11px] text-neutral-500" });
+  validation.textContent = "checking…";
 
   const feedback = el("div", { class: "tabular text-[11px] text-neutral-500" });
   feedback.textContent = "runs docker compose -p <name> up -d";
 
   const deployBtn = button("deploy", "text-emerald-400 hover:border-emerald-500");
+
+  // --- live YAML validation ---------------------------------------------
+  // The same check the deploy runs (`docker compose config`), debounced while
+  // typing, so a syntax error is shown inline instead of coming back as a 500.
+  let validateTimer: number | null = null;
+  let validateToken = 0;
+  let invalid = false;
+
+  function lineFromDetails(details: string | undefined): number | null {
+    if (!details) {
+      return null;
+    }
+    const match = /line\s+(\d+)/i.exec(details);
+    return match ? Number(match[1]) : null;
+  }
+
+  function setValidation(ok: boolean, text: string, line: number | null = null): void {
+    invalid = !ok;
+    deployBtn.disabled = !ok || deps.busy();
+    validation.className = ok
+      ? "tabular text-[11px] text-emerald-500"
+      : "tabular text-[11px] text-rose-400";
+    validation.textContent = text;
+    if (!ok && line !== null) {
+      const jump = button(`go to line ${line}`, "ml-2 text-[10px]");
+      jump.addEventListener("click", () => {
+        const lines = area.value.split("\n");
+        let offset = 0;
+        for (let index = 0; index < line - 1 && index < lines.length; index++) {
+          offset += lines[index].length + 1;
+        }
+        const end = offset + (lines[line - 1]?.length ?? 0);
+        area.focus();
+        area.setSelectionRange(offset, end);
+      });
+      validation.append(jump);
+    }
+  }
+
+  async function check(): Promise<void> {
+    const token = ++validateToken;
+    const text = area.value;
+    if (text.trim() === "") {
+      setValidation(false, "the compose document is empty");
+      return;
+    }
+    try {
+      await stacksApi.validate(text);
+      if (token === validateToken) {
+        setValidation(true, "yaml is valid");
+      }
+    } catch (err) {
+      if (token !== validateToken) {
+        return;
+      }
+      const failure = err as { details?: string; message?: string };
+      setValidation(
+        false,
+        failure.details ?? failure.message ?? "invalid yaml",
+        lineFromDetails(failure.details),
+      );
+    }
+  }
+
+  function scheduleCheck(): void {
+    if (validateTimer !== null) {
+      window.clearTimeout(validateTimer);
+    }
+    validation.className = "tabular text-[11px] text-neutral-500";
+    validation.textContent = "checking…";
+    deployBtn.disabled = true;
+    validateTimer = window.setTimeout(() => void check(), 500);
+  }
+
+  area.addEventListener("input", () => {
+    compose = area.value;
+    scheduleCheck();
+  });
   const cancelBtn = button("cancel");
   const actions = el("div", { class: "flex flex-wrap items-center gap-2" }, [
     deployBtn,
@@ -672,7 +750,9 @@ function openStackEditor(deps: StackEditorDeps, prefill: StackEditorPrefill = {}
       return;
     } finally {
       deps.setBusy(false);
-      deployBtn.disabled = false;
+      // Re-enable only if the document is still valid (a failed deploy often
+      // means the YAML needs fixing, and the next check will say so).
+      deployBtn.disabled = invalid;
     }
     await deps.reload();
   });
@@ -681,10 +761,20 @@ function openStackEditor(deps: StackEditorDeps, prefill: StackEditorPrefill = {}
     class: "text-[10px] text-neutral-600",
     text: "generated files include hardened defaults (no-new-privileges, 10m x 3 log rotation); pasted YAML is used verbatim",
   });
-  modal.append(heading, field("name", nameInput), field("compose (yaml)", area), hint, actions);
+  modal.append(
+    heading,
+    field("name", nameInput),
+    field("compose (yaml)", area),
+    validation,
+    hint,
+    actions,
+  );
   overlay.append(modal);
   document.body.append(overlay);
   nameInput.focus();
+  // Validate the prefilled document immediately, so the deploy button starts in
+  // the correct state rather than optimistically enabled.
+  scheduleCheck();
 }
 
 function linkPort(url: string): string {

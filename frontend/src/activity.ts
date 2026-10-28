@@ -256,6 +256,9 @@ export function createActivity(): Activity {
   }
 
   let running = false;
+  /** Consecutive failed handshakes, so a rejected (e.g. signed-out) socket backs
+   * off instead of retrying every few seconds and flooding the console with 401s. */
+  let attempt = 0;
 
   function socketUrl(): string {
     const protocol = location.protocol === "https:" ? "wss:" : "ws:";
@@ -275,6 +278,11 @@ export function createActivity(): Activity {
     }
     socket = next;
 
+    // A successful handshake clears the backoff; a rejected one (401 from the
+    // auth gate, or a dead session) keeps growing it.
+    next.addEventListener("open", () => {
+      attempt = 0;
+    });
     next.addEventListener("message", (event) => {
       let frame: { type?: string; jobs?: Job[]; job?: Job };
       try {
@@ -305,10 +313,12 @@ export function createActivity(): Activity {
     if (reconnect !== null || !running) {
       return;
     }
+    const delay = Math.min(RECONNECT_MS * 2 ** attempt, 30_000);
+    attempt += 1;
     reconnect = window.setTimeout(() => {
       reconnect = null;
       connect();
-    }, RECONNECT_MS);
+    }, delay);
   }
 
   function disconnect(): void {
@@ -318,6 +328,7 @@ export function createActivity(): Activity {
     }
     const current = socket;
     socket = null;
+    attempt = 0;
     current?.close();
   }
 

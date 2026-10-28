@@ -110,6 +110,16 @@ pub struct CreateStackRequest {
     pub compose: String,
 }
 
+#[derive(Deserialize)]
+pub struct ValidateStackRequest {
+    pub compose: String,
+}
+
+#[derive(Serialize)]
+pub struct ValidateStackResult {
+    pub ok: bool,
+}
+
 /// Every stack on disk with its compose text. Container status is derived on the
 /// client from the containers list (each container carries its `stack`).
 pub async fn list_stacks(State(state): State<AppState>) -> Result<Json<Vec<StackInfo>>, ApiError> {
@@ -120,20 +130,65 @@ pub async fn list_stacks(State(state): State<AppState>) -> Result<Json<Vec<Stack
     Ok(Json(stacks))
 }
 
+/// Parse-check a compose document without deploying it. The stack editor calls
+/// this while typing; the error body carries compose's message (and the line)
+/// so the editor can point at the offending line.
+pub async fn validate_stack(
+    Json(request): Json<ValidateStackRequest>,
+) -> Result<Json<ValidateStackResult>, ApiError> {
+    store::check_stack_document(&request.compose, 30).await?;
+    Ok(Json(ValidateStackResult { ok: true }))
+}
+
 pub async fn create_stack(
     State(state): State<AppState>,
     Json(request): Json<CreateStackRequest>,
 ) -> Result<Json<StackResult>, ApiError> {
     let config = state.config.clone();
     let (name, compose) = (request.name.clone(), request.compose.clone());
-    let output = state
+    let name_for_job = name.clone();
+
+    // Whether this is a brand-new stack decides whether a failed deploy may
+    // clean up after itself (see below).
+    let pre_existing = store::sanitize_stack_name(&name)
+        .map(|clean| store::stack_compose_path(&config, clean).is_file())
+        .unwrap_or(false);
+
+    let deployed = state
         .jobs
         .track_with(format!("Deploying stack {name}"), move |ctx| async move {
             ctx.step(10, "compose up -d");
-            let output = store::deploy_stack(&config, &name, &compose).await?;
+            let output = store::deploy_stack(&config, &name_for_job, &compose).await?;
             Ok::<String, ApiError>(output)
         })
-        .await?;
+        .await;
+
+    let output = match deployed {
+        Ok(output) => output,
+        Err(err) => {
+            // A brand-new stack that failed to come up leaves a half-made
+            // directory behind; remove it so the list does not show a stack that
+            // never ran. An *existing* stack keeps its directory: the old config
+            // is the record of what is still deployed.
+            if !pre_existing && let Ok(clean) = store::sanitize_stack_name(&name) {
+                let dir = store::stack_dir(&state.config, clean);
+                let removed = tokio::task::spawn_blocking(move || std::fs::remove_dir_all(&dir))
+                    .await
+                    .map(|result| result.is_ok())
+                    .unwrap_or(false);
+                if removed {
+                    state.audit(
+                        "stack.deploy_cleanup",
+                        clean,
+                        "removed a failed new stack's directory",
+                    );
+                    state.docker.invalidate().await;
+                }
+            }
+            return Err(err);
+        }
+    };
+
     // Compose created containers outside the Docker client; drop the cached list.
     state.docker.invalidate().await;
     state.audit("stack.deploy", &request.name, "compose up -d");

@@ -48,6 +48,9 @@ export const stacksApi = {
   list: () => request<StackInfo[]>("/api/containers/stacks"),
   create: (name: string, compose: string) =>
     jsonRequest<StackResult>("/api/containers/stacks", "POST", { name, compose }),
+  /** Parse-check a document without deploying it (used by the editor). */
+  validate: (compose: string) =>
+    jsonRequest<{ ok: boolean }>("/api/containers/stacks/validate", "POST", { compose }),
   remove: (name: string, force = false) =>
     request<StackResult>(
       `/api/containers/stacks/${encodeURIComponent(name)}${force ? "?force=true" : ""}`,
@@ -136,7 +139,9 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 
   let response: Response;
   try {
-    response = await fetch(path, { ...init, signal });
+    // `same-origin` is the default, but state it explicitly: the session is a
+    // cookie and every API call must carry it.
+    response = await fetch(path, { credentials: "same-origin", ...init, signal });
   } catch (err) {
     // A caller cancellation is reported as an AbortError so callers can ignore
     // it; the internal deadline is a timeout; anything else is a network fault.
