@@ -784,6 +784,8 @@ User=root
 Group=root
 Environment=STACK_STACK_CONFIG=/etc/stack-stack/config.json
 Environment=RUST_LOG=info
+Environment=MALLOC_ARENA_MAX=2
+Environment=MALLOC_TRIM_THRESHOLD_=131072
 ExecStart=/usr/local/bin/stack-stack
 Restart=always
 RestartSec=3

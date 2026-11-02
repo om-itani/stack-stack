@@ -33,20 +33,22 @@ use state::AppState;
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     init_tracing();
 
-    // Explicit runtime sizing. Workers match the CPU count; the blocking pool is
-    // raised above the default so concurrent PTY sessions and Docker CLI calls
-    // cannot starve each other.
+    // Explicit runtime sizing. Async workers are capped at 4 (more than enough for
+    // an async control plane) with 1 MiB stack size to avoid glibc's 8 MiB per-thread
+    // virtual allocation. The blocking pool is bounded at 64.
     let workers = std::thread::available_parallelism()
         .map(std::num::NonZero::get)
-        .unwrap_or(4);
+        .unwrap_or(4)
+        .clamp(2, 4);
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(workers)
-        .max_blocking_threads(256)
+        .max_blocking_threads(64)
+        .thread_stack_size(1024 * 1024)
         .thread_name("stack-stack")
         .enable_all()
         .build()?;
 
-    tracing::info!(workers, blocking_threads = 256, "tokio runtime started");
+    tracing::info!(workers, blocking_threads = 64, "tokio runtime started");
     runtime.block_on(run())
 }
 
