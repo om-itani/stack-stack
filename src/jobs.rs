@@ -216,6 +216,7 @@ impl JobManager {
     }
 
     /// Register an async operation and detach it. Returns the job id immediately.
+    #[allow(dead_code)]
     pub fn spawn<F, Fut>(&self, name: impl Into<String>, work: F) -> String
     where
         F: FnOnce(JobCtx) -> Fut + Send + 'static,

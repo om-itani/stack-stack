@@ -100,9 +100,9 @@ pub fn resolve_name(url: &str, name: Option<&str>) -> Result<String, ApiError> {
                 name.to_string()
             } else if !name.contains('.') {
                 let extension = extension_from_url(url).ok_or_else(|| {
-                    ApiError::bad_request(format!(
-                        "the URL does not end in .iso, .img, .qcow2 or .raw; provide a file name with an image extension"
-                    ))
+                    ApiError::bad_request(
+                        "the URL does not end in .iso, .img, .qcow2 or .raw; provide a file name with an image extension",
+                    )
                 })?;
                 format!("{name}.{extension}")
             } else {

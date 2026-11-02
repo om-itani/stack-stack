@@ -461,7 +461,11 @@ pub async fn create_archive(
             return Err(ApiError::bad_request("only directories can be archived"));
         }
         let base_name = files_archive_name(&source);
-        let archive_filename = match custom_name.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+        let archive_filename = match custom_name
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+        {
             Some(n) => {
                 let clean = n.replace(['/', '\\'], "");
                 if clean.ends_with(".tar.zst") {

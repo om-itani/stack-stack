@@ -325,7 +325,7 @@
                           "protocol":  "tcp"
                       }
                   ],
-        "compose":  "services:\r\n  linkding:\r\n    image: sisssou/linkding:1.42.0\r\n    container_name: linkding\r\n    restart: unless-stopped\r\n    labels:\r\n      - stack-stack.app=linkding\r\n    ports:\r\n      - \"9090:9090\"\r\n    volumes:\r\n      - linkding-data:/etc/linkding/data\r\nvolumes:\r\n  linkding-data:\r\n"
+        "compose":  "services:\r\n  linkding:\r\n    image: sissbruecker/linkding:1.42.0\r\n    container_name: linkding\r\n    restart: unless-stopped\r\n    labels:\r\n      - stack-stack.app=linkding\r\n    ports:\r\n      - \"9090:9090\"\r\n    volumes:\r\n      - linkding-data:/etc/linkding/data\r\nvolumes:\r\n  linkding-data:\r\n"
     },
     {
         "id":  "node-red",
@@ -457,7 +457,7 @@
                           "protocol":  "tcp"
                       }
                   ],
-        "compose":  "services:\r\n  netdata:\r\n    image: netdata/netdata:v2.4.3\r\n    container_name: netdata\r\n    restart: unless-stopped\r\n    labels:\r\n      - stack-stack.app=netdata\r\n    ports:\r\n      - \"19999:19999\"\r\n    volumes:\r\n      - netdata-lib:/etc/netdata\r\n      - netdata-cache:/var/cache/netdata\r\nvolumes:\r\n  netdata-lib:\r\n  netdata-cache:\r\n"
+        "compose":  "services:\r\n  netdata:\r\n    image: netdata/netdata:v2.4.0\r\n    container_name: netdata\r\n    restart: unless-stopped\r\n    labels:\r\n      - stack-stack.app=netdata\r\n    ports:\r\n      - \"19999:19999\"\r\n    volumes:\r\n      - netdata-lib:/etc/netdata\r\n      - netdata-cache:/var/cache/netdata\r\nvolumes:\r\n  netdata-lib:\r\n  netdata-cache:\r\n"
     },
     {
         "id":  "dozzle",
@@ -576,7 +576,7 @@
                           "protocol":  "tcp"
                       }
                   ],
-        "compose":  "services:\r\n  vaultwarden:\r\n    image: vaultwarden/server:1.33.3\r\n    container_name: vaultwarden\r\n    restart: unless-stopped\r\n    labels:\r\n      - stack-stack.app=vaultwarden\r\n    ports:\r\n      - \"8086:80\"\r\n    volumes:\r\n      - vaultwarden-data:/data\r\nvolumes:\r\n  vaultwarden-data:\r\n"
+        "compose":  "services:\r\n  vaultwarden:\r\n    image: vaultwarden/server:1.33.2\r\n    container_name: vaultwarden\r\n    restart: unless-stopped\r\n    labels:\r\n      - stack-stack.app=vaultwarden\r\n    ports:\r\n      - \"8086:80\"\r\n    volumes:\r\n      - vaultwarden-data:/data\r\nvolumes:\r\n  vaultwarden-data:\r\n"
     },
     {
         "id":  "watchtower",
@@ -623,6 +623,6 @@
                           "protocol":  "tcp"
                       }
                   ],
-        "compose":  "services:\r\n  it-tools:\r\n    image: corentinth/it-tools:2024.10.16\r\n    container_name: it-tools\r\n    restart: unless-stopped\r\n    labels:\r\n      - stack-stack.app=it-tools\r\n    ports:\r\n      - \"8087:80\"\r\n"
+        "compose":  "services:\r\n  it-tools:\r\n    image: corentinth/it-tools:2024.10.22-7ca5933\r\n    container_name: it-tools\r\n    restart: unless-stopped\r\n    labels:\r\n      - stack-stack.app=it-tools\r\n    ports:\r\n      - \"8087:80\"\r\n"
     }
 ]

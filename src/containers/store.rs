@@ -702,7 +702,7 @@ mod tests {
         let err = check_stack_document("services: [ broken\n", 30)
             .await
             .expect_err("broken YAML must be rejected");
-        assert!(matches!(err, ApiError::BadRequest(_)), "{err:?}");
+        assert_eq!(err.code(), "BadRequest", "{err:?}");
         assert!(
             check_stack_document("services:\n  web:\n    image: nginx:alpine\n", 30)
                 .await

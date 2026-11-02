@@ -144,8 +144,10 @@ mod tests {
         let empty_vm = preview_vm(&cfg, &VmConfig::default(), false);
         assert_eq!(empty_vm.qemu, "# enter a hostname to preview");
 
-        let mut ct_cfg = CtConfig::default();
-        ct_cfg.hostname = "qa-ct".to_string();
+        let ct_cfg = CtConfig {
+            hostname: "qa-ct".to_string(),
+            ..CtConfig::default()
+        };
         let ct = preview_ct(&cfg, &ct_cfg);
         assert!(ct.lxc.contains("<id>/rootfs") || ct.lxc.contains("<id>\\rootfs"));
         assert!(ct.lxc.contains("lxc.uts.name = qa-ct"));
