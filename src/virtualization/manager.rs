@@ -878,7 +878,9 @@ fn qemu_img_virtual_size(runner: &dyn Runner, path: &Path) -> Option<u64> {
         return None;
     }
     let value: serde_json::Value = serde_json::from_str(&output.stdout).ok()?;
-    value.get("virtual-size").and_then(serde_json::Value::as_u64)
+    value
+        .get("virtual-size")
+        .and_then(serde_json::Value::as_u64)
 }
 
 /// Write the three NoCloud files and build the seed ISO.

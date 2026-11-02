@@ -465,7 +465,10 @@ pub fn parse_backup_summary(json_lines: &str) -> BackupSummary {
         if let Some(id) = value.get("snapshot_id").and_then(|v| v.as_str()) {
             summary.snapshot_id = id.to_string();
         }
-        if let Some(bytes) = value.get("total_bytes_processed").and_then(serde_json::Value::as_u64) {
+        if let Some(bytes) = value
+            .get("total_bytes_processed")
+            .and_then(serde_json::Value::as_u64)
+        {
             summary.bytes_processed = bytes;
         }
         if let Some(files) = value.get("files_new").and_then(serde_json::Value::as_u64) {
@@ -524,7 +527,10 @@ pub fn parse_ls(json_lines: &str, prefix: &str) -> Vec<LsEntry> {
             path: path.to_string(),
             name,
             kind: kind.to_string(),
-            size: value.get("size").and_then(serde_json::Value::as_u64).unwrap_or(0),
+            size: value
+                .get("size")
+                .and_then(serde_json::Value::as_u64)
+                .unwrap_or(0),
             mtime: value
                 .get("mtime")
                 .and_then(|v| v.as_str())

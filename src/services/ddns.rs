@@ -270,7 +270,10 @@ pub fn parse_records(json: &str) -> Result<Vec<DnsRecord>, ApiError> {
                     .get("proxied")
                     .and_then(serde_json::Value::as_bool)
                     .unwrap_or(false),
-                ttl: entry.get("ttl").and_then(serde_json::Value::as_u64).unwrap_or(300) as u32,
+                ttl: entry
+                    .get("ttl")
+                    .and_then(serde_json::Value::as_u64)
+                    .unwrap_or(300) as u32,
                 kind: entry
                     .get("type")
                     .and_then(|v| v.as_str())

@@ -326,7 +326,9 @@ fn validate_compose_blocking(yaml: &str, timeout_s: u64) -> Result<(), ApiError>
     ]);
     let timeout = Duration::from_secs(timeout_s.clamp(5, 60));
 
-    let Ok(output) = crate::proc::run_with_input(&cli.program, &args, None, timeout, yaml.as_bytes()) else {
+    let Ok(output) =
+        crate::proc::run_with_input(&cli.program, &args, None, timeout, yaml.as_bytes())
+    else {
         // Compose is unavailable; let the deploy report that.
         return Ok(());
     };
