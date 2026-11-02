@@ -66,8 +66,8 @@ pub fn plan(cfg: &Config, vm: &VmConfig, kvm: bool, ovmf: Option<&OvmfPaths>) ->
     let program = program_for(&vm.arch);
 
     // --- identity + no implicit devices ------------------------------------
-    push(&mut args, &["-name", vm.display_name()]);
-    let uuid = derive_uuid(&vm.id);
+    push(&mut args, &["-name", &vm.hostname()]);
+    let uuid = derive_uuid(&vm.hostname());
     push(&mut args, &["-uuid", &uuid]);
     push(&mut args, &["-nodefaults", "-no-user-config"]);
 

@@ -56,6 +56,7 @@ pub struct ActionReport {
     pub warnings: Vec<String>,
     pub disk: Option<String>,
     pub seed: Option<String>,
+    pub id: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -106,7 +107,10 @@ pub struct ImportRequest {
 pub struct ImageActionResult {
     pub ok: bool,
     pub message: String,
-    pub image: ImportResult,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub image: Option<ImportResult>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub job_id: Option<String>,
 }
 
 /// Images currently in the cache.
@@ -123,30 +127,47 @@ pub async fn image_fetch(
     State(state): State<AppState>,
     Json(request): Json<FetchRequest>,
 ) -> Result<Json<ImageActionResult>, ApiError> {
+    // Reject malformed input synchronously; only the transfer itself is detached.
+    sources::validate_url(&request.url)?;
+    let resolved = sources::resolve_name(&request.url, request.name.as_deref())?;
     let dir = std::path::PathBuf::from(&state.config.images_dir);
     let runner = state.virt.runner.clone();
     let url = request.url.clone();
     let name = request.name.clone();
-    let label = name.clone().unwrap_or_else(|| url.clone());
-    let image = state
+    let audit = state.clone();
+    let job_id = state
         .jobs
-        .track_with(format!("Downloading {label}"), move |ctx| async move {
+        .spawn_job(format!("Downloading {resolved}"), move |ctx| {
             ctx.step(5, format!("fetching {url}"));
-            let image = tokio::task::spawn_blocking(move || {
-                sources::fetch(&dir, runner.as_ref(), &url, name.as_deref())
-            })
-            .await
-            .map_err(|err| ApiError::internal(format!("image task failed: {err}")))??;
+            let done = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+            let done_watcher = std::sync::Arc::clone(&done);
+            let ctx_watcher = ctx.clone();
+            let partial = dir.join(format!(".{resolved}.part"));
+            let watcher = std::thread::spawn(move || {
+                while !done_watcher.load(std::sync::atomic::Ordering::Relaxed) {
+                    std::thread::sleep(std::time::Duration::from_millis(500));
+                    if let Ok(meta) = std::fs::metadata(&partial) {
+                        let bytes = meta.len();
+                        if bytes > 0 {
+                            let mb = bytes as f64 / (1024.0 * 1024.0);
+                            ctx_watcher.log(format!("{mb:.1} MB downloaded"));
+                        }
+                    }
+                }
+            });
+            let fetch_res = sources::fetch(&dir, runner.as_ref(), &url, name.as_deref());
+            done.store(true, std::sync::atomic::Ordering::Relaxed);
+            let _ = watcher.join();
+            let image = fetch_res.map_err(|err| err.to_string())?;
             ctx.log(format!("{} ready", image.name));
-            Ok::<_, ApiError>(image)
-        })
-        .await?;
-
-    state.audit("virt.image_fetch", &request.url, &image.name);
+            audit.audit("virt.image_fetch", &url, &image.name);
+            Ok(format!("{} downloaded", image.name))
+        });
     Ok(Json(ImageActionResult {
         ok: true,
-        message: format!("{} downloaded", image.name),
-        image,
+        message: "image download queued".to_string(),
+        image: None,
+        job_id: Some(job_id),
     }))
 }
 
@@ -155,18 +176,25 @@ pub async fn image_import(
     State(state): State<AppState>,
     Json(request): Json<ImportRequest>,
 ) -> Result<Json<ImageActionResult>, ApiError> {
+    // Reject a bad host path synchronously; the copy and image check are detached.
+    let resolved = sources::import_name(&request.path)?;
     let dir = std::path::PathBuf::from(&state.config.images_dir);
     let runner = state.virt.runner.clone();
     let path = request.path.clone();
-    let image = tokio::task::spawn_blocking(move || sources::import(&dir, runner.as_ref(), &path))
-        .await
-        .map_err(|err| ApiError::internal(format!("image task failed: {err}")))??;
-
-    state.audit("virt.image_import", &request.path, &image.name);
+    let audit = state.clone();
+    let job_id = state
+        .jobs
+        .spawn_job(format!("Importing {resolved}"), move |_ctx| {
+            let image =
+                sources::import(&dir, runner.as_ref(), &path).map_err(|err| err.to_string())?;
+            audit.audit("virt.image_import", &path, &image.name);
+            Ok(format!("{} imported", image.name))
+        });
     Ok(Json(ImageActionResult {
         ok: true,
-        message: format!("{} imported", image.name),
-        image,
+        message: "image import queued".to_string(),
+        image: None,
+        job_id: Some(job_id),
     }))
 }
 
@@ -222,13 +250,15 @@ pub async fn preview_ct(
 
 pub async fn create_vm(
     State(state): State<AppState>,
-    Json(mut vm): Json<VmConfig>,
+    Json(vm): Json<VmConfig>,
 ) -> Result<Response, ApiError> {
     let (doc, _) = load(&state);
+    let mut vm = prepare_vm(&doc, vm);
     if doc.vm(&vm.id).is_some() || doc.ct(&vm.id).is_some() {
+        let next = next_guest_id(&doc);
         return Err(ApiError::bad_request(format!(
-            "a guest called {:?} already exists",
-            vm.id
+            "id {:?} is already in use; use {:?}",
+            vm.id, next
         )));
     }
 
@@ -262,7 +292,9 @@ pub async fn create_vm(
     // Only persist once the guest really exists on disk.
     persist(&state, &candidate).await?;
     tracing::info!(guest = %vm.id, "vm created");
-    Ok(Json(report_to_body(report)).into_response())
+    let mut body = report_to_body(report);
+    body.id = Some(vm.id.clone());
+    Ok(Json(body).into_response())
 }
 
 pub async fn create_ct(
@@ -270,10 +302,12 @@ pub async fn create_ct(
     Json(ct): Json<CtConfig>,
 ) -> Result<Response, ApiError> {
     let (doc, _) = load(&state);
+    let ct = prepare_ct(&doc, ct);
     if doc.vm(&ct.id).is_some() || doc.ct(&ct.id).is_some() {
+        let next = next_guest_id(&doc);
         return Err(ApiError::bad_request(format!(
-            "a guest called {:?} already exists",
-            ct.id
+            "id {:?} is already in use; use {:?}",
+            ct.id, next
         )));
     }
 
@@ -298,7 +332,9 @@ pub async fn create_ct(
 
     persist(&state, &candidate).await?;
     tracing::info!(guest = %ct.id, "container created");
-    Ok(Json(report_to_body(report)).into_response())
+    let mut body = report_to_body(report);
+    body.id = Some(ct.id.clone());
+    Ok(Json(body).into_response())
 }
 
 // ---------------------------------------------------------------------------
@@ -854,6 +890,7 @@ fn report_to_body(report: Report) -> ActionReport {
         warnings: report.warnings,
         disk: report.disk,
         seed: report.seed,
+        id: None,
     }
 }
 
@@ -865,6 +902,42 @@ fn required_name(name: &Option<String>) -> Result<String, ApiError> {
 
 fn not_found(id: &str) -> ApiError {
     ApiError::not_found(format!("no guest called {id}"))
+}
+
+fn next_guest_id(doc: &VirtualizationConfig) -> String {
+    let mut next = doc
+        .vms
+        .iter()
+        .map(|guest| guest.id.as_str())
+        .chain(doc.cts.iter().map(|guest| guest.id.as_str()))
+        .filter_map(|id| id.parse::<u64>().ok())
+        .max()
+        .unwrap_or(0)
+        .saturating_add(1);
+    while doc.vm(&next.to_string()).is_some() || doc.ct(&next.to_string()).is_some() {
+        next = next.saturating_add(1);
+    }
+    next.to_string()
+}
+
+fn prepare_vm(doc: &VirtualizationConfig, mut vm: VmConfig) -> VmConfig {
+    if vm.id.trim().is_empty() {
+        vm.id = next_guest_id(doc);
+    }
+    if vm.name.trim().is_empty() && !vm.cloud_init.hostname.trim().is_empty() {
+        vm.name = vm.cloud_init.hostname.trim().to_string();
+    }
+    vm
+}
+
+fn prepare_ct(doc: &VirtualizationConfig, mut ct: CtConfig) -> CtConfig {
+    if ct.id.trim().is_empty() {
+        ct.id = next_guest_id(doc);
+    }
+    if ct.name.trim().is_empty() && !ct.hostname.trim().is_empty() {
+        ct.name = ct.hostname.trim().to_string();
+    }
+    ct
 }
 
 fn invalid(problems: Vec<Problem>) -> Response {
@@ -922,5 +995,38 @@ mod tests {
         assert!(required_name(&None).is_err());
         assert!(required_name(&Some("  ".to_string())).is_err());
         assert_eq!(required_name(&Some("pre".to_string())).expect("ok"), "pre");
+    }
+
+    #[test]
+    fn missing_guest_ids_get_the_first_free_kind_specific_id() {
+        let mut doc = VirtualizationConfig::default();
+        doc.vms.push(VmConfig {
+            id: "vm-1".to_string(),
+            ..VmConfig::default()
+        });
+        doc.cts.push(CtConfig {
+            id: "ct-1".to_string(),
+            ..CtConfig::default()
+        });
+        assert_eq!(next_guest_id(&doc), "1");
+        doc.vms[0].id = "1".to_string();
+        doc.cts[0].id = "2".to_string();
+        assert_eq!(next_guest_id(&doc), "3");
+    }
+
+    #[test]
+    fn preview_preparation_assigns_the_id_create_would_use() {
+        let doc = VirtualizationConfig::default();
+        assert_eq!(prepare_vm(&doc, VmConfig::default()).id, "1");
+        assert_eq!(prepare_ct(&doc, CtConfig::default()).id, "1");
+        // A supplied id is never rewritten.
+        let vm = prepare_vm(
+            &doc,
+            VmConfig {
+                id: "web".to_string(),
+                ..VmConfig::default()
+            },
+        );
+        assert_eq!(vm.id, "web");
     }
 }

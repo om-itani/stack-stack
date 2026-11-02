@@ -308,6 +308,7 @@ impl Default for CloudInitConfig {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct VmConfig {
+    #[serde(default)]
     pub id: String,
     #[serde(default)]
     pub name: String,
@@ -497,6 +498,7 @@ pub struct BindMount {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CtConfig {
+    #[serde(default)]
     pub id: String,
     #[serde(default)]
     pub name: String,
@@ -1362,6 +1364,14 @@ mod tests {
             assert!(sanitize_id(bad).is_err(), "{bad:?} must be rejected");
         }
         assert!(sanitize_id(&"x".repeat(49)).is_err());
+    }
+
+    #[test]
+    fn omitted_ids_deserialize_for_server_side_allocation() {
+        let vm: VmConfig = serde_json::from_str("{}").expect("vm without id");
+        assert!(vm.id.is_empty());
+        let ct: CtConfig = serde_json::from_str("{}").expect("ct without id");
+        assert!(ct.id.is_empty());
     }
 
     #[test]

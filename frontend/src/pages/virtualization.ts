@@ -13,6 +13,7 @@
  */
 
 import { virtApi, hostApi, imagesApi, blankVm, blankCt } from "../api";
+import { showToast } from "../toast";
 import type {
   ActionReport,
   ApiFailure,
@@ -191,7 +192,7 @@ export function createVirtualizationPage(): PageHandle {
       }),
       el("div", {
         class: "text-[10px] text-neutral-500",
-        text: "Add any image by URL or import one from this host (validated with qemu-img). Catalog entries whose checksum is not pinned carry an [unverified] badge.",
+        text: "Add any image by URL or import one from this server (validated with qemu-img). Images without a pinned checksum show a warning icon.",
       }),
     );
 
@@ -202,7 +203,7 @@ export function createVirtualizationPage(): PageHandle {
     );
     urlBtn.addEventListener("click", openAddUrl);
     const pathBtn = button(
-      "Import from Host Path",
+      "Import from Server Path",
       "border-white/20 bg-white/5 font-medium text-neutral-100",
     );
     pathBtn.addEventListener("click", openImportPath);
@@ -279,7 +280,9 @@ export function createVirtualizationPage(): PageHandle {
       feedback.textContent = "downloading… this can take a while for an ISO";
       try {
         const result = await imagesApi.fetch(url.trim(), name.trim() || undefined);
-        setStatus(result.message, "ok");
+        setStatus(result.message ?? (result.job_id ? "download started" : "image downloaded"), "ok");
+        showToast({ tone: "ok", title: "Image download started", message: result.job_id ? "Track progress in Activity." : result.message });
+        if (result.job_id) window.dispatchEvent(new Event("stack-stack:activity-open"));
         modal.close();
       } catch (err) {
         feedback.className = "tabular text-[11px] text-rose-400";
@@ -290,14 +293,14 @@ export function createVirtualizationPage(): PageHandle {
       }
     });
     modal.body.append(
-      field("url", textInput("", (value) => { url = value; }, { placeholder: "https://example.com/kali.iso" })),
-      field("file name (optional)", textInput("", (value) => { name = value; }, { placeholder: "derived from the url" })),
+      field("url", textInput("", (value) => { url = value; }, { placeholder: "https://example.com/kali.iso", autocomplete: "off" })),
+      field("file name (optional)", textInput("", (value) => { name = value; }, { placeholder: "derived from the url (e.g. kali.iso)", autocomplete: "off" })),
       el("div", { class: "flex flex-wrap items-center gap-2" }, [submit, cancel, feedback]),
     );
   }
 
   function openImportPath(): void {
-    const modal = openModal("import image from this host", "max-w-lg");
+    const modal = openModal("import from server path", "max-w-lg");
     let path = "";
     const feedback = el("div", { class: "tabular text-[11px] text-neutral-500" });
     const submit = button("import", "text-emerald-400 hover:border-emerald-500");
@@ -313,7 +316,9 @@ export function createVirtualizationPage(): PageHandle {
       feedback.textContent = "copying…";
       try {
         const result = await imagesApi.import(path.trim());
-        setStatus(result.message, "ok");
+        setStatus(result.message ?? (result.job_id ? "import started" : "image imported"), "ok");
+        showToast({ tone: "ok", title: "Image import started", message: result.job_id ? "Track progress in Activity." : result.message });
+        if (result.job_id) window.dispatchEvent(new Event("stack-stack:activity-open"));
         modal.close();
       } catch (err) {
         feedback.className = "tabular text-[11px] text-rose-400";
@@ -326,9 +331,9 @@ export function createVirtualizationPage(): PageHandle {
     modal.body.append(
       el("div", {
         class: "text-[11px] text-neutral-400",
-        text: "The file must already be on this machine. It is validated with qemu-img and copied into the images directory.",
+        text: "This imports a file already on the server. To upload from your computer, use Files → Upload first, then import that path.",
       }),
-      field("host path", textInput("", (value) => { path = value; }, { placeholder: "/home/you/kali.iso" })),
+      field("server path", textInput("", (value) => { path = value; }, { placeholder: "/home/you/kali.iso", autocomplete: "off" })),
       el("div", { class: "flex flex-wrap items-center gap-2" }, [submit, cancel, feedback]),
     );
   }
@@ -349,6 +354,11 @@ export function createVirtualizationPage(): PageHandle {
   function reportOutcome(report: ActionReport, note: string): void {
     const warnings = report.warnings.length > 0 ? ` (${report.warnings.join("; ")})` : "";
     setStatus(`${note}: ${report.output}${warnings}`, report.warnings.length > 0 ? "error" : "ok");
+    showToast({
+      tone: report.warnings.length > 0 ? "error" : "ok",
+      title: `${note.charAt(0).toUpperCase() + note.slice(1)} ${report.warnings.length > 0 ? "failed" : "ready"}`,
+      message: report.output,
+    });
   }
 
   async function run(action: () => Promise<ActionReport>, note: string, reloadAfter = true): Promise<void> {
@@ -357,6 +367,7 @@ export function createVirtualizationPage(): PageHandle {
     }
     busy = true;
     setStatus(`${note}…`, "muted");
+    showToast({ tone: "info", title: `${note.charAt(0).toUpperCase() + note.slice(1)}…` });
     try {
       const report = await action();
       reportOutcome(report, note);
@@ -416,16 +427,15 @@ export function createVirtualizationPage(): PageHandle {
   }
 
   function renderTabs(): void {
+    const focused = document.activeElement instanceof HTMLInputElement
+      ? { placeholder: document.activeElement.placeholder, start: document.activeElement.selectionStart, end: document.activeElement.selectionEnd }
+      : null;
     tabBar.replaceChildren();
     for (const tab of tabs) {
       const active = tab.id === activeTab;
-      // The Images tab gets a filled idle style so custom image sources and the
-      // download cache are obvious rather than buried in the strip.
       const style = active
         ? "border-emerald-500 bg-emerald-500/15 font-semibold text-emerald-300"
-        : tab.id === "images"
-          ? "border-white/15 bg-white/5 text-neutral-100"
-          : "text-neutral-400";
+        : "text-neutral-400";
       tabBar.append(
         button(tab.label, style, () => {
           activeTab = tab.id;
@@ -435,6 +445,15 @@ export function createVirtualizationPage(): PageHandle {
     }
     const tab = tabs.find((entry) => entry.id === activeTab) ?? tabs[0];
     tabBody.replaceChildren(tab.build());
+    if (focused && focused.placeholder) {
+      const replacement = [...tabBody.querySelectorAll("input")].find((input) => input.placeholder === focused.placeholder);
+      if (replacement instanceof HTMLInputElement) {
+        replacement.focus();
+        if (focused.start !== null && focused.end !== null) {
+          replacement.setSelectionRange(focused.start, focused.end);
+        }
+      }
+    }
   }
 
   const rerender = () => renderTabs();
@@ -574,9 +593,9 @@ export function createVirtualizationPage(): PageHandle {
     const bridges = bridgeOptions();
 
     grid.append(
-      field("id", textInput(vm.id, (value) => { vm.id = value; })),
-      field("hostname", textInput(vm.cloud_init.hostname, (value) => { vm.cloud_init.hostname = value; })),
-      field("image / iso path", textInput(vm.image ?? "", (value) => { vm.image = value.trim() === "" ? null : value; })),
+       field("id", textInput(vm.id, (value) => { vm.id = value; }, { autocomplete: "off", placeholder: "(auto)" })),
+       field("hostname", textInput(vm.cloud_init.hostname, (value) => { vm.cloud_init.hostname = value; }, { autocomplete: "off" })),
+       field("image / iso path", textInput(vm.image ?? "", (value) => { vm.image = value.trim() === "" ? null : value; }, { autocomplete: "off" })),
       field("bridge", select(vm.bridge, bridges, (value) => { vm.bridge = value; })),
       field("vCPUs", numberInput(vm.vcpus, (value) => { vm.vcpus = value; }, { min: 1, max: 256 })),
       field("memory MiB", numberInput(vm.memory_mb, (value) => { vm.memory_mb = value; }, { min: 128 })),
@@ -630,10 +649,10 @@ export function createVirtualizationPage(): PageHandle {
     const ciGrid = el("div", { class: "grid grid-cols-2 gap-2 p-3 xl:grid-cols-4" });
     const vmAddressField = field(
       "address (cidr)",
-      nullableText(ci.address, (value) => { ci.address = value; }, { placeholder: addressHint() }),
+      nullableText(ci.address, (value) => { ci.address = value; }, { placeholder: addressHint(), autocomplete: "off" }),
     );
-    const vmGatewayField = field("gateway", textInput(ci.gateway, (value) => { ci.gateway = value; }));
-    const vmDnsField = field("DNS servers", listInput(ci.dns, (values) => { ci.dns = values; }));
+    const vmGatewayField = field("gateway", textInput(ci.gateway, (value) => { ci.gateway = value; }, { autocomplete: "off" }));
+    const vmDnsField = field("DNS servers", listInput(ci.dns, (values) => { ci.dns = values; }, { autocomplete: "off" }));
     const vmStaticFields = [vmAddressField, vmGatewayField, vmDnsField];
     const vmIpField = field(
       "IP mode",
@@ -647,8 +666,8 @@ export function createVirtualizationPage(): PageHandle {
       el("div", { class: "col-span-full" }, [
         checkbox(ci.enabled, (value) => { ci.enabled = value; }, "enable cloud-init seed"),
       ]),
-      field("username", textInput(ci.username, (value) => { ci.username = value; })),
-      field("password", textInput(ci.password, (value) => { ci.password = value; }, { type: "password" })),
+       field("username", textInput(ci.username, (value) => { ci.username = value; }, { autocomplete: "off" })),
+       field("password", textInput(ci.password, (value) => { ci.password = value; }, { type: "password", autocomplete: "new-password" })),
       vmIpField,
       // Address, gateway and DNS only make sense for a static guest; they are
       // hidden until the operator picks `static`, and the placeholder is derived
@@ -663,7 +682,11 @@ export function createVirtualizationPage(): PageHandle {
     const actions = el("div", { class: "flex flex-wrap gap-2 border-t border-white/5 px-3 py-2" });
     actions.append(
       button("create vm", "text-emerald-400 hover:border-emerald-500", () => {
-        void run(() => virtApi.createVm(cloneVm(vm)), `creating ${vm.id || "vm"}`);
+        void run(async () => {
+          const report = await virtApi.createVm(cloneVm(vm));
+          if (report.id) vmDraft.id = report.id;
+          return report;
+        }, `creating ${vm.cloud_init.hostname || "vm"}`);
       }),
       button("preview", "", () => void previewVm()),
       button("reset", "", () => {
@@ -681,24 +704,29 @@ export function createVirtualizationPage(): PageHandle {
   function vmImagePicker(): HTMLElement {
     const section = el("section", { class: "panel" });
     section.append(sectionTitle("image catalog"));
+    const grid = el("div", { class: "grid max-h-[60vh] grid-cols-1 gap-2 overflow-auto px-3 pb-3 lg:grid-cols-2" });
+    const updateGrid = () => {
+      grid.replaceChildren();
+      const images = vmImages();
+      if (images.length === 0) {
+        grid.append(emptyNote("no matching images"));
+      }
+      for (const image of images) {
+        grid.append(imageCard(image, vmDraft.image === image.id, () => {
+          applyVmImage(image);
+        }));
+      }
+    };
+    updateGrid();
+
     const bar = el("div", { class: "flex flex-wrap items-center gap-2 px-3 py-2" });
     bar.append(
       textInput(vmFilter, (value) => {
         vmFilter = value;
-        rerender();
-      }, { placeholder: "search images…", class: "w-48" }),
+        updateGrid();
+      }, { placeholder: "search images…", class: "w-48", autocomplete: "off" }),
     );
-    section.append(bar);
-
-    const images = vmImages();
-    const grid = el("div", { class: "grid max-h-[60vh] grid-cols-1 gap-2 overflow-auto px-3 pb-3 lg:grid-cols-2" });
-    if (images.length === 0) {
-      grid.append(emptyNote("no matching images"));
-    }
-    for (const image of images) {
-      grid.append(imageCard(image, vmDraft.image === image.id, () => applyVmImage(image)));
-    }
-    section.append(grid);
+    section.append(bar, grid);
     return section;
   }
 
@@ -737,10 +765,10 @@ export function createVirtualizationPage(): PageHandle {
 
     const ctAddressField = field(
       "address (cidr)",
-      nullableText(ct.address, (value) => { ct.address = value; }, { placeholder: addressHint() }),
+      nullableText(ct.address, (value) => { ct.address = value; }, { placeholder: addressHint(), autocomplete: "off" }),
     );
-    const ctGatewayField = field("gateway", textInput(ct.gateway, (value) => { ct.gateway = value; }));
-    const ctDnsField = field("DNS servers", listInput(ct.dns, (values) => { ct.dns = values; }));
+    const ctGatewayField = field("gateway", textInput(ct.gateway, (value) => { ct.gateway = value; }, { autocomplete: "off" }));
+    const ctDnsField = field("DNS servers", listInput(ct.dns, (values) => { ct.dns = values; }, { autocomplete: "off" }));
     const ctStaticFields = [ctAddressField, ctGatewayField, ctDnsField];
     const ctIpField = field(
       "IP mode",
@@ -752,9 +780,9 @@ export function createVirtualizationPage(): PageHandle {
     staticOnly(ctStaticFields, ct.ip_mode);
 
     grid.append(
-      field("id", textInput(ct.id, (value) => { ct.id = value; })),
-      field("hostname", textInput(ct.hostname, (value) => { ct.hostname = value; })),
-      field("template", textInput(ct.template, (value) => { ct.template = value; })),
+       field("id", textInput(ct.id, (value) => { ct.id = value; }, { autocomplete: "off", placeholder: "(auto)" })),
+       field("hostname", textInput(ct.hostname, (value) => { ct.hostname = value; }, { autocomplete: "off" })),
+       field("template", textInput(ct.template, (value) => { ct.template = value; }, { autocomplete: "off" })),
       field("bridge", select(ct.bridge, bridges, (value) => { ct.bridge = value; })),
       field("cores", numberInput(ct.cores, (value) => { ct.cores = value; }, { min: 0, max: 256 })),
       field("memory MiB", numberInput(ct.memory_mb, (value) => { ct.memory_mb = value; }, { min: 32 })),
@@ -765,7 +793,7 @@ export function createVirtualizationPage(): PageHandle {
       ctAddressField,
       ctGatewayField,
       ctDnsField,
-      field("root password", textInput(ct.password, (value) => { ct.password = value; }, { type: "password" })),
+       field("root password", textInput(ct.password, (value) => { ct.password = value; }, { type: "password", autocomplete: "new-password" })),
       field("SSH keys", listInput(ct.ssh_keys, (values) => { ct.ssh_keys = values; }, { placeholder: "ssh-ed25519 AAAA…" })),
     );
 
@@ -794,7 +822,11 @@ export function createVirtualizationPage(): PageHandle {
     const actions = el("div", { class: "flex flex-wrap gap-2 border-t border-white/5 px-3 py-2" });
     actions.append(
       button("create container", "text-emerald-400 hover:border-emerald-500", () => {
-        void run(() => virtApi.createCt(cloneCt(ct)), `creating ${ct.id || "container"}`);
+        void run(async () => {
+          const report = await virtApi.createCt(cloneCt(ct));
+          if (report.id) ctDraft.id = report.id;
+          return report;
+        }, `creating ${ct.hostname || "container"}`);
       }),
       button("preview", "", () => void previewCt()),
       button("reset", "", () => {
@@ -827,24 +859,29 @@ export function createVirtualizationPage(): PageHandle {
   function ctTemplatePicker(): HTMLElement {
     const section = el("section", { class: "panel" });
     section.append(sectionTitle("container templates"));
+    const grid = el("div", { class: "grid max-h-[60vh] grid-cols-1 gap-2 overflow-auto px-3 pb-3 lg:grid-cols-2" });
+    const updateGrid = () => {
+      grid.replaceChildren();
+      const templates = lxcTemplates();
+      if (templates.length === 0) {
+        grid.append(emptyNote("no matching templates"));
+      }
+      for (const image of templates) {
+        grid.append(imageCard(image, ctDraft.template === image.id, () => {
+          applyCtTemplate(image);
+        }));
+      }
+    };
+    updateGrid();
+
     const bar = el("div", { class: "flex flex-wrap items-center gap-2 px-3 py-2" });
     bar.append(
       textInput(ctFilter, (value) => {
         ctFilter = value;
-        rerender();
-      }, { placeholder: "search templates…", class: "w-48" }),
+        updateGrid();
+      }, { placeholder: "search templates…", class: "w-48", autocomplete: "off" }),
     );
-    section.append(bar);
-
-    const templates = lxcTemplates();
-    const grid = el("div", { class: "grid max-h-[60vh] grid-cols-1 gap-2 overflow-auto px-3 pb-3 lg:grid-cols-2" });
-    if (templates.length === 0) {
-      grid.append(emptyNote("no matching templates"));
-    }
-    for (const image of templates) {
-      grid.append(imageCard(image, ctDraft.template === image.id, () => applyCtTemplate(image)));
-    }
-    section.append(grid);
+    section.append(bar, grid);
     return section;
   }
 
@@ -862,7 +899,7 @@ export function createVirtualizationPage(): PageHandle {
   function imageCard(image: GuestImage, selected: boolean, onPick: () => void): HTMLElement {
     const card = el("button", {
       type: "button",
-      class: `flex flex-col items-start gap-1 border px-2 py-1.5 text-left transition-colors ${
+      class: `group flex flex-col items-start gap-1 border px-2 py-1.5 text-left transition-colors ${
         selected
           ? "border-emerald-600 bg-emerald-950/30"
           : "border-white/5 hover:border-neutral-500"
@@ -870,7 +907,7 @@ export function createVirtualizationPage(): PageHandle {
     });
     const top = el("div", { class: "flex w-full items-baseline gap-2" });
     top.append(
-      el("span", { text: image.icon || "▢" }),
+      el("span", { text: image.icon || "💿", title: "image icon" }),
       el("span", { class: "font-semibold text-neutral-200", text: image.name }),
       el("span", { class: "tabular ml-auto text-[10px] text-neutral-600", text: image.category }),
     );
@@ -880,8 +917,9 @@ export function createVirtualizationPage(): PageHandle {
       top.append(
         el("span", {
           class:
-            "rounded-full border border-amber-500/40 bg-amber-500/10 px-1.5 text-[9px] font-medium uppercase tracking-wide text-amber-400",
-          text: "unverified",
+            "rounded-full border border-amber-500/40 bg-amber-500/10 px-1.5 text-[9px] font-medium uppercase tracking-wide text-amber-400 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100",
+          text: "⚠",
+          title: "Unverified image: no pinned checksum",
         }),
       );
     }
@@ -921,7 +959,7 @@ export function createVirtualizationPage(): PageHandle {
       section.append(
         el("div", {
           class: "px-3 py-2 text-neutral-600",
-          text: "press preview on a VM or container form to render its QEMU command line, LXC config and cloud-init files",
+          text: "# enter a hostname to preview before generating configuration",
         }),
       );
       return section;
@@ -950,7 +988,7 @@ export function createVirtualizationPage(): PageHandle {
       }),
     );
 
-    if (vmPreview) {
+    if (vmPreview && vmPreview.uuid) {
       section.append(
         el("div", {
           class: "tabular px-3 py-2 text-[10px] text-neutral-600",
@@ -966,6 +1004,23 @@ export function createVirtualizationPage(): PageHandle {
       return;
     }
     busy = true;
+    if (!vmDraft.cloud_init.hostname.trim()) {
+      setStatus("enter a hostname to preview", "error");
+      vmPreview = {
+        qemu: "# enter a hostname to preview",
+        uuid: "",
+        vnc: null,
+        user_data: null,
+        meta_data: null,
+        network_config: null,
+      };
+      ctPreview = null;
+      previewFile = 0;
+      busy = false;
+      activeTab = "preview";
+      renderTabs();
+      return;
+    }
     setStatus("rendering…", "muted");
     try {
       vmPreview = await virtApi.previewVm(cloneVm(vmDraft));
@@ -986,6 +1041,19 @@ export function createVirtualizationPage(): PageHandle {
       return;
     }
     busy = true;
+    if (!ctDraft.hostname.trim()) {
+      setStatus("enter a hostname to preview", "error");
+      ctPreview = {
+        lxc: "# enter a hostname to preview",
+        resolv_conf: null,
+      };
+      vmPreview = null;
+      previewFile = 0;
+      busy = false;
+      activeTab = "preview";
+      renderTabs();
+      return;
+    }
     setStatus("rendering…", "muted");
     try {
       ctPreview = await virtApi.previewCt(cloneCt(ctDraft));
@@ -1113,7 +1181,7 @@ function sectionTitle(text: string): HTMLElement {
 function nullableText(
   value: string | null,
   onChange: (value: string | null) => void,
-  options: { placeholder?: string } = {},
+  options: { placeholder?: string; autocomplete?: string } = {},
 ): HTMLInputElement {
   return textInput(
     value ?? "",
@@ -1121,7 +1189,7 @@ function nullableText(
       const trimmed = raw.trim();
       onChange(trimmed === "" ? null : raw);
     },
-    options,
+    { autocomplete: "off", ...options },
   );
 }
 

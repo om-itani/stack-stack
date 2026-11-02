@@ -64,11 +64,31 @@ pub struct CtPreview {
 
 /// Render every artefact for a VM without touching the system.
 pub fn preview_vm(cfg: &Config, vm: &VmConfig, kvm: bool) -> VmPreview {
+    let hostname = vm.hostname();
+    if hostname.trim().is_empty() {
+        return VmPreview {
+            qemu: "# enter a hostname to preview".to_string(),
+            uuid: String::new(),
+            vnc: None,
+            user_data: None,
+            meta_data: None,
+            network_config: None,
+        };
+    }
+    let missing_id = vm.id.trim().is_empty();
+    let mut vm = vm.clone();
+    if missing_id {
+        vm.id = "<id>".to_string();
+    }
     let ovmf = host::detect_ovmf();
-    let plan = qemu::plan(cfg, vm, kvm, ovmf.as_ref());
-    let seed = cloudinit::render(vm);
+    let plan = qemu::plan(cfg, &vm, kvm, ovmf.as_ref());
+    let seed = cloudinit::render(&vm);
     VmPreview {
-        qemu: qemu::script(&plan),
+        qemu: if missing_id {
+            format!("# id will be assigned on create\n{}", qemu::script(&plan))
+        } else {
+            qemu::script(&plan)
+        },
         uuid: plan.uuid,
         vnc: plan.vnc,
         user_data: vm.uses_cloud_init().then_some(seed.user_data),
@@ -82,9 +102,57 @@ pub fn preview_vm(cfg: &Config, vm: &VmConfig, kvm: bool) -> VmPreview {
 
 /// Render every artefact for a container without touching the system.
 pub fn preview_ct(cfg: &Config, ct: &CtConfig) -> CtPreview {
+    let hostname = ct.hostname();
+    if hostname.trim().is_empty() {
+        return CtPreview {
+            lxc: "# enter a hostname to preview".to_string(),
+            resolv_conf: None,
+        };
+    }
+    let missing_id = ct.id.trim().is_empty();
+    let mut ct = ct.clone();
+    if missing_id {
+        ct.id = "<id>".to_string();
+    }
     CtPreview {
-        lxc: lxc::render_config(cfg, ct),
-        resolv_conf: lxc::resolv_conf(ct),
+        lxc: if missing_id {
+            format!(
+                "# id will be assigned on create\n{}",
+                lxc::render_config(cfg, &ct)
+            )
+        } else {
+            lxc::render_config(cfg, &ct)
+        },
+        resolv_conf: lxc::resolv_conf(&ct),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn previews_fill_identity_placeholders_for_missing_ids() {
+        let cfg = Config::default();
+        let mut vm_cfg = VmConfig::default();
+        vm_cfg.cloud_init.hostname = "qa-vm".to_string();
+        let vm = preview_vm(&cfg, &vm_cfg, false);
+        assert!(vm.qemu.contains("-name qa-vm"));
+        assert!(vm.qemu.contains("# id will be assigned on create"));
+        assert_eq!(vm.uuid, qemu::derive_uuid("qa-vm"));
+
+        let empty_vm = preview_vm(&cfg, &VmConfig::default(), false);
+        assert_eq!(empty_vm.qemu, "# enter a hostname to preview");
+
+        let mut ct_cfg = CtConfig::default();
+        ct_cfg.hostname = "qa-ct".to_string();
+        let ct = preview_ct(&cfg, &ct_cfg);
+        assert!(ct.lxc.contains("<id>/rootfs") || ct.lxc.contains("<id>\\rootfs"));
+        assert!(ct.lxc.contains("lxc.uts.name = qa-ct"));
+        assert!(ct.lxc.contains("# id will be assigned on create"));
+
+        let empty_ct = preview_ct(&cfg, &CtConfig::default());
+        assert_eq!(empty_ct.lxc, "# enter a hostname to preview");
     }
 }
 

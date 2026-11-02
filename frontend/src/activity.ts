@@ -232,6 +232,9 @@ export function createActivity(): Activity {
     setOpen(!open);
   });
 
+  const onOpenRequest = (): void => setOpen(true);
+  window.addEventListener("stack-stack:activity-open", onOpenRequest);
+
   const onDocumentClick = (): void => {
     if (open) setOpen(false);
   };
@@ -343,6 +346,7 @@ export function createActivity(): Activity {
     stop() {
       running = false;
       document.removeEventListener("click", onDocumentClick);
+      window.removeEventListener("stack-stack:activity-open", onOpenRequest);
       if (timer !== null) {
         window.clearInterval(timer);
         timer = null;

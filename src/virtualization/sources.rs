@@ -47,18 +47,7 @@ pub fn fetch(
     name: Option<&str>,
 ) -> Result<ImportResult, ApiError> {
     validate_url(url)?;
-    let name = match name.map(str::trim).filter(|name| !name.is_empty()) {
-        Some(name) => sanitize_name(name).ok_or_else(|| {
-            ApiError::bad_request(format!(
-                "{name:?} is not a usable file name (expected something like kali.iso)"
-            ))
-        })?,
-        None => name_from_url(url).ok_or_else(|| {
-            ApiError::bad_request(
-                "cannot derive a file name from that URL; pass one ending in .iso or .qcow2",
-            )
-        })?,
-    };
+    let name = resolve_name(url, name)?;
 
     std::fs::create_dir_all(images_dir).map_err(|err| {
         ApiError::internal(format!("cannot create {}: {err}", images_dir.display()))
@@ -102,30 +91,48 @@ pub fn fetch(
     Ok(result_for(&target, name))
 }
 
+/// The cache file name for a download. A supplied name without any extension
+/// takes the URL's image extension; every other unusable name is rejected.
+pub fn resolve_name(url: &str, name: Option<&str>) -> Result<String, ApiError> {
+    match name.map(str::trim).filter(|name| !name.is_empty()) {
+        Some(name) => {
+            let candidate = if is_image_name(name) {
+                name.to_string()
+            } else if !name.contains('.') {
+                let extension = extension_from_url(url).ok_or_else(|| {
+                    ApiError::bad_request(format!(
+                        "the URL does not end in .iso, .img, .qcow2 or .raw; provide a file name with an image extension"
+                    ))
+                })?;
+                format!("{name}.{extension}")
+            } else {
+                name.to_string()
+            };
+            Ok(sanitize_name(&candidate).ok_or_else(|| {
+                ApiError::bad_request(format!(
+                    "{name:?} is not a usable image file name; use a plain name ending in .iso, \
+                     .img, .qcow2, .qcow or .raw"
+                ))
+            })?)
+        }
+        None => Ok(name_from_url(url).ok_or_else(|| {
+            ApiError::bad_request(
+                "cannot derive a file name from that URL; pass a name ending in .iso, .img, \
+                 .qcow2, .qcow or .raw",
+            )
+        })?),
+    }
+}
+
 /// Copy an image that already exists on this host into the cache.
 pub fn import(
     images_dir: &Path,
     runner: &dyn Runner,
     source: &str,
 ) -> Result<ImportResult, ApiError> {
+    let name = import_name(source)?;
     let source = source.trim();
-    if !source.starts_with('/') {
-        return Err(ApiError::bad_request(
-            "the host path must be absolute, for example /home/you/kali.iso",
-        ));
-    }
     let source_path = Path::new(source);
-    let metadata = std::fs::metadata(source_path)
-        .map_err(|err| ApiError::bad_request(format!("cannot read {source}: {err}")))?;
-    if !metadata.is_file() {
-        return Err(ApiError::bad_request(format!("{source} is not a file")));
-    }
-
-    let name = source_path
-        .file_name()
-        .and_then(|name| name.to_str())
-        .and_then(sanitize_name)
-        .ok_or_else(|| ApiError::bad_request(format!("{source} has no usable file name")))?;
 
     std::fs::create_dir_all(images_dir).map_err(|err| {
         ApiError::internal(format!("cannot create {}: {err}", images_dir.display()))
@@ -154,6 +161,32 @@ pub fn import(
     std::fs::rename(&partial, &target)
         .map_err(|err| ApiError::internal(format!("cannot move the copy into place: {err}")))?;
     Ok(result_for(&target, name))
+}
+
+/// Validate an import source and return the cache file name it will use.
+pub fn import_name(source: &str) -> Result<String, ApiError> {
+    let source = source.trim();
+    if !source.starts_with('/') {
+        return Err(ApiError::bad_request(
+            "the host path must be absolute, for example /home/you/kali.iso",
+        ));
+    }
+    let source_path = Path::new(source);
+    let metadata = std::fs::metadata(source_path)
+        .map_err(|err| ApiError::bad_request(format!("cannot read {source}: {err}")))?;
+    if !metadata.is_file() {
+        return Err(ApiError::bad_request(format!("{source} is not a file")));
+    }
+    source_path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .and_then(sanitize_name)
+        .ok_or_else(|| {
+            ApiError::bad_request(format!(
+                "{source} has no usable image file name; rename it to end in .iso, .img, .qcow2, \
+                 .qcow or .raw"
+            ))
+        })
 }
 
 /// Every image file in the cache, newest first.
@@ -260,6 +293,21 @@ pub fn name_from_url(url: &str) -> Option<String> {
     sanitize_name(last)
 }
 
+fn extension_from_url(url: &str) -> Option<&'static str> {
+    let path = url
+        .split_once("://")
+        .map(|(_, rest)| rest)
+        .unwrap_or(url)
+        .split(['?', '#'])
+        .next()
+        .unwrap_or("");
+    let ext = path.rsplit('/').next()?.rsplit_once('.')?.1;
+    IMAGE_EXTENSIONS
+        .iter()
+        .find(|known| known.eq_ignore_ascii_case(ext))
+        .copied()
+}
+
 /// A plain `name.ext` with an image extension, or `None`.
 pub fn sanitize_name(raw: &str) -> Option<String> {
     let name = raw.trim();
@@ -335,6 +383,40 @@ mod tests {
         );
         assert_eq!(name_from_url("https://example.com/"), None);
         assert_eq!(name_from_url("https://example.com/notanimage.txt"), None);
+    }
+
+    #[test]
+    fn extensionless_supplied_names_use_the_url_extension() {
+        assert_eq!(
+            extension_from_url("https://example.com/disk.qcow2?x=1"),
+            Some("qcow2")
+        );
+        assert!(extension_from_url("https://example.com/download").is_none());
+    }
+
+    #[test]
+    fn supplied_names_are_completed_or_rejected_clearly() {
+        assert_eq!(
+            resolve_name("https://example.com/disk.qcow2", Some("my-disk")).expect("derived"),
+            "my-disk.qcow2"
+        );
+        // An explicit supported extension wins over the URL's.
+        assert_eq!(
+            resolve_name("https://example.com/disk.qcow2", Some("my-disk.iso")).expect("kept"),
+            "my-disk.iso"
+        );
+        // A name with a non-image extension is not silently rewritten.
+        assert!(resolve_name("https://example.com/disk.qcow2", Some("notes.txt")).is_err());
+        assert!(
+            resolve_name("https://example.com/download", Some("my-disk"))
+                .expect_err("no URL extension")
+                .to_string()
+                .contains("does not end in")
+        );
+        assert_eq!(
+            resolve_name("https://example.com/disk.qcow2", None).expect("url name"),
+            "disk.qcow2"
+        );
     }
 
     #[test]

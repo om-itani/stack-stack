@@ -215,6 +215,27 @@ impl JobManager {
         id
     }
 
+    /// Register an async operation and detach it. Returns the job id immediately.
+    pub fn spawn<F, Fut>(&self, name: impl Into<String>, work: F) -> String
+    where
+        F: FnOnce(JobCtx) -> Fut + Send + 'static,
+        Fut: std::future::Future<Output = Result<String, String>> + Send + 'static,
+    {
+        let (id, ctx) = self.insert(name.into(), JobStatus::Pending, true);
+        let manager = self.clone();
+        let id_for_task = id.clone();
+        tokio::spawn(async move {
+            manager.mark_running(&id_for_task);
+            match work(ctx).await {
+                Ok(message) => {
+                    manager.finish(&id_for_task, JobStatus::Success, Some(message), None)
+                }
+                Err(error) => manager.finish(&id_for_task, JobStatus::Failed, None, Some(error)),
+            }
+        });
+        id
+    }
+
     /// Newest-first snapshot for the drawer.
     ///
     /// Only the last log line is carried: the list is polled every few seconds

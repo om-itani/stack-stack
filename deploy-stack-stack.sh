@@ -338,6 +338,8 @@ create_directories() {
   install -d -m 0755 /run/libvirt
   # LXC needs /run/lxc/lock to create containers.
   install -d -m 0755 /run/lxc /run/lxc/lock
+  # LXC template cache directory.
+  install -d -m 0755 /var/cache/lxc /var/cache/lxc/download
 }
 
 write_default_config() {
@@ -385,7 +387,7 @@ LimitNOFILE=65536
 NoNewPrivileges=false
 PrivateTmp=true
 ProtectSystem=strict
-ReadWritePaths=/etc/stack-stack /var/lib/stack-stack /run/docker.sock -/run/libvirt -/run/lxc -/var/log/stack-stack
+ReadWritePaths=/etc/stack-stack /var/lib/stack-stack /run/docker.sock -/run/libvirt -/run/lxc -/var/cache/lxc -/var/log/stack-stack
 CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_RAW CAP_SYS_ADMIN CAP_DAC_OVERRIDE CAP_CHOWN CAP_FOWNER CAP_SYS_RESOURCE
 
 [Install]

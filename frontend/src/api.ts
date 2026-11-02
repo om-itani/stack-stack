@@ -75,6 +75,7 @@ export interface App {
   web_port: number | null;
   compose: string;
   installed: boolean;
+  container_state: string | null;
 }
 
 interface ActionResult {
@@ -94,6 +95,7 @@ export interface OkDetail {
 
 export interface OpResult {
   ok: boolean;
+  job_id: string | null;
   output: string;
 }
 
@@ -1308,6 +1310,8 @@ export const api = {
     request<OpResult>(`/api/apps/${encodeURIComponent(id)}/install`, { method: "POST" }),
   uninstall: (id: string) =>
     request<OpResult>(`/api/apps/${encodeURIComponent(id)}`, { method: "DELETE" }),
+  reset: (id: string) =>
+    request<OpResult>(`/api/apps/${encodeURIComponent(id)}/reset`, { method: "POST" }),
 };
 
 /** A Docker Hub repository search result. */
@@ -1554,6 +1558,7 @@ export interface ActionReport {
   warnings: string[];
   disk: string | null;
   seed: string | null;
+  id?: string | null;
 }
 
 export const virtApi = {
@@ -1840,8 +1845,9 @@ export interface CachedImage {
 
 export interface ImageActionResult {
   ok: boolean;
-  message: string;
-  image: { name: string; path: string; size_bytes: number };
+  message?: string;
+  job_id?: string | null;
+  image?: { name: string; path: string; size_bytes: number };
 }
 
 export const imagesApi = {

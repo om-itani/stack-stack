@@ -225,10 +225,13 @@ const INPUT_CLASS =
 export function textInput(
   value: string,
   onInput: (value: string) => void,
-  options: { class?: string; placeholder?: string; type?: string } = {},
+  options: { class?: string; placeholder?: string; type?: string; autocomplete?: string } = {},
 ): HTMLInputElement {
   const input = document.createElement("input");
   input.type = options.type ?? "text";
+  if (options.autocomplete) {
+    input.autocomplete = options.autocomplete as AutoFill;
+  }
   input.value = value;
   input.className = `${INPUT_CLASS} ${options.class ?? ""}`.trim();
   if (options.placeholder) {
@@ -241,14 +244,14 @@ export function textInput(
 export function numberInput(
   value: number,
   onInput: (value: number) => void,
-  options: { class?: string; min?: number; max?: number } = {},
+  options: { class?: string; min?: number; max?: number; autocomplete?: string } = {},
 ): HTMLInputElement {
   const input = textInput(String(value), (raw) => {
     // An empty or partial field is normal while typing; treat it as 0 rather
     // than propagating NaN into the config.
     const parsed = Number.parseInt(raw, 10);
     onInput(Number.isFinite(parsed) ? parsed : 0);
-  }, { ...options, type: "number" });
+  }, { autocomplete: options.autocomplete ?? "off", ...options, type: "number" });
   if (options.min !== undefined) {
     input.min = String(options.min);
   }
@@ -310,7 +313,7 @@ export function field(label: string, control: Node): HTMLElement {
 export function listInput(
   values: string[],
   onChange: (values: string[]) => void,
-  options: { placeholder?: string; numeric?: boolean; class?: string } = {},
+  options: { placeholder?: string; numeric?: boolean; class?: string; autocomplete?: string } = {},
 ): HTMLInputElement {
   return textInput(
     values.join(", "),
@@ -325,7 +328,7 @@ export function listInput(
           : parts,
       );
     },
-    { ...options, placeholder: options.placeholder ?? "comma separated" },
+    { autocomplete: options.autocomplete ?? "off", ...options, placeholder: options.placeholder ?? "comma separated" },
   );
 }
 

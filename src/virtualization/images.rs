@@ -123,6 +123,9 @@ pub fn catalog(cfg: &Config) -> Vec<GuestImage> {
     // always truthful even for an operator override.
     for image in &mut images {
         image.verified = image.sha256.is_some();
+        if image.icon.trim().is_empty() {
+            image.icon = "💿".to_string();
+        }
     }
 
     images.sort_by(|a, b| {
