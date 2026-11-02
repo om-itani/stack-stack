@@ -733,18 +733,15 @@ enabled = true
     systemctl restart fail2ban >/dev/null 2>&1 || true
   fi
 
-  # 3. UFW firewall rules (permit SSH, UI, and optional TLS front door)
+  # 3. UFW firewall rules (ensure SSH, UI, and optional TLS front door are permitted if UFW is active)
   if command -v ufw >/dev/null 2>&1; then
-    if ! ufw status 2>/dev/null | grep -q "8553/tcp"; then
-      ufw --force default deny incoming >/dev/null 2>&1 || true
-      ufw --force default allow outgoing >/dev/null 2>&1 || true
+    if ufw status 2>/dev/null | grep -q "Status: active"; then
       ufw allow 22/tcp >/dev/null 2>&1 || true
       ufw allow 8553/tcp >/dev/null 2>&1 || true
       if grep -q '"tls_enabled"[[:space:]]*:[[:space:]]*true' "${CONFIG_FILE}" 2>/dev/null; then
         ufw allow 80/tcp >/dev/null 2>&1 || true
         ufw allow 443/tcp >/dev/null 2>&1 || true
       fi
-      ufw --force enable >/dev/null 2>&1 || true
     fi
   fi
 

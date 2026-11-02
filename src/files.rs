@@ -375,7 +375,7 @@ fn entry(path: &Path, name: &str, owners: &AccountTable) -> Entry {
         name: name.to_string(),
         path: path.to_string_lossy().to_string(),
         kind: kind.to_string(),
-        size: meta.as_ref().map(|meta| meta.len()).unwrap_or(0),
+        size: meta.as_ref().map(std::fs::Metadata::len).unwrap_or(0),
         modified_ms: meta
             .as_ref()
             .and_then(|meta| meta.modified().ok())
@@ -776,7 +776,7 @@ pub fn extract(guard: &Guard, runner: &dyn Runner, raw: &str) -> Result<String, 
             "unzip".to_string(),
             "-o".to_string(),
             "-q".to_string(),
-            archive_s.clone(),
+            archive_s,
             "-d".to_string(),
             dest_s.clone(),
         ],

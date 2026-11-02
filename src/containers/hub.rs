@@ -399,15 +399,15 @@ fn parse_repo(value: &serde_json::Value) -> Option<HubRepo> {
         description,
         star_count: value
             .get("star_count")
-            .and_then(|value| value.as_u64())
+            .and_then(serde_json::Value::as_u64)
             .unwrap_or(0),
         pull_count: value
             .get("pull_count")
-            .and_then(|value| value.as_u64())
+            .and_then(serde_json::Value::as_u64)
             .unwrap_or(0),
         is_official: value
             .get("is_official")
-            .and_then(|value| value.as_bool())
+            .and_then(serde_json::Value::as_bool)
             .unwrap_or(false),
     })
 }

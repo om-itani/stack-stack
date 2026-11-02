@@ -195,7 +195,7 @@ impl Default for Config {
                 "tracefs",
             ]
             .iter()
-            .map(|s| s.to_string())
+            .map(std::string::ToString::to_string)
             .collect(),
             docker_socket: DEFAULT_DOCKER_SOCKET.to_string(),
             apps_dir: DEFAULT_APPS_DIR.to_string(),

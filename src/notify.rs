@@ -332,7 +332,7 @@ impl NotificationCenter {
                     if let Some(provider) = doc.provider(provider_id).cloned() {
                         let message = crate::alerts::AlertMessage {
                             title: request.title.clone(),
-                            body: request.message.clone(),
+                            body: request.message,
                         };
                         let runner = Arc::clone(&self.runner);
                         if let Ok(handle) = tokio::runtime::Handle::try_current() {
@@ -655,9 +655,8 @@ fn post_webhook(runner: &dyn Runner, url: &str, payload: &str) -> Result<(), Str
 /// Strip anything that could carry a secret from a URL before it is logged:
 /// credentials and the whole query string.
 pub fn redact_url(url: &str) -> String {
-    let (scheme, rest) = match url.split_once("://") {
-        Some((scheme, rest)) => (scheme, rest),
-        None => return "<redacted-url>".to_string(),
+    let Some((scheme, rest)) = url.split_once("://") else {
+        return "<redacted-url>".to_string();
     };
     let authority = rest.split(['/', '?', '#']).next().unwrap_or("");
     let authority = match authority.rsplit_once('@') {

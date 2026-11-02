@@ -133,7 +133,7 @@ pub async fn image_fetch(
     let dir = std::path::PathBuf::from(&state.config.images_dir);
     let runner = state.virt.runner.clone();
     let url = request.url.clone();
-    let name = request.name.clone();
+    let name = request.name;
     let audit = state.clone();
     let job_id = state
         .jobs
@@ -180,7 +180,7 @@ pub async fn image_import(
     let resolved = sources::import_name(&request.path)?;
     let dir = std::path::PathBuf::from(&state.config.images_dir);
     let runner = state.virt.runner.clone();
-    let path = request.path.clone();
+    let path = request.path;
     let audit = state.clone();
     let job_id = state
         .jobs

@@ -175,7 +175,7 @@ pub fn tail(
             first_line(&output.combined())
         )));
     }
-    parse_entries(&output.stdout)
+    Ok(parse_entries(&output.stdout))
 }
 
 /// Tail the journal as plain `short-iso` lines, for surfaces that want the raw
@@ -256,7 +256,7 @@ pub fn strip_ansi(input: &str) -> String {
 }
 
 /// Parse newline-delimited `journalctl -o json`.
-pub fn parse_entries(json_lines: &str) -> Result<Vec<LogEntry>, ApiError> {
+pub fn parse_entries(json_lines: &str) -> Vec<LogEntry> {
     let mut entries: Vec<LogEntry> = Vec::new();
     for line in json_lines.lines() {
         if line.trim().is_empty() {
@@ -297,7 +297,7 @@ pub fn parse_entries(json_lines: &str) -> Result<Vec<LogEntry>, ApiError> {
     }
     // journalctl prints oldest first; the UI wants newest first.
     entries.reverse();
-    Ok(entries)
+    entries
 }
 
 /// A live `journalctl -f` stream: one reader thread, lines into a channel.
@@ -412,7 +412,7 @@ mod tests {
     fn journal_json_is_parsed_newest_first() {
         let json = "{\"__REALTIME_TIMESTAMP\":\"1700000000000000\",\"PRIORITY\":\"3\",\"_SYSTEMD_UNIT\":\"ss-stack.service\",\"MESSAGE\":\"boom\"}\n\
                     {\"__REALTIME_TIMESTAMP\":\"1700000001000000\",\"PRIORITY\":\"6\",\"SYSLOG_IDENTIFIER\":\"kernel\",\"MESSAGE\":\"ready\"}\n";
-        let entries = parse_entries(json).expect("parse");
+        let entries = parse_entries(json);
         assert_eq!(entries.len(), 2);
         assert_eq!(entries[0].message, "ready", "newest first");
         assert_eq!(entries[0].priority, 6);
@@ -435,7 +435,7 @@ mod tests {
     fn byte_array_messages_are_decoded() {
         // journald hands non-UTF-8 messages back as an array of byte values.
         let json = "{\"__REALTIME_TIMESTAMP\":\"5\",\"MESSAGE\":[104,101,108,108,111]}\n";
-        let entries = parse_entries(json).expect("parse");
+        let entries = parse_entries(json);
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].message, "hello");
     }
@@ -443,8 +443,7 @@ mod tests {
     #[test]
     fn garbled_lines_are_skipped() {
         let entries =
-            parse_entries("not json\n{\"__REALTIME_TIMESTAMP\":\"1\",\"MESSAGE\":\"ok\"}\n\n")
-                .expect("parse");
+            parse_entries("not json\n{\"__REALTIME_TIMESTAMP\":\"1\",\"MESSAGE\":\"ok\"}\n\n");
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].message, "ok");
         // Missing unit falls back to the kernel identifier.

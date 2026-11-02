@@ -129,7 +129,7 @@ fn apply_firewall(
         // Snapshot the running ruleset so we can undo this apply.
         let snapshot = runner.call("nft", &["list", "ruleset"])?;
         let previous = if snapshot.success() {
-            snapshot.stdout.clone()
+            snapshot.stdout
         } else {
             String::new()
         };

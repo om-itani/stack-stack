@@ -37,17 +37,16 @@ export function uptime(seconds: number): string {
   return hours > 0 ? `${hours}h ${minutes}m` : `${minutes}m`;
 }
 
-/** Paint a usage bar. A gradient plus a soft glow reads as "live" far better
- * than a flat block, and recolours as the value approaches saturation. */
+/** Paint a usage bar with clean, solid thresholds. */
 export function fill(bar: HTMLElement, value: number): void {
   const clamped = Math.min(100, Math.max(0, value));
   bar.style.width = `${clamped}%`;
   bar.className =
     clamped >= 90
-      ? "h-full rounded-full bg-gradient-to-r from-rose-500 to-red-400 shadow-[0_0_10px_rgba(244,63,94,0.45)]"
+      ? "h-full rounded-full bg-rose-500 transition-all duration-300"
       : clamped >= 75
-        ? "h-full rounded-full bg-gradient-to-r from-amber-500 to-orange-400 shadow-[0_0_10px_rgba(245,158,11,0.4)]"
-        : "h-full rounded-full bg-gradient-to-r from-emerald-500 to-teal-400 shadow-[0_0_10px_rgba(16,185,129,0.45)]";
+        ? "h-full rounded-full bg-amber-500 transition-all duration-300"
+        : "h-full rounded-full bg-emerald-500 transition-all duration-300";
 }
 
 /** A translucent pill for status text. */

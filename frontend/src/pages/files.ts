@@ -1598,6 +1598,17 @@ export function createFilesPage(): PageHandle {
 
     headerActions.append(saveStatusNotice, statsInfo, wrapBtn, saveBtn, closeBtn);
     header.append(fileMeta, headerActions);
+    modalWindow.append(header);
+
+    if (file.truncated) {
+      const truncBanner = el("div", {
+        class: "flex items-center gap-2 border-b border-amber-500/20 bg-amber-500/10 px-4 py-2 text-xs text-amber-300",
+      }, [
+        el("span", { class: "font-semibold", text: "Warning:" }),
+        el("span", { text: "This file exceeds the editor buffer limit and is truncated. Saving will permanently overwrite the file with only this loaded portion." }),
+      ]);
+      modalWindow.append(truncBanner);
+    }
 
     // Editor Area with Gutter & Textarea
     const editorBody = el("div", { class: "flex min-h-0 flex-1 bg-[#0b0d13] overflow-hidden" });
@@ -1622,7 +1633,7 @@ export function createFilesPage(): PageHandle {
     const lineCountInfo = el("span", { text: `${file.content.split("\n").length} lines` });
     footer.append(lineCountInfo, cursorInfo);
 
-    modalWindow.append(header, editorBody, footer);
+    modalWindow.append(editorBody, footer);
     overlay.append(modalWindow);
     document.body.append(overlay);
 
@@ -1694,6 +1705,11 @@ export function createFilesPage(): PageHandle {
     });
 
     const performSave = async (): Promise<void> => {
+      if (file.truncated) {
+        if (!window.confirm("Warning: This file was truncated when loaded! Saving will overwrite the entire file with only this truncated portion. Are you sure?")) {
+          return;
+        }
+      }
       try {
         saveBtn.disabled = true;
         saveBtn.textContent = "Saving…";

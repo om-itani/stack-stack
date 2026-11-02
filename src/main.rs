@@ -37,7 +37,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // raised above the default so concurrent PTY sessions and Docker CLI calls
     // cannot starve each other.
     let workers = std::thread::available_parallelism()
-        .map(|count| count.get())
+        .map(std::num::NonZero::get)
         .unwrap_or(4);
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(workers)

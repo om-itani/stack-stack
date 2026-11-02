@@ -744,7 +744,7 @@ pub fn redirect_response(request: &str, https_port: u16) -> String {
     // Strip any `:80` the client sent; keep the authority otherwise.
     let host = proxy::normalise_host(&host);
     let authority = if https_port == 443 {
-        host.clone()
+        host
     } else {
         format!("{host}:{https_port}")
     };

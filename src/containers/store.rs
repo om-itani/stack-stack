@@ -139,9 +139,8 @@ pub fn compose_path(cfg: &Config, id: &str) -> PathBuf {
 /// Directory names under `apps_dir` that hold a compose file.
 pub fn installed_ids(cfg: &Config) -> Vec<String> {
     let dir = Path::new(&cfg.apps_dir);
-    let entries = match std::fs::read_dir(dir) {
-        Ok(entries) => entries,
-        Err(_) => return Vec::new(),
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return Vec::new();
     };
 
     let mut ids: Vec<String> = entries
@@ -263,9 +262,8 @@ pub fn stack_compose_path(cfg: &Config, name: &str) -> PathBuf {
 /// Stack names that have a compose file on disk, sorted.
 pub fn installed_stacks(cfg: &Config) -> Vec<String> {
     let dir = Path::new(&cfg.stacks_dir);
-    let entries = match std::fs::read_dir(dir) {
-        Ok(entries) => entries,
-        Err(_) => return Vec::new(),
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return Vec::new();
     };
     let mut names: Vec<String> = entries
         .flatten()
@@ -328,12 +326,10 @@ fn validate_compose_blocking(yaml: &str, timeout_s: u64) -> Result<(), ApiError>
     ]);
     let timeout = Duration::from_secs(timeout_s.clamp(5, 60));
 
-    let output =
-        match crate::proc::run_with_input(&cli.program, &args, None, timeout, yaml.as_bytes()) {
-            Ok(output) => output,
-            // Compose is unavailable; let the deploy report that.
-            Err(_) => return Ok(()),
-        };
+    let Ok(output) = crate::proc::run_with_input(&cli.program, &args, None, timeout, yaml.as_bytes()) else {
+        // Compose is unavailable; let the deploy report that.
+        return Ok(());
+    };
 
     if output.timed_out {
         return Err(ApiError::internal(format!(

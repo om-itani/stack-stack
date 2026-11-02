@@ -465,10 +465,10 @@ pub fn parse_backup_summary(json_lines: &str) -> BackupSummary {
         if let Some(id) = value.get("snapshot_id").and_then(|v| v.as_str()) {
             summary.snapshot_id = id.to_string();
         }
-        if let Some(bytes) = value.get("total_bytes_processed").and_then(|v| v.as_u64()) {
+        if let Some(bytes) = value.get("total_bytes_processed").and_then(serde_json::Value::as_u64) {
             summary.bytes_processed = bytes;
         }
-        if let Some(files) = value.get("files_new").and_then(|v| v.as_u64()) {
+        if let Some(files) = value.get("files_new").and_then(serde_json::Value::as_u64) {
             summary.files_new = files;
         }
     }
@@ -488,7 +488,7 @@ pub struct LsEntry {
 }
 
 /// Parse `restic ls --json`, keeping the immediate children of `prefix`.
-pub fn parse_ls(json_lines: &str, prefix: &str) -> Result<Vec<LsEntry>, ApiError> {
+pub fn parse_ls(json_lines: &str, prefix: &str) -> Vec<LsEntry> {
     let mut entries: Vec<LsEntry> = Vec::new();
     let prefix = prefix.trim_end_matches('/');
 
@@ -524,7 +524,7 @@ pub fn parse_ls(json_lines: &str, prefix: &str) -> Result<Vec<LsEntry>, ApiError
             path: path.to_string(),
             name,
             kind: kind.to_string(),
-            size: value.get("size").and_then(|v| v.as_u64()).unwrap_or(0),
+            size: value.get("size").and_then(serde_json::Value::as_u64).unwrap_or(0),
             mtime: value
                 .get("mtime")
                 .and_then(|v| v.as_str())
@@ -537,7 +537,7 @@ pub fn parse_ls(json_lines: &str, prefix: &str) -> Result<Vec<LsEntry>, ApiError
             .cmp(&(a.kind == "dir"))
             .then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
     });
-    Ok(entries)
+    entries
 }
 
 // ---------------------------------------------------------------------------
@@ -994,7 +994,7 @@ pub fn restic_ls(
             first_line(&output.stderr, &output.stdout)
         )));
     }
-    parse_ls(&output.stdout, path)
+    Ok(parse_ls(&output.stdout, path))
 }
 
 pub fn restic_restore(
@@ -1225,7 +1225,7 @@ mod tests {
     #[test]
     fn ls_keeps_only_immediate_children() {
         let lines = "{\"path\":\"/etc\",\"name\":\"etc\",\"type\":\"dir\"}\n{\"path\":\"/etc/a.conf\",\"name\":\"a.conf\",\"type\":\"file\",\"size\":10}\n{\"path\":\"/etc/sub/b\",\"name\":\"b\",\"type\":\"file\",\"size\":1}\n";
-        let entries = parse_ls(lines, "/etc").expect("parse");
+        let entries = parse_ls(lines, "/etc");
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].name, "a.conf");
     }

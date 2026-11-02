@@ -222,7 +222,7 @@ pub async fn configs(State(state): State<AppState>) -> Json<ConfigsState> {
             ConfigRef {
                 name,
                 exists: metadata.is_some(),
-                bytes: metadata.as_ref().map(|meta| meta.len()),
+                bytes: metadata.as_ref().map(std::fs::Metadata::len),
                 modified_ms: metadata
                     .and_then(|meta| meta.modified().ok())
                     .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())

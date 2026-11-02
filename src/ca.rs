@@ -727,7 +727,7 @@ mod tests {
             )
             .respond("openssl", Some(0), "subject=CN = stack-stack internal CA\n", "");
 
-        let infra = CaContext::new(dir.clone(), Arc::new(runner));
+        let infra = CaContext::new(dir, Arc::new(runner));
         let leaves = infra.list();
         assert_eq!(leaves.len(), 1);
         let leaf = &leaves[0];

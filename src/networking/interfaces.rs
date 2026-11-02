@@ -184,7 +184,7 @@ pub fn parse_ip_addr_json(json: &str) -> HashMap<String, Vec<AddressInfo>> {
                 };
                 let prefix = info
                     .get("prefixlen")
-                    .and_then(|value| value.as_u64())
+                    .and_then(serde_json::Value::as_u64)
                     .unwrap_or(32);
                 let scope = info
                     .get("scope")

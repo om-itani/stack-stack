@@ -28,7 +28,7 @@ const HEARTBEAT: Duration = Duration::from_secs(30);
 pub fn spawn_sampler(state: AppState, cfg: Config) {
     let telemetry = state.telemetry.clone();
     let latest = state.latest.clone();
-    let history = state.history.clone();
+    let history = state.history;
 
     tokio::spawn(async move {
         let mut sampler = Sampler::new();

@@ -353,7 +353,7 @@ pub fn validate_password(password: &str) -> Result<(), ApiError> {
             "password must be at most {MAX_PASSWORD_LEN} bytes"
         )));
     }
-    if password.chars().any(|c| c.is_control()) {
+    if password.chars().any(char::is_control) {
         return Err(ApiError::bad_request(
             "password must not contain control characters",
         ));

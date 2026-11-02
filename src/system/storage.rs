@@ -355,7 +355,7 @@ impl StorageContext {
             .runner
             .call("blkid", &["-s", "UUID", "-o", "value", device])
             .ok()
-            .filter(|output| output.success())
+            .filter(super::super::proc::Output::success)
             .map(|output| output.stdout.trim().to_string())
             .filter(|value| !value.is_empty());
         let source = match uuid {

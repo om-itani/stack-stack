@@ -218,13 +218,10 @@ pub async fn export_client(
         ));
     }
 
-    let endpoint = match endpoint(&state) {
-        Some(endpoint) => endpoint,
-        None => {
-            return Err(ApiError::bad_request(
-                "the host's LAN address could not be determined; set the endpoint manually",
-            ));
-        }
+    let Some(endpoint) = endpoint(&state) else {
+        return Err(ApiError::bad_request(
+            "the host's LAN address could not be determined; set the endpoint manually",
+        ));
     };
     let dns = config
         .peers

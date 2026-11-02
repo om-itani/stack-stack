@@ -275,7 +275,7 @@ pub fn parse_accelerators(text: &str) -> Vec<String> {
     text.lines()
         .map(str::trim)
         .filter(|line| !line.is_empty() && !line.to_ascii_lowercase().contains("accelerator"))
-        .map(|line| line.to_ascii_lowercase())
+        .map(str::to_ascii_lowercase)
         .collect()
 }
 

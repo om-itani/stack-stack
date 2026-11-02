@@ -244,10 +244,10 @@ pub struct DnsRecord {
 pub fn parse_records(json: &str) -> Result<Vec<DnsRecord>, ApiError> {
     let value: serde_json::Value = serde_json::from_str(json.trim())
         .map_err(|err| ApiError::internal(format!("cannot read the Cloudflare response: {err}")))?;
-    if value.get("success").and_then(|v| v.as_bool()) != Some(true) {
+    if value.get("success").and_then(serde_json::Value::as_bool) != Some(true) {
         let detail = value
             .get("errors")
-            .map(|errors| errors.to_string())
+            .map(std::string::ToString::to_string)
             .unwrap_or_else(|| "unknown error".to_string());
         return Err(ApiError::internal(format!(
             "Cloudflare rejected the request: {}",
@@ -268,9 +268,9 @@ pub fn parse_records(json: &str) -> Result<Vec<DnsRecord>, ApiError> {
                 content: entry.get("content")?.as_str()?.to_string(),
                 proxied: entry
                     .get("proxied")
-                    .and_then(|v| v.as_bool())
+                    .and_then(serde_json::Value::as_bool)
                     .unwrap_or(false),
-                ttl: entry.get("ttl").and_then(|v| v.as_u64()).unwrap_or(300) as u32,
+                ttl: entry.get("ttl").and_then(serde_json::Value::as_u64).unwrap_or(300) as u32,
                 kind: entry
                     .get("type")
                     .and_then(|v| v.as_str())
