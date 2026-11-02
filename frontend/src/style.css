@@ -132,9 +132,56 @@ button:not(:disabled):active {
 input,
 select,
 textarea {
-  background-color: rgba(255, 255, 255, 0.03);
+  background-color: #141722;
   border: 1px solid var(--line);
   color: var(--text);
+  color-scheme: dark;
+}
+
+select {
+  padding-right: 2rem !important;
+  appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 20 20'%3E%3Cpath stroke='%2394a3b8' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.5' d='m6 8 4 4 4-4'/%3E%3C/svg%3E");
+  background-position: right 0.5rem center;
+  background-repeat: no-repeat;
+  background-size: 1.2em 1.2em;
+  cursor: pointer;
+}
+
+/* Explicit dark styling for select options across Chromium, Gecko, and WebKit */
+select option,
+select optgroup {
+  background-color: #141722 !important;
+  color: #f1f5f9 !important;
+  padding: 6px 10px;
+}
+
+select option:checked {
+  background-color: #1e293b !important;
+  color: #34d399 !important;
+  font-weight: 600;
+}
+
+select option:hover,
+select option:focus {
+  background-color: #1e293b !important;
+  color: #ffffff !important;
+}
+
+/* Dark scrollbars throughout the application */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: rgba(0, 0, 0, 0.2);
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.15);
+  border-radius: 9999px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.3);
 }
 
 :focus-visible {

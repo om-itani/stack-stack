@@ -98,6 +98,7 @@ export function animateNumber(
 export interface Modal {
   root: HTMLElement;
   body: HTMLElement;
+  head: HTMLElement;
   close: () => void;
 }
 
@@ -107,14 +108,20 @@ export interface Modal {
  */
 export function openModal(title: string, width = "max-w-lg"): Modal {
   const overlay = el("div", {
-    class: "fixed inset-0 z-50 flex items-start justify-center overflow-auto bg-black/70 p-4",
+    class: "fixed inset-0 z-50 flex items-start justify-center overflow-auto bg-black/75 backdrop-blur-sm p-4",
   });
   const modal = el("div", {
-    class: `panel shadow-float mt-8 flex w-full ${width} flex-col gap-3 p-4`,
+    class: `panel shadow-float mt-8 flex w-full ${width} flex-col gap-3 p-5 border border-white/15 bg-[#12151e]`,
   });
 
-  const head = el("div", { class: "flex items-baseline gap-2" });
-  head.append(el("span", { class: "text-sm font-medium text-neutral-100", text: title }));
+  const head = el("div", { class: "flex items-center justify-between border-b border-white/10 pb-3" });
+  const titleEl = el("span", { class: "text-sm font-semibold tracking-wide text-neutral-100", text: title });
+  const closeBtn = el("button", {
+    class: "text-neutral-400 hover:text-white px-2 py-0.5 text-xs rounded hover:bg-white/10 transition-colors",
+    text: "✕",
+    title: "Close (Esc)",
+  });
+  head.append(titleEl, closeBtn);
 
   const body = el("div", { class: "flex flex-col gap-3" });
   modal.append(head, body);
@@ -130,6 +137,7 @@ export function openModal(title: string, width = "max-w-lg"): Modal {
     document.removeEventListener("keydown", onKey);
   };
 
+  closeBtn.addEventListener("click", close);
   overlay.addEventListener("click", (event) => {
     if (event.target === overlay) {
       close();
@@ -138,7 +146,7 @@ export function openModal(title: string, width = "max-w-lg"): Modal {
   document.addEventListener("keydown", onKey);
   document.body.append(overlay);
 
-  return { root: overlay, body, close };
+  return { root: overlay, body, head, close };
 }
 
 /** A shimmering placeholder for content that has not arrived yet. */
@@ -219,7 +227,7 @@ export function el(
 }
 
 const INPUT_CLASS =
-  "border border-white/5 bg-black/40 px-1.5 py-0.5 text-neutral-200 outline-none focus:border-neutral-500";
+  "border border-white/10 bg-[#141722] px-2.5 py-1 text-neutral-100 outline-none focus:border-emerald-500 rounded transition-colors text-xs";
 
 export function textInput(
   value: string,
@@ -272,7 +280,7 @@ export function checkbox(
   box.disabled = disabled;
   box.addEventListener("change", () => onChange(box.checked));
   const wrapper = document.createElement("label");
-  wrapper.className = "inline-flex items-center gap-1 text-[11px] text-neutral-400";
+  wrapper.className = "inline-flex items-center gap-1.5 text-xs text-neutral-300 cursor-pointer select-none";
   wrapper.append(box);
   if (label) {
     wrapper.append(label);
@@ -286,11 +294,12 @@ export function select(
   onChange: (value: string) => void,
 ): HTMLSelectElement {
   const node = document.createElement("select");
-  node.className = INPUT_CLASS;
+  node.className = `${INPUT_CLASS} cursor-pointer py-1`;
   for (const [optionValue, label] of options) {
     const option = document.createElement("option");
     option.value = optionValue;
     option.textContent = label;
+    option.className = "bg-[#141722] text-neutral-100 py-1";
     node.append(option);
   }
   node.value = value;
@@ -298,12 +307,27 @@ export function select(
   return node;
 }
 
+export function helpTip(text: string): HTMLElement {
+  const tip = document.createElement("span");
+  tip.className =
+    "inline-flex items-center justify-center size-3.5 rounded-full bg-white/10 hover:bg-emerald-500/20 text-neutral-400 hover:text-emerald-300 text-[10px] cursor-help font-mono transition-colors ml-1";
+  tip.textContent = "i";
+  tip.title = text;
+  return tip;
+}
+
 /** A labelled row in a form grid. */
-export function field(label: string, control: Node): HTMLElement {
+export function field(label: string, control: Node, hint?: string): HTMLElement {
   const wrapper = document.createElement("label");
-  wrapper.className = "flex flex-col gap-0.5 text-[10px] uppercase tracking-wide text-neutral-600";
-  const caption = document.createElement("span");
-  caption.textContent = label;
+  wrapper.className = "flex flex-col gap-1 text-[11px] text-neutral-300";
+  const caption = document.createElement("div");
+  caption.className = "flex items-center justify-between text-[10px] uppercase tracking-wide text-neutral-400";
+  const titleSpan = document.createElement("span");
+  titleSpan.textContent = label;
+  caption.append(titleSpan);
+  if (hint) {
+    caption.append(helpTip(hint));
+  }
   wrapper.append(caption, control);
   return wrapper;
 }

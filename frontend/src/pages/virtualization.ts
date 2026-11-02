@@ -18,6 +18,7 @@ import type {
   ActionReport,
   ApiFailure,
   BindMount,
+  CpuModel,
   CtConfig,
   CtPreview,
   GuestImage,
@@ -459,6 +460,848 @@ export function createVirtualizationPage(): PageHandle {
 
   const rerender = () => renderTabs();
 
+  // --- Proxmox-Style Creation Wizards ------------------------------------
+
+  function nextFreeId(kind: "vm" | "ct"): string {
+    const ids = (state?.statuses ?? [])
+      .filter((s) => s.kind === kind)
+      .map((s) => Number.parseInt(s.id, 10))
+      .filter((n) => Number.isFinite(n) && n >= 100);
+    const max = ids.length > 0 ? Math.max(...ids) : 99;
+    return String(max + 1);
+  }
+
+  function renderStepper(steps: string[], currentStep: number, onJump: (step: number) => void): HTMLElement {
+    const bar = el("div", { class: "flex items-center gap-1 overflow-x-auto pb-2 border-b border-white/10" });
+    steps.forEach((label, idx) => {
+      const isCurrent = idx === currentStep;
+      const isPast = idx < currentStep;
+      const stepBtn = el("button", {
+        type: "button",
+        class: `flex items-center gap-1.5 px-2.5 py-1 text-xs rounded transition-all whitespace-nowrap ${
+          isCurrent
+            ? "bg-emerald-500/20 text-emerald-300 border border-emerald-500/50 font-medium shadow-sm"
+            : isPast
+              ? "text-neutral-300 hover:text-white hover:bg-white/5 cursor-pointer"
+              : "text-neutral-500 cursor-not-allowed opacity-60"
+        }`,
+      });
+      const num = el("span", {
+        class: `flex items-center justify-center size-4 rounded-full text-[10px] font-mono ${
+          isCurrent ? "bg-emerald-500 text-black font-bold" : isPast ? "bg-white/20 text-white" : "bg-white/5 text-neutral-500"
+        }`,
+        text: String(idx + 1),
+      });
+      stepBtn.append(num, el("span", { text: label }));
+      if (isPast) {
+        stepBtn.addEventListener("click", () => onJump(idx));
+      }
+      bar.append(stepBtn);
+      if (idx < steps.length - 1) {
+        bar.append(el("span", { class: "text-neutral-600 text-xs select-none", text: "›" }));
+      }
+    });
+    return bar;
+  }
+
+  function applySelectedVmImage(targetVm: VmConfig, image: GuestImage): void {
+    targetVm.image = image.id;
+    if (image.default_user) {
+      targetVm.cloud_init.username = image.default_user;
+    }
+    if (image.min_disk_gb > targetVm.disk_gb) {
+      targetVm.disk_gb = image.min_disk_gb;
+    }
+    if (image.min_memory_mb > targetVm.memory_mb) {
+      targetVm.memory_mb = image.min_memory_mb;
+    }
+    if (image.arch) {
+      targetVm.arch = image.arch;
+    }
+    if (image.format === "iso") {
+      targetVm.cloud_init.enabled = false;
+    }
+  }
+
+  function applySelectedCtTemplate(targetCt: CtConfig, image: GuestImage): void {
+    targetCt.template = image.id;
+    if (image.min_disk_gb > targetCt.rootfs_gb) {
+      targetCt.rootfs_gb = image.min_disk_gb;
+    }
+    if (image.min_memory_mb > targetCt.memory_mb) {
+      targetCt.memory_mb = image.min_memory_mb;
+    }
+  }
+
+  function openVmWizard(): void {
+    const modal = openModal("Create: Virtual Machine", "max-w-4xl");
+    modal.body.className = "flex flex-col gap-4";
+
+    const vm = blankVm();
+    vm.id = nextFreeId("vm");
+    vm.cloud_init.hostname = `vm-${vm.id}`;
+    let activeStep = 0;
+    let startAfterCreate = true;
+    let imageTab: "catalog" | "custom" = "catalog";
+    let imageSearch = "";
+    let selectedImageObj: GuestImage | null = null;
+    let sshKeysRaw = "";
+
+    const steps = ["General", "OS Image", "System & CPU", "Disks & Memory", "Network", "Cloud-Init", "Confirm"];
+
+    const stepperContainer = el("div");
+    const stepContent = el("div", { class: "min-h-[360px] flex flex-col gap-4" });
+    const footer = el("div", { class: "flex items-center justify-between border-t border-white/10 pt-3" });
+
+    modal.body.append(stepperContainer, stepContent, footer);
+
+    function renderCurrentStep(): void {
+      stepperContainer.replaceChildren(renderStepper(steps, activeStep, (step) => {
+        activeStep = step;
+        renderCurrentStep();
+      }));
+
+      stepContent.replaceChildren();
+
+      if (activeStep === 0) {
+        // Step 0: General
+        const generalBox = el("div", { class: "flex flex-col gap-3" });
+        const hostInfo = el("div", { class: "flex items-center gap-2 text-xs text-neutral-400 bg-white/[0.02] p-2.5 rounded border border-white/5" });
+        hostInfo.append(
+          el("span", { class: "text-neutral-500", text: "Target Node:" }),
+          el("span", { class: "font-semibold text-emerald-400 font-mono", text: "host (fujitsu)" }),
+          el("span", { class: "ml-auto text-[11px] text-neutral-500", text: state?.host.kvm ? "KVM Acceleration: Available" : "KVM: Not detected" }),
+        );
+
+        const formGrid = el("div", { class: "grid grid-cols-1 md:grid-cols-2 gap-3" });
+        const idInput = textInput(vm.id, (v) => { vm.id = v; }, { placeholder: "100" });
+        const nameInput = textInput(vm.cloud_init.hostname, (v) => {
+          vm.cloud_init.hostname = v;
+          vm.name = v;
+        }, { placeholder: "ubuntu-server" });
+        const autostartBox = checkbox(vm.autostart, (v) => { vm.autostart = v; }, "Start at boot (Autostart VM when host system boots)");
+        const commentInput = textInput(vm.comment, (v) => { vm.comment = v; }, { placeholder: "Production web server, database, test lab…" });
+
+        formGrid.append(
+          field("VM ID", idInput, "Numerical identifier for this VM. Suggested next available ID is automatically assigned."),
+          field("VM Name / Hostname", nameInput, "Name of the VM and guest system hostname."),
+          field("Description / Notes", commentInput, "Optional notes or operator tags."),
+          el("div", { class: "col-span-full pt-1" }, [autostartBox]),
+        );
+
+        generalBox.append(hostInfo, formGrid);
+        stepContent.append(generalBox);
+      } else if (activeStep === 1) {
+        // Step 1: OS Image
+        const imageBox = el("div", { class: "flex flex-col gap-3" });
+
+        const topBar = el("div", { class: "flex items-center justify-between gap-3" });
+        const tabToggle = el("div", { class: "flex items-center gap-1 bg-black/40 p-1 rounded border border-white/5 text-xs" });
+        const catBtn = button(
+          "Cloud Images Catalog",
+          imageTab === "catalog" ? "bg-emerald-500/20 text-emerald-300 font-medium" : "text-neutral-400",
+          () => {
+            imageTab = "catalog";
+            renderCurrentStep();
+          },
+        );
+        const customBtn = button(
+          "Custom ISO / Image Path",
+          imageTab === "custom" ? "bg-emerald-500/20 text-emerald-300 font-medium" : "text-neutral-400",
+          () => {
+            imageTab = "custom";
+            renderCurrentStep();
+          },
+        );
+        tabToggle.append(catBtn, customBtn);
+
+        const searchInput = textInput(imageSearch, (v) => {
+          imageSearch = v;
+          renderCatalogGrid();
+        }, { placeholder: "Search distributions (Debian, Ubuntu, Alpine…)", class: "w-64" });
+
+        topBar.append(tabToggle);
+        if (imageTab === "catalog") {
+          topBar.append(searchInput);
+        }
+
+        imageBox.append(topBar);
+
+        const contentArea = el("div", { class: "flex-1" });
+        const renderCatalogGrid = () => {
+          contentArea.replaceChildren();
+          const query = imageSearch.toLowerCase().trim();
+          const images = (state?.catalog ?? [])
+            .filter((img) => img.kind === "vm")
+            .filter((img) => !query || `${img.name} ${img.id} ${img.category} ${img.description}`.toLowerCase().includes(query));
+
+          if (images.length === 0) {
+            contentArea.append(emptyNote("No matching operating system images found."));
+            return;
+          }
+
+          const grid = el("div", { class: "grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2.5 max-h-[340px] overflow-y-auto pr-1" });
+          for (const img of images) {
+            const isSelected = vm.image === img.id;
+            const card = el("button", {
+              type: "button",
+              class: `flex flex-col items-start gap-1 p-3 rounded-lg border text-left transition-all ${
+                isSelected
+                  ? "border-emerald-500 bg-emerald-950/40 ring-1 ring-emerald-500/50 shadow-md"
+                  : "border-white/10 bg-white/[0.02] hover:border-white/25 hover:bg-white/[0.04]"
+              }`,
+            });
+
+            const cardHeader = el("div", { class: "flex w-full items-center justify-between" });
+            const titleGroup = el("div", { class: "flex items-center gap-2" });
+            titleGroup.append(
+              el("span", { class: "text-base", text: img.icon || "💿" }),
+              el("span", { class: "font-semibold text-neutral-100 text-xs", text: img.name }),
+            );
+            cardHeader.append(titleGroup);
+            if (isSelected) {
+              cardHeader.append(el("span", { class: "text-[10px] text-emerald-400 font-bold uppercase", text: "Selected" }));
+            }
+
+            const desc = el("span", { class: "text-[11px] text-neutral-400 line-clamp-2 leading-relaxed", text: img.description });
+            const specs = el("div", { class: "flex items-center gap-2 text-[10px] text-neutral-500 mt-1 font-mono" });
+            specs.append(
+              el("span", { text: img.arch }),
+              el("span", { text: "·" }),
+              el("span", { text: `≥${img.min_memory_mb}MB RAM` }),
+              el("span", { text: "·" }),
+              el("span", { text: `${img.min_disk_gb}GB disk` }),
+            );
+
+            card.append(cardHeader, desc, specs);
+            card.addEventListener("click", () => {
+              applySelectedVmImage(vm, img);
+              selectedImageObj = img;
+              renderCurrentStep();
+            });
+            grid.append(card);
+          }
+          contentArea.append(grid);
+        };
+
+        if (imageTab === "catalog") {
+          renderCatalogGrid();
+        } else {
+          const customForm = el("div", { class: "flex flex-col gap-3 p-3 bg-white/[0.02] border border-white/5 rounded-lg" });
+          const pathInput = textInput(vm.image ?? "", (v) => { vm.image = v.trim() || null; }, {
+            placeholder: "/var/lib/stack-stack/images/custom-guest.qcow2 or https://.../image.iso",
+          });
+          customForm.append(
+            field("Image Path or URL", pathInput, "Absolute file path on host or direct URL to download."),
+            el("div", { class: "text-xs text-neutral-400 leading-relaxed" }, [
+              el("p", { text: "You can point this VM to any ISO installer or QCOW2 cloud image residing on the host." }),
+              el("p", { class: "text-neutral-500 mt-1", text: "Tip: For manual CD/DVD installers, Cloud-Init will be bypassed automatically." }),
+            ]),
+          );
+          contentArea.append(customForm);
+        }
+
+        imageBox.append(contentArea);
+        stepContent.append(imageBox);
+      } else if (activeStep === 2) {
+        // Step 2: System & CPU
+        const sysBox = el("div", { class: "flex flex-col gap-4" });
+
+        const formGrid = el("div", { class: "grid grid-cols-1 md:grid-cols-2 gap-3" });
+        const vcpusInput = numberInput(vm.vcpus, (v) => { vm.vcpus = Math.max(1, v); }, { min: 1, max: 256 });
+        const cpuSelect = select(vm.cpu_model, [
+          ["host", "host (fastest / native host CPU passthrough)"],
+          ["max", "max (maximum virtualized feature set)"],
+          ["qemu64", "qemu64 (standard generic x86_64)"],
+        ], (v) => { vm.cpu_model = v as CpuModel; });
+
+        const machineSelect = select(vm.machine, [
+          ["q35", "q35 (Modern PCIe architecture - Recommended)"],
+          ["pc", "pc / i440fx (Legacy PCI architecture)"],
+        ], (v) => { vm.machine = v as VmConfig["machine"]; });
+
+        const firmwareSelect = select(vm.firmware, [
+          ["uefi", "UEFI / OVMF (Modern GPT partitions & EFI)"],
+          ["bios", "BIOS / SeaBIOS (Standard MBR boot)"],
+        ], (v) => { vm.firmware = v as VmConfig["firmware"]; });
+
+        formGrid.append(
+          field("vCPU Cores", vcpusInput, "Number of virtual CPU execution threads assigned to this virtual machine."),
+          field("CPU Architecture Model", cpuSelect, "'host' matches the physical CPU model and flags for near bare-metal compute performance."),
+          field("Machine Type", machineSelect, "Q35 provides native PCIe topology, ideal for modern operating systems."),
+          field("BIOS Firmware", firmwareSelect, "UEFI (OVMF) is recommended for modern distributions and Windows."),
+        );
+
+        const optionsSection = el("div", { class: "flex flex-col gap-2 pt-2 border-t border-white/5" });
+        optionsSection.append(
+          el("span", { class: "text-xs font-semibold text-neutral-300 uppercase tracking-wide", text: "Virtualization Features" }),
+          el("div", { class: "grid grid-cols-1 md:grid-cols-2 gap-2" }, [
+            checkbox(vm.guest_agent, (v) => { vm.guest_agent = v; }, "QEMU Guest Agent (Reports memory & IP stats, allows graceful shutdown)"),
+            checkbox(vm.vnc_enabled, (v) => { vm.vnc_enabled = v; }, "VNC Graphics Console (Enable web desktop viewing)"),
+          ]),
+        );
+
+        sysBox.append(formGrid, optionsSection);
+        stepContent.append(sysBox);
+      } else if (activeStep === 3) {
+        // Step 3: Disks & Memory
+        const storageBox = el("div", { class: "flex flex-col gap-4" });
+
+        // Memory row
+        const memCard = el("div", { class: "flex flex-col gap-2 p-3 bg-white/[0.02] border border-white/5 rounded-lg" });
+        const memTop = el("div", { class: "flex items-center justify-between" });
+        memTop.append(
+          el("span", { class: "text-xs font-semibold text-neutral-200", text: "Memory (RAM)" }),
+          el("span", { class: "text-xs font-mono text-emerald-400", text: `${vm.memory_mb} MiB (${(vm.memory_mb / 1024).toFixed(1)} GiB)` }),
+        );
+        const memInput = numberInput(vm.memory_mb, (v) => {
+          vm.memory_mb = Math.max(128, v);
+          renderCurrentStep();
+        }, { min: 128 });
+        const memPills = el("div", { class: "flex items-center gap-1.5 mt-1" });
+        [1024, 2048, 4096, 8192, 16384].forEach((mb) => {
+          const pill = button(
+            `${mb / 1024} GiB`,
+            vm.memory_mb === mb ? "bg-emerald-500/25 text-emerald-300 border-emerald-500" : "text-neutral-400 hover:text-white",
+            () => {
+              vm.memory_mb = mb;
+              renderCurrentStep();
+            },
+          );
+          memPills.append(pill);
+        });
+        memCard.append(memTop, field("RAM in MiB", memInput), memPills);
+
+        // Disk row
+        const diskCard = el("div", { class: "flex flex-col gap-2 p-3 bg-white/[0.02] border border-white/5 rounded-lg" });
+        const diskTop = el("div", { class: "flex items-center justify-between" });
+        diskTop.append(
+          el("span", { class: "text-xs font-semibold text-neutral-200", text: "Primary Virtual Disk" }),
+          el("span", { class: "text-xs font-mono text-emerald-400", text: `${vm.disk_gb} GiB` }),
+        );
+        const diskInput = numberInput(vm.disk_gb, (v) => {
+          vm.disk_gb = Math.max(1, v);
+          renderCurrentStep();
+        }, { min: 1 });
+        const diskPills = el("div", { class: "flex items-center gap-1.5 mt-1" });
+        [10, 20, 40, 80, 160].forEach((gb) => {
+          const pill = button(
+            `${gb} GiB`,
+            vm.disk_gb === gb ? "bg-emerald-500/25 text-emerald-300 border-emerald-500" : "text-neutral-400 hover:text-white",
+            () => {
+              vm.disk_gb = gb;
+              renderCurrentStep();
+            },
+          );
+          diskPills.append(pill);
+        });
+        const diskFormatSelect = select(vm.disk_format, [
+          ["qcow2", "qcow2 (Thin-provisioned, snapshots supported - Recommended)"],
+          ["raw", "raw (Direct fixed storage allocation)"],
+        ], (v) => { vm.disk_format = v as VmConfig["disk_format"]; });
+
+        diskCard.append(
+          diskTop,
+          el("div", { class: "grid grid-cols-1 md:grid-cols-2 gap-3" }, [
+            field("Disk Size in GiB", diskInput),
+            field("Disk Image Format", diskFormatSelect, "qcow2 only allocates physical host space as data is written."),
+          ]),
+          diskPills,
+          el("div", { class: "pt-2 flex flex-wrap gap-4 border-t border-white/5" }, [
+            checkbox(vm.discard, (v) => { vm.discard = v; }, "TRIM / Discard (Frees unused guest blocks back to host SSD)"),
+            checkbox(vm.hugepages, (v) => { vm.hugepages = v; }, "Hugepages 2M", !state?.host.hugepages_2m_free),
+          ]),
+        );
+
+        storageBox.append(memCard, diskCard);
+        stepContent.append(storageBox);
+      } else if (activeStep === 4) {
+        // Step 4: Network
+        const netBox = el("div", { class: "flex flex-col gap-4" });
+        const bridges = bridgeOptions();
+        const ci = vm.cloud_init;
+
+        const netCard = el("div", { class: "grid grid-cols-1 md:grid-cols-2 gap-3 p-3 bg-white/[0.02] border border-white/5 rounded-lg" });
+        const bridgeSelect = select(vm.bridge, bridges, (v) => { vm.bridge = v; });
+        const ipModeSelect = select(ci.ip_mode, [
+          ["dhcp", "DHCP (Automatic IP address from LAN gateway)"],
+          ["static", "Static (Manual IPv4 configuration)"],
+          ["none", "None (Isolated guest, no network)"],
+        ], (v) => {
+          ci.ip_mode = v as CloudInitIpMode;
+          renderCurrentStep();
+        });
+
+        netCard.append(
+          field("Bridge Interface", bridgeSelect, "The host network bridge that the virtual NIC connects to."),
+          field("IP Addressing Mode", ipModeSelect, "DHCP is standard for home servers and automatically assigns LAN IPs."),
+        );
+
+        netBox.append(netCard);
+
+        if (ci.ip_mode === "static") {
+          const staticCard = el("div", { class: "grid grid-cols-1 md:grid-cols-3 gap-3 p-3 bg-white/[0.02] border border-white/5 rounded-lg" });
+          const addrInput = textInput(ci.address ?? "", (v) => { ci.address = v.trim() || null; }, { placeholder: addressHint() });
+          const gwInput = textInput(ci.gateway, (v) => { ci.gateway = v; }, { placeholder: "192.168.0.1" });
+          const dnsInput = listInput(ci.dns, (v) => { ci.dns = v; }, { placeholder: "1.1.1.1, 8.8.8.8" });
+
+          staticCard.append(
+            field("IPv4 Address & CIDR", addrInput, "e.g. 192.168.0.120/24"),
+            field("Default Gateway", gwInput, "Router or gateway IP address"),
+            field("DNS Nameservers", dnsInput, "Comma-separated upstream resolvers"),
+          );
+          netBox.append(staticCard);
+        }
+
+        const toggles = el("div", { class: "flex items-center gap-3" }, [
+          checkbox(vm.multiqueue, (v) => { vm.multiqueue = v; }, "Multiqueue Network (Distribute NIC traffic across multiple vCPUs)"),
+        ]);
+        netBox.append(toggles);
+
+        stepContent.append(netBox);
+      } else if (activeStep === 5) {
+        // Step 5: Cloud-Init
+        const ciBox = el("div", { class: "flex flex-col gap-3" });
+        const ci = vm.cloud_init;
+
+        const enableBox = checkbox(ci.enabled, (v) => {
+          ci.enabled = v;
+          renderCurrentStep();
+        }, "Enable automated Cloud-Init provisioning on first boot");
+
+        ciBox.append(
+          el("div", { class: "p-3 bg-white/[0.02] border border-white/5 rounded-lg flex items-center justify-between" }, [
+            enableBox,
+            el("span", { class: "text-[11px] text-neutral-400", text: "Sets up credentials, SSH keys, and network automatically." }),
+          ]),
+        );
+
+        if (ci.enabled) {
+          const credsGrid = el("div", { class: "grid grid-cols-1 md:grid-cols-2 gap-3" });
+          const userInput = textInput(ci.username, (v) => { ci.username = v; }, { placeholder: "debian" });
+          const passInput = textInput(ci.password, (v) => { ci.password = v; }, { type: "password", placeholder: "Leave blank for SSH key only" });
+
+          credsGrid.append(
+            field("Default User Account", userInput, "System login user created inside the virtual machine."),
+            field("User Password", passInput, "Console and sudo password for this user."),
+          );
+
+          const sshBox = el("div", { class: "flex flex-col gap-1.5" });
+          const sshHeader = el("div", { class: "flex items-center justify-between text-[11px] text-neutral-400" });
+          sshHeader.append(
+            el("span", { text: "SSH Authorized Public Keys" }),
+            el("span", { class: "text-[10px] text-neutral-500", text: "Paste id_ed25519.pub or id_rsa.pub" }),
+          );
+
+          const sshArea = el("textarea", {
+            class: "w-full h-28 font-mono text-[11px] p-2.5 bg-[#141722] border border-white/10 rounded-lg text-neutral-200 outline-none focus:border-emerald-500 resize-none",
+            placeholder: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAI... user@machine\nssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQC... user@work",
+          }) as HTMLTextAreaElement;
+          sshArea.value = ci.ssh_keys.join("\n") || sshKeysRaw;
+          sshArea.addEventListener("input", () => {
+            sshKeysRaw = sshArea.value;
+            ci.ssh_keys = sshArea.value.split("\n").map((s) => s.trim()).filter(Boolean);
+          });
+
+          sshBox.append(sshHeader, sshArea);
+          ciBox.append(credsGrid, sshBox);
+        }
+
+        stepContent.append(ciBox);
+      } else if (activeStep === 6) {
+        // Step 6: Confirm & Deploy
+        const confirmBox = el("div", { class: "flex flex-col gap-4" });
+
+        const reviewCard = el("div", { class: "rounded-lg border border-white/10 bg-white/[0.02] overflow-hidden" });
+        const table = el("table", { class: "w-full text-xs text-left" });
+        const tbody = el("tbody", { class: "divide-y divide-white/5" });
+
+        const rows: [string, string][] = [
+          ["Target Node", "host (fujitsu)"],
+          ["VM ID & Name", `${vm.id} (${vm.cloud_init.hostname || "vm"})`],
+          ["Operating System", selectedImageObj?.name || vm.image || "Empty / Custom Disk"],
+          ["Architecture & Firmware", `${vm.arch} · ${vm.machine} · ${vm.firmware.toUpperCase()}`],
+          ["Processor (vCPUs)", `${vm.vcpus} Core(s) · ${vm.cpu_model}`],
+          ["Memory (RAM)", `${vm.memory_mb} MiB (${(vm.memory_mb / 1024).toFixed(1)} GiB)`],
+          ["Virtual Disk", `${vm.disk_gb} GiB · ${vm.disk_format} ${vm.discard ? "(TRIM enabled)" : ""}`],
+          ["Network Interface", `${vm.bridge} (${vm.cloud_init.ip_mode})`],
+          ["Provisioning", vm.cloud_init.enabled ? `User: ${vm.cloud_init.username || "root"} · ${vm.cloud_init.ssh_keys.length} SSH key(s)` : "Disabled"],
+        ];
+
+        for (const [k, v] of rows) {
+          const tr = el("tr", { class: "hover:bg-white/[0.02]" });
+          tr.append(
+            el("td", { class: "py-2 px-3 text-neutral-400 font-medium w-48", text: k }),
+            el("td", { class: "py-2 px-3 text-neutral-200 font-mono", text: v }),
+          );
+          tbody.append(tr);
+        }
+        table.append(tbody);
+        reviewCard.append(table);
+
+        const startToggle = checkbox(startAfterCreate, (v) => { startAfterCreate = v; }, "Start virtual machine immediately after creation");
+
+        confirmBox.append(reviewCard, el("div", { class: "p-2 bg-emerald-950/20 border border-emerald-500/20 rounded-lg" }, [startToggle]));
+        stepContent.append(confirmBox);
+      }
+
+      // Update footer
+      footer.replaceChildren();
+      const cancelBtn = button("Cancel", "text-neutral-400 hover:text-white", () => modal.close());
+
+      const navGroup = el("div", { class: "flex items-center gap-2" });
+      const backBtn = button("‹ Back", "text-neutral-300 hover:text-white", () => {
+        if (activeStep > 0) {
+          activeStep--;
+          renderCurrentStep();
+        }
+      });
+      backBtn.disabled = activeStep === 0;
+
+      navGroup.append(backBtn);
+
+      if (activeStep < steps.length - 1) {
+        const nextBtn = button("Next ›", "border-emerald-600 bg-emerald-500/20 text-emerald-300 hover:bg-emerald-500/30 font-semibold px-4 py-1.5", () => {
+          activeStep++;
+          renderCurrentStep();
+        });
+        navGroup.append(nextBtn);
+      } else {
+        const finishBtn = button("Finish & Create VM", "border-emerald-600 bg-emerald-500/25 text-emerald-300 hover:bg-emerald-500/35 font-semibold px-5 py-1.5 shadow-md", async () => {
+          finishBtn.disabled = true;
+          finishBtn.textContent = "Creating Virtual Machine…";
+          try {
+            const report = await virtApi.createVm(cloneVm(vm));
+            showToast({
+              tone: "ok",
+              title: "VM Created Successfully",
+              message: report.output || `VM ${vm.id} is configured.`,
+            });
+            if (startAfterCreate && report.id) {
+              await virtApi.vmStart(report.id).catch(() => null);
+              showToast({
+                tone: "ok",
+                title: "VM Started",
+                message: `VM ${report.id} is now running.`,
+              });
+            }
+            modal.close();
+            await load();
+          } catch (err) {
+            finishBtn.disabled = false;
+            finishBtn.textContent = "Finish & Create VM";
+            showToast({ tone: "error", title: "Creation Failed", message: errorText(err) });
+          }
+        });
+        navGroup.append(finishBtn);
+      }
+
+      footer.append(cancelBtn, navGroup);
+    }
+
+    renderCurrentStep();
+  }
+
+  function openCtWizard(): void {
+    const modal = openModal("Create: LXC Container", "max-w-3xl");
+    modal.body.className = "flex flex-col gap-4";
+
+    const ct = blankCt();
+    ct.id = nextFreeId("ct");
+    ct.hostname = `ct-${ct.id}`;
+    let activeStep = 0;
+    let startAfterCreate = true;
+    let templateSearch = "";
+    let selectedTemplateObj: GuestImage | null = null;
+    let sshKeysRaw = "";
+
+    const steps = ["General", "Template", "Disks & Mounts", "CPU & Memory", "Network", "Confirm"];
+
+    const stepperContainer = el("div");
+    const stepContent = el("div", { class: "min-h-[360px] flex flex-col gap-4" });
+    const footer = el("div", { class: "flex items-center justify-between border-t border-white/10 pt-3" });
+
+    modal.body.append(stepperContainer, stepContent, footer);
+
+    function renderCurrentStep(): void {
+      stepperContainer.replaceChildren(renderStepper(steps, activeStep, (step) => {
+        activeStep = step;
+        renderCurrentStep();
+      }));
+
+      stepContent.replaceChildren();
+
+      if (activeStep === 0) {
+        // Step 0: General
+        const generalBox = el("div", { class: "flex flex-col gap-3" });
+        const formGrid = el("div", { class: "grid grid-cols-1 md:grid-cols-2 gap-3" });
+
+        const idInput = textInput(ct.id, (v) => { ct.id = v; }, { placeholder: "100" });
+        const hostInput = textInput(ct.hostname, (v) => { ct.hostname = v; ct.name = v; }, { placeholder: "web-container" });
+        const passInput = textInput(ct.password, (v) => { ct.password = v; }, { type: "password", placeholder: "Root account password" });
+
+        formGrid.append(
+          field("Container ID", idInput, "Numeric identifier for this container."),
+          field("Hostname", hostInput, "Container hostname and local DNS name."),
+          field("Root Password", passInput, "Root password for console or SSH access."),
+        );
+
+        const sshBox = el("div", { class: "flex flex-col gap-1.5" });
+        const sshArea = el("textarea", {
+          class: "w-full h-20 font-mono text-[11px] p-2 bg-[#141722] border border-white/10 rounded-lg text-neutral-200 outline-none focus:border-emerald-500 resize-none",
+          placeholder: "Paste SSH public keys here (optional)",
+        }) as HTMLTextAreaElement;
+        sshArea.value = ct.ssh_keys.join("\n") || sshKeysRaw;
+        sshArea.addEventListener("input", () => {
+          sshKeysRaw = sshArea.value;
+          ct.ssh_keys = sshArea.value.split("\n").map((s) => s.trim()).filter(Boolean);
+        });
+        sshBox.append(field("SSH Public Keys", sshArea));
+
+        const toggles = el("div", { class: "grid grid-cols-1 md:grid-cols-2 gap-2 pt-2 border-t border-white/5" }, [
+          checkbox(ct.unprivileged, (v) => { ct.unprivileged = v; }, "Unprivileged container (Recommended security isolation)"),
+          checkbox(ct.nesting, (v) => { ct.nesting = v; }, "Nesting (Allows running Docker or LXC inside container)"),
+        ]);
+
+        generalBox.append(formGrid, sshBox, toggles);
+        stepContent.append(generalBox);
+      } else if (activeStep === 1) {
+        // Step 1: Template
+        const templateBox = el("div", { class: "flex flex-col gap-3" });
+        const searchInput = textInput(templateSearch, (v) => {
+          templateSearch = v;
+          renderTemplates();
+        }, { placeholder: "Search container templates (Alpine, Debian, Ubuntu…)", class: "w-full" });
+
+        const listContainer = el("div", { class: "flex-1" });
+        const renderTemplates = () => {
+          listContainer.replaceChildren();
+          const query = templateSearch.toLowerCase().trim();
+          const templates = (state?.catalog ?? [])
+            .filter((img) => img.kind === "lxc")
+            .filter((img) => !query || `${img.name} ${img.id} ${img.description}`.toLowerCase().includes(query));
+
+          if (templates.length === 0) {
+            listContainer.append(emptyNote("No matching LXC templates found."));
+            return;
+          }
+
+          const grid = el("div", { class: "grid grid-cols-1 md:grid-cols-2 gap-2 max-h-[320px] overflow-y-auto pr-1" });
+          for (const tmpl of templates) {
+            const isSelected = ct.template === tmpl.id;
+            const card = el("button", {
+              type: "button",
+              class: `flex flex-col items-start gap-1 p-2.5 rounded-lg border text-left transition-all ${
+                isSelected
+                  ? "border-sky-500 bg-sky-950/40 ring-1 ring-sky-500/50 shadow-md"
+                  : "border-white/10 bg-white/[0.02] hover:border-white/25 hover:bg-white/[0.04]"
+              }`,
+            });
+
+            const top = el("div", { class: "flex w-full items-center justify-between" });
+            top.append(
+              el("span", { class: "font-semibold text-xs text-neutral-100", text: tmpl.name }),
+              el("span", { class: "text-[10px] font-mono text-neutral-500", text: tmpl.arch }),
+            );
+            card.append(top, el("span", { class: "text-[11px] text-neutral-400 line-clamp-1", text: tmpl.description }));
+            card.addEventListener("click", () => {
+              applySelectedCtTemplate(ct, tmpl);
+              selectedTemplateObj = tmpl;
+              renderCurrentStep();
+            });
+            grid.append(card);
+          }
+          listContainer.append(grid);
+        };
+
+        renderTemplates();
+        templateBox.append(searchInput, listContainer);
+        stepContent.append(templateBox);
+      } else if (activeStep === 2) {
+        // Step 2: Disks & Mounts
+        const diskBox = el("div", { class: "flex flex-col gap-4" });
+        const rootfsInput = numberInput(ct.rootfs_gb, (v) => { ct.rootfs_gb = Math.max(1, v); }, { min: 1 });
+        const pills = el("div", { class: "flex items-center gap-1.5" });
+        [4, 8, 16, 32, 64].forEach((gb) => {
+          const pill = button(
+            `${gb} GiB`,
+            ct.rootfs_gb === gb ? "bg-sky-500/25 text-sky-300 border-sky-500" : "text-neutral-400 hover:text-white",
+            () => {
+              ct.rootfs_gb = gb;
+              renderCurrentStep();
+            },
+          );
+          pills.append(pill);
+        });
+
+        const rootCard = el("div", { class: "flex flex-col gap-2 p-3 bg-white/[0.02] border border-white/5 rounded-lg" }, [
+          field("Root Filesystem Size (GiB)", rootfsInput),
+          pills,
+        ]);
+
+        const bindCard = el("div", { class: "flex flex-col gap-2 p-3 bg-white/[0.02] border border-white/5 rounded-lg" });
+        bindCard.append(el("span", { class: "text-xs font-semibold text-neutral-200", text: "Host Bind Mounts" }));
+        ct.binds.forEach((bind, idx) => {
+          const row = el("div", { class: "flex flex-wrap items-center gap-2 text-xs" });
+          row.append(
+            textInput(bind.source, (v) => { bind.source = v; }, { placeholder: "/srv/data (host)" }),
+            el("span", { class: "text-neutral-500", text: "→" }),
+            textInput(bind.target, (v) => { bind.target = v; }, { placeholder: "/mnt/data (container)" }),
+            checkbox(bind.readonly, (v) => { bind.readonly = v; }, "read-only"),
+            button("✕", "text-rose-400 hover:text-rose-300 px-1.5", () => {
+              ct.binds.splice(idx, 1);
+              renderCurrentStep();
+            }),
+          );
+          bindCard.append(row);
+        });
+        bindCard.append(
+          button("+ Add Bind Mount", "text-sky-300 hover:border-sky-500 text-xs", () => {
+            ct.binds.push({ source: "", target: "", readonly: false });
+            renderCurrentStep();
+          }),
+        );
+
+        diskBox.append(rootCard, bindCard);
+        stepContent.append(diskBox);
+      } else if (activeStep === 3) {
+        // Step 3: CPU & Memory
+        const cpuMemBox = el("div", { class: "flex flex-col gap-4" });
+        const grid = el("div", { class: "grid grid-cols-1 md:grid-cols-3 gap-3 p-3 bg-white/[0.02] border border-white/5 rounded-lg" });
+
+        const coresInput = numberInput(ct.cores, (v) => { ct.cores = Math.max(1, v); }, { min: 1, max: 256 });
+        const memInput = numberInput(ct.memory_mb, (v) => { ct.memory_mb = Math.max(64, v); }, { min: 64 });
+        const swapInput = numberInput(ct.swap_mb, (v) => { ct.swap_mb = Math.max(0, v); }, { min: 0 });
+
+        grid.append(
+          field("CPU Cores", coresInput),
+          field("Memory (MiB)", memInput),
+          field("Swap (MiB)", swapInput),
+        );
+        cpuMemBox.append(grid);
+        stepContent.append(cpuMemBox);
+      } else if (activeStep === 4) {
+        // Step 4: Network
+        const netBox = el("div", { class: "flex flex-col gap-3" });
+        const bridges = bridgeOptions();
+        const bridgeSelect = select(ct.bridge, bridges, (v) => { ct.bridge = v; });
+        const ipModeSelect = select(ct.ip_mode, [
+          ["dhcp", "DHCP (Automatic)"],
+          ["static", "Static IPv4"],
+          ["none", "None (Isolated)"],
+        ], (v) => {
+          ct.ip_mode = v as CloudInitIpMode;
+          renderCurrentStep();
+        });
+
+        const netCard = el("div", { class: "grid grid-cols-1 md:grid-cols-2 gap-3 p-3 bg-white/[0.02] border border-white/5 rounded-lg" }, [
+          field("Bridge Interface", bridgeSelect),
+          field("IP Mode", ipModeSelect),
+        ]);
+        netBox.append(netCard);
+
+        if (ct.ip_mode === "static") {
+          const staticCard = el("div", { class: "grid grid-cols-1 md:grid-cols-3 gap-3 p-3 bg-white/[0.02] border border-white/5 rounded-lg" });
+          const addrInput = textInput(ct.address ?? "", (v) => { ct.address = v.trim() || null; }, { placeholder: addressHint() });
+          const gwInput = textInput(ct.gateway, (v) => { ct.gateway = v; }, { placeholder: "192.168.0.1" });
+          const dnsInput = listInput(ct.dns, (v) => { ct.dns = v; }, { placeholder: "1.1.1.1, 8.8.8.8" });
+
+          staticCard.append(
+            field("IPv4 Address & CIDR", addrInput),
+            field("Default Gateway", gwInput),
+            field("DNS Servers", dnsInput),
+          );
+          netBox.append(staticCard);
+        }
+
+        stepContent.append(netBox);
+      } else if (activeStep === 5) {
+        // Step 5: Confirm
+        const confirmBox = el("div", { class: "flex flex-col gap-4" });
+        const reviewCard = el("div", { class: "rounded-lg border border-white/10 bg-white/[0.02] overflow-hidden" });
+        const table = el("table", { class: "w-full text-xs text-left" });
+        const tbody = el("tbody", { class: "divide-y divide-white/5" });
+
+        const rows: [string, string][] = [
+          ["Container ID & Name", `${ct.id} (${ct.hostname})`],
+          ["Template", selectedTemplateObj?.name || ct.template || "Standard LXC"],
+          ["CPU & Memory", `${ct.cores} Core(s) · ${ct.memory_mb} MiB RAM · ${ct.swap_mb} MiB Swap`],
+          ["Root Filesystem", `${ct.rootfs_gb} GiB`],
+          ["Network", `${ct.bridge} (${ct.ip_mode})`],
+          ["Isolation", ct.unprivileged ? "Unprivileged (Safe)" : "Privileged"],
+        ];
+
+        for (const [k, v] of rows) {
+          const tr = el("tr", { class: "hover:bg-white/[0.02]" });
+          tr.append(
+            el("td", { class: "py-2 px-3 text-neutral-400 font-medium w-48 text-xs", text: k }),
+            el("td", { class: "py-2 px-3 text-neutral-200 font-mono text-xs", text: v }),
+          );
+          tbody.append(tr);
+        }
+        table.append(tbody);
+        reviewCard.append(table);
+
+        const startToggle = checkbox(startAfterCreate, (v) => { startAfterCreate = v; }, "Start container immediately after creation");
+        confirmBox.append(reviewCard, el("div", { class: "p-2 bg-sky-950/20 border border-sky-500/20 rounded-lg" }, [startToggle]));
+        stepContent.append(confirmBox);
+      }
+
+      // Update footer
+      footer.replaceChildren();
+      const cancelBtn = button("Cancel", "text-neutral-400 hover:text-white", () => modal.close());
+      const navGroup = el("div", { class: "flex items-center gap-2" });
+      const backBtn = button("‹ Back", "text-neutral-300 hover:text-white", () => {
+        if (activeStep > 0) {
+          activeStep--;
+          renderCurrentStep();
+        }
+      });
+      backBtn.disabled = activeStep === 0;
+      navGroup.append(backBtn);
+
+      if (activeStep < steps.length - 1) {
+        const nextBtn = button("Next ›", "border-sky-600 bg-sky-500/20 text-sky-300 hover:bg-sky-500/30 font-semibold px-4 py-1.5", () => {
+          activeStep++;
+          renderCurrentStep();
+        });
+        navGroup.append(nextBtn);
+      } else {
+        const finishBtn = button("Finish & Create Container", "border-sky-600 bg-sky-500/25 text-sky-300 hover:bg-sky-500/35 font-semibold px-5 py-1.5 shadow-md", async () => {
+          finishBtn.disabled = true;
+          finishBtn.textContent = "Creating Container…";
+          try {
+            const report = await virtApi.createCt(cloneCt(ct));
+            showToast({
+              tone: "ok",
+              title: "Container Created Successfully",
+              message: report.output || `Container ${ct.id} is configured.`,
+            });
+            if (startAfterCreate && report.id) {
+              await virtApi.ctStart(report.id).catch(() => null);
+              showToast({
+                tone: "ok",
+                title: "Container Started",
+                message: `Container ${report.id} is now running.`,
+              });
+            }
+            modal.close();
+            await load();
+          } catch (err) {
+            finishBtn.disabled = false;
+            finishBtn.textContent = "Finish & Create Container";
+            showToast({ tone: "error", title: "Creation Failed", message: errorText(err) });
+          }
+        });
+        navGroup.append(finishBtn);
+      }
+
+      footer.append(cancelBtn, navGroup);
+    }
+
+    renderCurrentStep();
+  }
+
   // --- tab: guests -------------------------------------------------------
 
   function buildGuests(): HTMLElement {
@@ -467,9 +1310,39 @@ export function createVirtualizationPage(): PageHandle {
       layout.append(el("div", { class: "text-neutral-600", text: "loading…" }));
       return layout;
     }
+
+    const guestToolbar = el("div", {
+      class: "flex flex-wrap items-center justify-between gap-3 rounded-lg border border-white/10 bg-white/[0.02] p-2.5",
+    });
+    const actionsGroup = el("div", { class: "flex items-center gap-2" });
+    const createVmBtn = button(
+      "+ Create Virtual Machine",
+      "border-emerald-600 bg-emerald-500/20 font-semibold text-emerald-300 hover:border-emerald-500 hover:bg-emerald-500/30 px-3 py-1.5 shadow-sm text-xs",
+      () => openVmWizard(),
+    );
+    const createCtBtn = button(
+      "+ Create LXC Container",
+      "border-sky-600 bg-sky-500/20 font-semibold text-sky-300 hover:border-sky-500 hover:bg-sky-500/30 px-3 py-1.5 shadow-sm text-xs",
+      () => openCtWizard(),
+    );
+    actionsGroup.append(createVmBtn, createCtBtn);
+
+    const statsInfo = el("div", { class: "flex items-center gap-3 text-xs text-neutral-400" });
+    const vmCount = state.statuses.filter((s) => s.kind === "vm").length;
+    const ctCount = state.statuses.filter((s) => s.kind === "ct").length;
+    const runningCount = state.statuses.filter((s) => s.state === "running").length;
+    statsInfo.append(
+      el("span", { text: `${vmCount} VM(s) · ${ctCount} CT(s)` }),
+      el("span", { class: "text-neutral-600", text: "·" }),
+      el("span", { class: "text-emerald-400 font-medium", text: `${runningCount} running` }),
+    );
+
+    guestToolbar.append(actionsGroup, statsInfo);
+    layout.append(guestToolbar);
+
     if (state.statuses.length === 0) {
       layout.append(
-        emptyNote("no guests yet. Create a virtual machine or a container from the tabs above."),
+        emptyNote("No virtual machines or containers yet. Click '+ Create Virtual Machine' or '+ Create LXC Container' above to get started."),
       );
       return layout;
     }
@@ -585,6 +1458,22 @@ export function createVirtualizationPage(): PageHandle {
   function buildNewVm(): HTMLElement {
     const layout = el("div", { class: "grid gap-4 xl:grid-cols-2" });
     const vm = vmDraft;
+
+    const wizardBanner = el("div", {
+      class: "col-span-full flex flex-wrap items-center justify-between gap-3 p-3.5 rounded-lg border border-emerald-500/30 bg-emerald-950/20 text-neutral-200",
+    });
+    wizardBanner.append(
+      el("div", { class: "flex flex-col" }, [
+        el("span", { class: "font-semibold text-emerald-300 text-sm", text: "Proxmox-Style Step-by-Step Creation Wizard" }),
+        el("span", { class: "text-xs text-neutral-400 mt-0.5", text: "Guided step-by-step setup for node, cloud image catalog, vCPUs, SSD TRIM discard, and cloud-init." }),
+      ]),
+      button(
+        "Launch Creation Wizard Modal",
+        "border-emerald-600 bg-emerald-500/25 font-semibold text-emerald-300 hover:bg-emerald-500/35 px-4 py-1.5 shadow-sm text-xs",
+        () => openVmWizard(),
+      ),
+    );
+    layout.append(wizardBanner);
 
     layout.append(vmImagePicker());
 
@@ -756,6 +1645,22 @@ export function createVirtualizationPage(): PageHandle {
   function buildNewCt(): HTMLElement {
     const layout = el("div", { class: "grid gap-4 xl:grid-cols-2" });
     const ct = ctDraft;
+
+    const wizardBanner = el("div", {
+      class: "col-span-full flex flex-wrap items-center justify-between gap-3 p-3.5 rounded-lg border border-sky-500/30 bg-sky-950/20 text-neutral-200",
+    });
+    wizardBanner.append(
+      el("div", { class: "flex flex-col" }, [
+        el("span", { class: "font-semibold text-sky-300 text-sm", text: "Proxmox-Style Step-by-Step Container Wizard" }),
+        el("span", { class: "text-xs text-neutral-400 mt-0.5", text: "Guided step-by-step setup for container hostname, templates, mounts, and network." }),
+      ]),
+      button(
+        "Launch Container Wizard Modal",
+        "border-sky-600 bg-sky-500/25 font-semibold text-sky-300 hover:bg-sky-500/35 px-4 py-1.5 shadow-sm text-xs",
+        () => openCtWizard(),
+      ),
+    );
+    layout.append(wizardBanner);
 
     layout.append(ctTemplatePicker());
 

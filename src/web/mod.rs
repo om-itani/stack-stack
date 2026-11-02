@@ -226,12 +226,20 @@ pub fn router(state: AppState) -> Router {
         )
         .route("/api/remote-access", get(remote_access::status))
         .route(
+            "/api/remote-access/tailscale/install",
+            post(remote_access::tailscale_install),
+        )
+        .route(
             "/api/remote-access/tailscale/up",
             post(remote_access::tailscale_up),
         )
         .route(
             "/api/remote-access/tailscale/down",
             post(remote_access::tailscale_down),
+        )
+        .route(
+            "/api/remote-access/netbird/install",
+            post(remote_access::netbird_install),
         )
         .route(
             "/api/remote-access/netbird/up",

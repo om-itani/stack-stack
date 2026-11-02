@@ -293,6 +293,52 @@ pub fn cloudflared_status() -> CloudflaredStatus {
     }
 }
 
+/// Automated one-click installation of Tailscale via official script and enabling tailscaled.
+pub fn tailscale_install() -> Result<String, String> {
+    if !cfg!(target_os = "linux") {
+        return Err("Tailscale automated installation is supported on Linux hosts".to_string());
+    }
+
+    let cmd =
+        "curl -fsSL https://tailscale.com/install.sh | sh && systemctl enable --now tailscaled";
+    let out = crate::proc::run(
+        "sh",
+        &["-c".to_string(), cmd.to_string()],
+        None,
+        Duration::from_secs(180),
+    )
+    .map_err(|e| format!("Failed to execute installer process: {e}"))?;
+
+    if out.success() {
+        Ok("Tailscale installed successfully and tailscaled service is running".to_string())
+    } else {
+        Err(format!("Installation failed: {}", out.combined().trim()))
+    }
+}
+
+/// Automated one-click installation of NetBird via official script and enabling netbird service.
+pub fn netbird_install() -> Result<String, String> {
+    if !cfg!(target_os = "linux") {
+        return Err("NetBird automated installation is supported on Linux hosts".to_string());
+    }
+
+    let cmd =
+        "curl -fsSL https://pkgs.netbird.io/install.sh | sh && systemctl enable --now netbird";
+    let out = crate::proc::run(
+        "sh",
+        &["-c".to_string(), cmd.to_string()],
+        None,
+        Duration::from_secs(180),
+    )
+    .map_err(|e| format!("Failed to execute installer process: {e}"))?;
+
+    if out.success() {
+        Ok("NetBird installed successfully and netbird service is running".to_string())
+    } else {
+        Err(format!("Installation failed: {}", out.combined().trim()))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

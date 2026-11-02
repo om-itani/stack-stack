@@ -671,10 +671,14 @@ export interface RemoteAccessOverview {
 
 export const remoteAccessApi = {
   status: () => request<RemoteAccessOverview>("/api/remote-access"),
+  tailscaleInstall: () =>
+    post<{ ok: boolean; job_id?: string; message?: string; error?: string }>("/api/remote-access/tailscale/install"),
   tailscaleUp: (params: { auth_key: string; hostname?: string; exit_node?: boolean; accept_routes?: boolean }) =>
     jsonRequest<{ ok: boolean; message?: string; error?: string }>("/api/remote-access/tailscale/up", "POST", params),
   tailscaleDown: () =>
     post<{ ok: boolean; message?: string; error?: string }>("/api/remote-access/tailscale/down"),
+  netbirdInstall: () =>
+    post<{ ok: boolean; job_id?: string; message?: string; error?: string }>("/api/remote-access/netbird/install"),
   netbirdUp: (params: { setup_key: string; management_url?: string }) =>
     jsonRequest<{ ok: boolean; message?: string; error?: string }>("/api/remote-access/netbird/up", "POST", params),
   netbirdDown: () =>

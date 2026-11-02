@@ -8,6 +8,7 @@
 
 import { remoteAccessApi, wireguardApi } from "../api";
 import type { ClientExport, RemoteAccessOverview, WgPeer, WgState } from "../api";
+import { showToast } from "../toast";
 import { bytes, uptime } from "../ui";
 import { button, checkbox, el, emptyNote, field, panel, tableEditor, textInput } from "../ui";
 
@@ -193,13 +194,60 @@ export function createVpnPage(): PageHandle {
     cardBody.className = "flex flex-col gap-3 p-4 text-xs";
 
     if (!ts || !ts.installed) {
-      cardBody.append(
-        el("div", { class: "rounded border border-amber-500/20 bg-amber-500/10 p-3 text-amber-300" }, [
-          el("div", { class: "font-semibold mb-1", text: "Tailscale is not installed on this host" }),
-          el("div", { class: "text-neutral-400 mb-2", text: "To use Tailscale for zero-config mesh networking, install the official package:" }),
-          el("pre", { class: "rounded bg-black/50 p-2 font-mono text-[11px] text-emerald-400", text: "curl -fsSL https://tailscale.com/install.sh | sh\nsudo systemctl enable --now tailscaled" }),
+      const installBox = el("div", {
+        class: "flex flex-col gap-3 rounded-lg border border-emerald-500/30 bg-emerald-950/20 p-4 text-neutral-300",
+      });
+      installBox.append(
+        el("div", { class: "flex items-center justify-between" }, [
+          el("div", { class: "flex flex-col" }, [
+            el("span", { class: "font-semibold text-emerald-300 text-sm", text: "Tailscale Zero-Config Mesh Network" }),
+            el("span", { class: "text-neutral-400 text-xs mt-0.5", text: "Connect your home server securely to laptops, phones, and off-site machines with WireGuard encryption." }),
+          ]),
         ]),
       );
+
+      const installBtn = button(
+        "Install Tailscale (1-Click)",
+        "border-emerald-600 bg-emerald-500/20 font-semibold text-emerald-300 hover:border-emerald-500 hover:bg-emerald-500/30 px-3 py-1.5",
+        async () => {
+          installBtn.disabled = true;
+          installBtn.textContent = "Installing Tailscale…";
+          try {
+            const res = await remoteAccessApi.tailscaleInstall();
+            showToast({
+              tone: "ok",
+              title: "Tailscale Installation Started",
+              message: res.message || "Downloading packages. Check activity drawer.",
+            });
+            window.dispatchEvent(new Event("stack-stack:activity-open"));
+            const interval = setInterval(async () => {
+              const overview = await remoteAccessApi.status().catch(() => null);
+              if (overview?.tailscale.installed) {
+                clearInterval(interval);
+                showToast({ tone: "ok", title: "Tailscale Installed!", message: "Tailscale daemon is active and ready." });
+                await load();
+              }
+            }, 3000);
+          } catch (err) {
+            installBtn.disabled = false;
+            installBtn.textContent = "Install Tailscale (1-Click)";
+            showToast({ tone: "error", title: "Installation Failed", message: errorText(err) });
+          }
+        },
+      );
+
+      installBox.append(
+        el("div", { class: "flex items-center gap-3 mt-1" }, [
+          installBtn,
+          el("span", { class: "text-[11px] text-neutral-500", text: "Installs official package and enables systemd service automatically." }),
+        ]),
+        el("details", { class: "mt-2 text-[11px] text-neutral-500 cursor-pointer" }, [
+          el("summary", { class: "hover:text-neutral-400", text: "View manual command alternative" }),
+          el("pre", { class: "rounded bg-black/60 p-2 font-mono text-[10px] text-emerald-400 mt-1", text: "curl -fsSL https://tailscale.com/install.sh | sh\nsudo systemctl enable --now tailscaled" }),
+        ]),
+      );
+
+      cardBody.append(installBox);
       return card;
     }
 
@@ -276,13 +324,60 @@ export function createVpnPage(): PageHandle {
     cardBody.className = "flex flex-col gap-3 p-4 text-xs";
 
     if (!nb || !nb.installed) {
-      cardBody.append(
-        el("div", { class: "rounded border border-amber-500/20 bg-amber-500/10 p-3 text-amber-300" }, [
-          el("div", { class: "font-semibold mb-1", text: "NetBird is not installed on this host" }),
-          el("div", { class: "text-neutral-400 mb-2", text: "To use NetBird for open-source WireGuard mesh networking, install the official package:" }),
-          el("pre", { class: "rounded bg-black/50 p-2 font-mono text-[11px] text-emerald-400", text: "curl -fsSL https://pkgs.netbird.io/install.sh | sh\nsudo systemctl enable --now netbird" }),
+      const installBox = el("div", {
+        class: "flex flex-col gap-3 rounded-lg border border-sky-500/30 bg-sky-950/20 p-4 text-neutral-300",
+      });
+      installBox.append(
+        el("div", { class: "flex items-center justify-between" }, [
+          el("div", { class: "flex flex-col" }, [
+            el("span", { class: "font-semibold text-sky-300 text-sm", text: "NetBird Fast Peer-to-Peer WireGuard Network" }),
+            el("span", { class: "text-neutral-400 text-xs mt-0.5", text: "Open-source WireGuard overlay network with single sign-on (SSO), MFA, and direct peer routing." }),
+          ]),
         ]),
       );
+
+      const installBtn = button(
+        "Install NetBird (1-Click)",
+        "border-sky-600 bg-sky-500/20 font-semibold text-sky-300 hover:border-sky-500 hover:bg-sky-500/30 px-3 py-1.5",
+        async () => {
+          installBtn.disabled = true;
+          installBtn.textContent = "Installing NetBird…";
+          try {
+            const res = await remoteAccessApi.netbirdInstall();
+            showToast({
+              tone: "ok",
+              title: "NetBird Installation Started",
+              message: res.message || "Downloading packages. Check activity drawer.",
+            });
+            window.dispatchEvent(new Event("stack-stack:activity-open"));
+            const interval = setInterval(async () => {
+              const overview = await remoteAccessApi.status().catch(() => null);
+              if (overview?.netbird.installed) {
+                clearInterval(interval);
+                showToast({ tone: "ok", title: "NetBird Installed!", message: "NetBird daemon is active and ready." });
+                await load();
+              }
+            }, 3000);
+          } catch (err) {
+            installBtn.disabled = false;
+            installBtn.textContent = "Install NetBird (1-Click)";
+            showToast({ tone: "error", title: "Installation Failed", message: errorText(err) });
+          }
+        },
+      );
+
+      installBox.append(
+        el("div", { class: "flex items-center gap-3 mt-1" }, [
+          installBtn,
+          el("span", { class: "text-[11px] text-neutral-500", text: "Installs official NetBird repository package and starts daemon." }),
+        ]),
+        el("details", { class: "mt-2 text-[11px] text-neutral-500 cursor-pointer" }, [
+          el("summary", { class: "hover:text-neutral-400", text: "View manual command alternative" }),
+          el("pre", { class: "rounded bg-black/60 p-2 font-mono text-[10px] text-sky-400 mt-1", text: "curl -fsSL https://pkgs.netbird.io/install.sh | sh\nsudo systemctl enable --now netbird" }),
+        ]),
+      );
+
+      cardBody.append(installBox);
       return card;
     }
 
