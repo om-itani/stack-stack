@@ -69,6 +69,7 @@ const STATE_TONES: Record<string, "ok" | "warn" | "err" | "muted"> = {
 export interface PageHandle {
   root: HTMLElement;
   onShow?: () => void;
+  onHide?: () => void;
 }
 
 export function createContainersPage(): PageHandle {
@@ -542,14 +543,22 @@ export function createContainersPage(): PageHandle {
   reload.addEventListener("click", () => void load());
   createStack.addEventListener("click", () => openEditor());
 
-  // The page lives as long as the tab, so the interval needs no teardown. The
-  // shell hides inactive pages with inline `display`, so that is the visibility
-  // signal here too.
-  window.setInterval(() => {
-    if (root.style.display !== "none" && !busy) {
-      void load();
+  let pollTimer: number | null = null;
+  const startPolling = () => {
+    if (pollTimer !== null) return;
+    pollTimer = window.setInterval(() => {
+      if (root.style.display !== "none" && !busy && !document.hidden) {
+        void load();
+      }
+    }, REFRESH_MS);
+  };
+
+  const stopPolling = () => {
+    if (pollTimer !== null) {
+      window.clearInterval(pollTimer);
+      pollTimer = null;
     }
-  }, REFRESH_MS);
+  };
 
   // The shell calls `onShow` as soon as the page is first displayed, so the
   // initial load happens there rather than eagerly here. A draft staged by the
@@ -557,6 +566,7 @@ export function createContainersPage(): PageHandle {
   return {
     root,
     onShow: () => {
+      startPolling();
       const draft = takeStackDraft();
       if (draft) {
         openEditor({
@@ -565,6 +575,9 @@ export function createContainersPage(): PageHandle {
         });
       }
       void load();
+    },
+    onHide: () => {
+      stopPolling();
     },
   };
 }

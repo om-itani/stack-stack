@@ -398,37 +398,39 @@ function startShell(): void {
     }
     activeId = resolved;
 
-    for (const def of pages) {
-      let handle = built.get(def.id);
-      if (!handle) {
-        handle = def.create();
-        viewEl.append(handle.root);
-        built.set(def.id, handle);
-      }
-      const isActive = def.id === resolved;
-      // Inline `display`, not the `hidden` attribute: an author `display` utility
-      // (e.g. `grid`, `flex`) outranks the UA rule for `[hidden]`.
-      if (isActive) {
-        handle.root.style.removeProperty("display");
-        // Replay the entrance animation on every visit. Re-adding the class
-        // needs a reflow in between or the browser coalesces it away.
-        handle.root.classList.remove("page-enter");
-        void handle.root.offsetWidth;
-        handle.root.classList.add("page-enter");
-      } else {
-        if (handle.root.style.display !== "none") {
-          handle.onHide?.();
-        }
+    // 1. Hide previously visible pages and pause their timers/subscriptions
+    for (const [pageId, handle] of built.entries()) {
+      if (pageId !== resolved && handle.root.style.display !== "none") {
+        handle.onHide?.();
         handle.root.style.display = "none";
-      }
-
-      const navButton = navButtons.get(def.id);
-      if (navButton) {
-        navButton.className = `${isActive ? NAV_ACTIVE : NAV_IDLE}${collapsed ? " justify-center px-0" : ""}`;
       }
     }
 
-    built.get(resolved)?.onShow?.();
+    // 2. Lazily build the requested page on first visit, keeping unvisited DOM clean
+    let handle = built.get(resolved);
+    if (!handle) {
+      const def = pages.find((page) => page.id === resolved);
+      if (def) {
+        handle = def.create();
+        viewEl.append(handle.root);
+        built.set(resolved, handle);
+      }
+    }
+
+    // 3. Reveal active page and trigger entrance animation & onShow
+    if (handle) {
+      handle.root.style.removeProperty("display");
+      handle.root.classList.remove("page-enter");
+      void handle.root.offsetWidth;
+      handle.root.classList.add("page-enter");
+      handle.onShow?.();
+    }
+
+    // 4. Update sidebar navigation state
+    for (const [navId, navButton] of navButtons.entries()) {
+      const isActive = navId === resolved;
+      navButton.className = `${isActive ? NAV_ACTIVE : NAV_IDLE}${collapsed ? " justify-center px-0" : ""}`;
+    }
 
     const target = `#/${resolved}`;
     if (updateHash && location.hash !== target) {
@@ -441,6 +443,16 @@ function startShell(): void {
   }
 
   window.addEventListener("hashchange", () => show(idFromHash(), false));
+
+  // Suspend polling and streaming when the browser tab is hidden/minimized
+  document.addEventListener("visibilitychange", () => {
+    const handle = built.get(activeId);
+    if (document.hidden) {
+      handle?.onHide?.();
+    } else {
+      handle?.onShow?.();
+    }
+  });
 
   // Header telemetry
   function renderHeader(snapshot: Snapshot): void {

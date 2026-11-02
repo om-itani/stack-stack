@@ -45,6 +45,7 @@ import { buildProxyTab } from "./proxyTab";
 export interface PageHandle {
   root: HTMLElement;
   onShow?: () => void;
+  onHide?: () => void;
 }
 
 type Tab = {
@@ -1849,11 +1850,23 @@ export function createNetworkPage(): PageHandle {
   reloadButton.addEventListener("click", () => void load(true));
 
   // Countdown refresh while a firewall change is reversible.
-  window.setInterval(() => {
-    if (root.style.display !== "none" && pending) {
-      renderChrome();
+  let countdownTimer: number | null = null;
+  const startCountdown = () => {
+    if (countdownTimer !== null) return;
+    countdownTimer = window.setInterval(() => {
+      if (root.style.display !== "none" && pending && !document.hidden) {
+        renderChrome();
+      } else if (!pending) {
+        stopCountdown();
+      }
+    }, 1000);
+  };
+  const stopCountdown = () => {
+    if (countdownTimer !== null) {
+      window.clearInterval(countdownTimer);
+      countdownTimer = null;
     }
-  }, 1000);
+  };
 
   // Paint the skeleton once, before the shell calls onShow, so navigating here
   // never shows a bare or error-tinted panel while the first fetch is in flight.
@@ -1861,7 +1874,13 @@ export function createNetworkPage(): PageHandle {
 
   return {
     root,
-    onShow: () => void load(false),
+    onShow: () => {
+      if (pending) startCountdown();
+      void load(false);
+    },
+    onHide: () => {
+      stopCountdown();
+    },
   };
 }
 

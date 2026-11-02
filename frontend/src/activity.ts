@@ -335,18 +335,30 @@ export function createActivity(): Activity {
     current?.close();
   }
 
+  const onVisibilityChange = (): void => {
+    if (!document.hidden && running && (!socket || socket.readyState !== WebSocket.OPEN)) {
+      void poll();
+    }
+  };
+
   return {
     root,
     start() {
       running = true;
       void poll();
       connect();
-      timer = window.setInterval(() => void poll(), POLL_MS);
+      timer = window.setInterval(() => {
+        if (!document.hidden && (!socket || socket.readyState !== WebSocket.OPEN)) {
+          void poll();
+        }
+      }, POLL_MS);
+      document.addEventListener("visibilitychange", onVisibilityChange);
     },
     stop() {
       running = false;
       document.removeEventListener("click", onDocumentClick);
       window.removeEventListener("stack-stack:activity-open", onOpenRequest);
+      document.removeEventListener("visibilitychange", onVisibilityChange);
       if (timer !== null) {
         window.clearInterval(timer);
         timer = null;

@@ -48,6 +48,7 @@ import {
 export interface PageHandle {
   root: HTMLElement;
   onShow?: () => void;
+  onHide?: () => void;
 }
 
 /**
@@ -1156,16 +1157,32 @@ export function createVirtualizationPage(): PageHandle {
   renderChrome();
   renderTabs();
 
-  // The page lives as long as the tab; only refresh while it is visible.
-  window.setInterval(() => {
-    if (root.style.display !== "none" && !busy && activeTab === "guests") {
-      void load();
+  let pollTimer: number | null = null;
+  const startPolling = () => {
+    if (pollTimer !== null) return;
+    pollTimer = window.setInterval(() => {
+      if (root.style.display !== "none" && !busy && activeTab === "guests" && !document.hidden) {
+        void load();
+      }
+    }, REFRESH_MS);
+  };
+
+  const stopPolling = () => {
+    if (pollTimer !== null) {
+      window.clearInterval(pollTimer);
+      pollTimer = null;
     }
-  }, REFRESH_MS);
+  };
 
   return {
     root,
-    onShow: () => void load(),
+    onShow: () => {
+      startPolling();
+      void load();
+    },
+    onHide: () => {
+      stopPolling();
+    },
   };
 }
 
