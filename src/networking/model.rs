@@ -18,6 +18,7 @@ use crate::networking::ipmath::{Ipv4Net, MacAddr, Port, validate_ifname};
 pub enum InterfaceRole {
     Wan,
     Lan,
+    Management,
     #[default]
     Unused,
 }
@@ -154,6 +155,8 @@ pub struct FirewallConfig {
     pub allow_established: bool,
     #[serde(default = "default_true")]
     pub allow_icmp: bool,
+    #[serde(default)]
+    pub lan_interface: Option<String>,
     /// Ports always reachable from the LAN so the operator cannot lock
     /// themselves out of SSH or the web UI.
     #[serde(default = "default_management_ports")]
@@ -168,6 +171,7 @@ impl Default for FirewallConfig {
             default_input: FirewallAction::Drop,
             allow_established: true,
             allow_icmp: true,
+            lan_interface: None,
             management_ports: default_management_ports(),
             rules: Vec::new(),
         }
@@ -529,7 +533,7 @@ impl NetworkConfig {
             push(&vlan.address);
         }
         for iface in &self.interfaces {
-            if iface.role == InterfaceRole::Lan {
+            if iface.role == InterfaceRole::Lan || iface.role == InterfaceRole::Management {
                 push(&iface.address);
             }
         }
@@ -556,6 +560,11 @@ impl NetworkConfig {
             }
         };
 
+        if let Some(lan) = &self.firewall.lan_interface
+            && !lan.trim().is_empty()
+        {
+            push(lan.trim(), &mut names);
+        }
         for bridge in &self.bridges {
             if bridge.address.is_some() {
                 push(&bridge.name, &mut names);
@@ -567,7 +576,7 @@ impl NetworkConfig {
             }
         }
         for iface in &self.interfaces {
-            if iface.role == InterfaceRole::Lan {
+            if iface.role == InterfaceRole::Lan || iface.role == InterfaceRole::Management {
                 push(&iface.name, &mut names);
             }
         }
@@ -656,6 +665,7 @@ impl NetworkConfig {
                 .interfaces
                 .iter()
                 .any(|iface| iface.name == vlan.parent)
+                && !is_os_interface(&vlan.parent)
             {
                 problems.push(Problem::new(
                     format!("{field}.parent"),
@@ -695,7 +705,10 @@ impl NetworkConfig {
                     ));
                 }
                 members.push(member.as_str());
-                if !seen.contains(&member.as_str()) && !vlan_names.contains(&member.as_str()) {
+                if !seen.contains(&member.as_str())
+                    && !vlan_names.contains(&member.as_str())
+                    && !is_os_interface(member)
+                {
                     problems.push(Problem::new(
                         format!("{field}.members"),
                         format!("member {:?} is not a declared interface or VLAN", member),
@@ -1243,10 +1256,11 @@ impl NetworkConfig {
             ));
         }
         for (index, domain) in certs.domains.iter().enumerate() {
-            if !is_valid_hostname(domain) {
+            let is_ip = domain.trim().parse::<std::net::IpAddr>().is_ok();
+            if !is_ip && !is_valid_hostname(domain) {
                 problems.push(Problem::new(
                     format!("certs.domains[{index}]"),
-                    format!("{domain:?} is not a valid domain"),
+                    format!("{domain:?} is not a valid domain or IP address"),
                 ));
             }
         }
@@ -1381,6 +1395,19 @@ pub fn is_valid_domain(value: &str) -> bool {
                 .chars()
                 .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
     })
+}
+
+/// Host-level check: true if the interface exists in the OS sysfs.
+pub fn is_os_interface(name: &str) -> bool {
+    #[cfg(target_os = "linux")]
+    {
+        std::path::Path::new("/sys/class/net").join(name).exists()
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = name;
+        false
+    }
 }
 
 /// A hostname, which additionally allows a leading `*.` wildcard.

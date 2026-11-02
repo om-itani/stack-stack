@@ -379,17 +379,28 @@ fn check_port(port: u16, role: &str) -> PortCheck {
                 detail: format!("port {port} is free"),
             }
         }
-        Err(err) => PortCheck {
-            port,
-            role: role.to_string(),
-            available: false,
-            detail: format!(
-                "port {port} is already in use ({err}); stop the conflicting service first{}",
-                conflicting_unit(port)
-                    .map(|unit| format!(" (looks like {unit})"))
-                    .unwrap_or_default()
-            ),
-        },
+        Err(err) => {
+            let detail = if err.kind() == std::io::ErrorKind::PermissionDenied {
+                format!(
+                    "port {port} cannot be bound (permission denied; process lacks CAP_NET_BIND_SERVICE)"
+                )
+            } else if err.kind() == std::io::ErrorKind::AddrInUse {
+                format!(
+                    "port {port} is already in use ({err}); stop the conflicting service first{}",
+                    conflicting_unit(port)
+                        .map(|unit| format!(" (looks like {unit})"))
+                        .unwrap_or_default()
+                )
+            } else {
+                format!("port {port} check failed: {err}")
+            };
+            PortCheck {
+                port,
+                role: role.to_string(),
+                available: false,
+                detail,
+            }
+        }
     }
 }
 

@@ -230,7 +230,7 @@ function post<T = ActionResult>(path: string): Promise<T> {
 // Router / network
 // ---------------------------------------------------------------------------
 
-export type InterfaceRole = "wan" | "lan" | "unused";
+export type InterfaceRole = "wan" | "lan" | "management" | "unused";
 export type FirewallAction = "accept" | "drop" | "reject";
 export type CertMode = "none" | "self-signed" | "imported";
 export type InterfaceKind =
@@ -289,6 +289,7 @@ export interface FirewallConfig {
   default_input: FirewallAction;
   allow_established: boolean;
   allow_icmp: boolean;
+  lan_interface: string | null;
   management_ports: number[];
   rules: FirewallRule[];
 }
@@ -507,8 +508,8 @@ export const networkApi = {
   certificates: () => request<CertInfo[]>("/api/network/certificates"),
   importCertificate: (upload: CertUpload) =>
     jsonRequest<CertInfo>("/api/network/certificates", "POST", upload),
-  generateCertificate: (name: string) =>
-    jsonRequest<CertInfo>("/api/network/certificates/self-signed", "POST", { name }),
+  generateCertificate: (name: string, domains?: string[]) =>
+    jsonRequest<CertInfo>("/api/network/certificates/self-signed", "POST", { name, domains }),
   removeCertificate: (name: string) =>
     request<{ ok: boolean }>(`/api/network/certificates/${encodeURIComponent(name)}`, {
       method: "DELETE",

@@ -54,9 +54,10 @@ type Tab = {
 };
 
 const ROLE_OPTIONS: [string, string][] = [
-  ["unused", "unused"],
-  ["lan", "lan"],
-  ["wan", "wan"],
+  ["unused", "unused (unmanaged / layer 2 bridge member)"],
+  ["lan", "lan (local network)"],
+  ["wan", "wan (internet / upstream)"],
+  ["management", "management (host admin access)"],
 ];
 
 const ACTION_OPTIONS: [string, string][] = [
@@ -95,6 +96,8 @@ export function createNetworkPage(): PageHandle {
   let preview: PreviewBundle | null = null;
   let previewFile: keyof PreviewBundle = "nftables";
   let report: ApplyReport | null = null;
+  let tunnelYamlMode = false;
+  let tunnelYamlError: string | null = null;
 
   // --- shell -------------------------------------------------------------
   const heading = el("span", { class: "text-neutral-300", text: "network" });
@@ -153,7 +156,7 @@ export function createNetworkPage(): PageHandle {
     renderChrome();
   }
 
-  async function load(): Promise<void> {
+  async function load(force = false): Promise<void> {
     if (busy) {
       return;
     }
@@ -161,7 +164,7 @@ export function createNetworkPage(): PageHandle {
     setStatus("loading…", "muted");
     try {
       const state = await networkApi.state();
-      applyState(state);
+      applyState(state, dirty && !force);
       setStatus("", "muted");
     } catch (err) {
       setStatus(errorText(err), "error");
@@ -171,18 +174,20 @@ export function createNetworkPage(): PageHandle {
     }
   }
 
-  function applyState(state: NetworkState): void {
-    draft = state.config;
+  function applyState(state: NetworkState, preserveDraft = false): void {
+    if (!preserveDraft || !draft) {
+      draft = state.config;
+      dirty = false;
+      problems = state.problems;
+      configError = state.config_error;
+    }
     discovered = state.interfaces;
     status = state.status;
     certificates = state.certificates;
-    problems = state.problems;
-    configError = state.config_error;
     pending = state.pending;
     pendingSince = Date.now();
     report = null;
     preview = null;
-    dirty = false;
   }
 
   async function save(): Promise<void> {
@@ -444,6 +449,52 @@ export function createNetworkPage(): PageHandle {
       nameList.append(el("option", { value: iface.name }));
     }
     interfacesSection.append(nameList);
+
+    if (config.interfaces.length === 0) {
+      const physicals = discovered.filter(
+        (i) =>
+          i.kind !== "virtual" &&
+          i.kind !== "loopback" &&
+          !i.name.startsWith("br-") &&
+          !i.name.startsWith("veth") &&
+          i.name !== "docker0" &&
+          i.name !== "lxcbr0",
+      );
+      if (physicals.length > 0) {
+        const autoBox = el(
+          "div",
+          {
+            class:
+              "flex flex-wrap items-center gap-2 border-b border-white/5 bg-sky-950/30 px-3 py-2 text-[11px]",
+          },
+          [
+            el("span", {
+              class: "text-sky-300",
+              text: `Detected ${physicals.length} physical NIC(s): ${physicals.map((p) => p.name).join(", ")}`,
+            }),
+            button(
+              "add detected interfaces",
+              "ml-auto text-sky-400 hover:border-sky-500 text-[10px]",
+              () => {
+                for (const p of physicals) {
+                  if (!config.interfaces.some((existing) => existing.name === p.name)) {
+                    config.interfaces.push({
+                      name: p.name,
+                      role: "lan" as InterfaceRole,
+                      address: null,
+                    });
+                  }
+                }
+                markDirty();
+                rerender();
+              },
+            ),
+          ],
+        );
+        interfacesSection.append(autoBox);
+      }
+    }
+
     interfacesSection.append(
       tableEditor<NetworkConfig["interfaces"][number]>(
         config.interfaces,
@@ -453,7 +504,7 @@ export function createNetworkPage(): PageHandle {
             cell: (row) =>
               el("input", {
                 class:
-                  "border border-white/5 bg-black/40 px-1.5 py-0.5 text-neutral-200 outline-none focus:border-neutral-500",
+                  "w-full min-w-0 border border-white/5 bg-black/40 px-1.5 py-0.5 text-neutral-200 outline-none focus:border-neutral-500",
                 value: row.name,
                 list: "net-iface-names",
                 oninput: (event: Event) => {
@@ -571,7 +622,62 @@ export function createNetworkPage(): PageHandle {
       el("div", { class: "col-span-2" }, [
         checkbox(wifi.enabled, (value) => { wifi.enabled = value; markDirty(); }, "enable hotspot"),
       ]),
-      field("radio interface", textInput(wifi.interface, (value) => { wifi.interface = value; markDirty(); })),
+    );
+
+    const wifiInterfaces = discovered.filter((i) => i.kind === "wifi" || Boolean(i.wifi));
+    if (wifiInterfaces.length > 0) {
+      wifiGrid.append(
+        field(
+          "radio interface",
+          select(
+            wifi.interface,
+            [
+              ["", "select radio interface…"],
+              ...wifiInterfaces.map((i): [string, string] => [
+                i.name,
+                `${i.name}${i.wifi?.ssid ? ` (${i.wifi.ssid})` : ""}${i.wifi?.ap_capable ? " [AP capable]" : ""}`,
+              ]),
+            ],
+            (value) => {
+              wifi.interface = value;
+              markDirty();
+            },
+          ),
+        ),
+      );
+    } else {
+      wifiGrid.append(
+        field(
+          "radio interface",
+          textInput(
+            wifi.interface,
+            (value) => {
+              wifi.interface = value;
+              markDirty();
+            },
+            { placeholder: "e.g. wlan0" },
+          ),
+        ),
+      );
+      wifiGrid.append(
+        el("div", {
+          class: "col-span-2 text-[10px] text-amber-400/90",
+          text: "⚠ No wireless radio interface detected on this host. Ensure wireless hardware is connected and drivers/firmware are installed (e.g. iw, wireless-tools).",
+        }),
+      );
+    }
+
+    const hostapdService = status?.services.find((s) => s.unit.startsWith("hostapd"));
+    if (!hostapdService || (!hostapdService.active && hostapdService.state !== "active")) {
+      wifiGrid.append(
+        el("div", {
+          class: "col-span-2 text-[10px] text-neutral-400",
+          text: "ℹ hostapd is required to serve a Wi-Fi hotspot (run 'apt install hostapd iw').",
+        }),
+      );
+    }
+
+    wifiGrid.append(
       field("ssid", textInput(wifi.ssid, (value) => { wifi.ssid = value; markDirty(); })),
       field("passphrase", textInput(wifi.passphrase, (value) => { wifi.passphrase = value; markDirty(); }, { type: "password" })),
       field("security", select(wifi.security, [["wpa2", "wpa2"], ["wpa3", "wpa3"], ["open", "open"]], (value) => { wifi.security = value; markDirty(); })),
@@ -585,16 +691,14 @@ export function createNetworkPage(): PageHandle {
 
     // Discovered hardware, for reference.
     const liveSection = el("section", { class: "panel xl:col-span-2" });
-    liveSection.append(sectionTitle("detected on this host"));
-    if (discovered.length === 0) {
-      liveSection.append(
-        el("div", {
-          class: "px-3 py-2 text-neutral-600",
-          text: "no interfaces detected (this host has no /sys/class/net or no permissions)",
-        }),
-      );
-    } else {
-      const table = el("div", { class: "overflow-x-auto" });
+    const liveTitle = el("div", { class: "flex items-center justify-between border-b border-white/5 px-3 py-1.5" }, [
+      el("span", { class: "panel-title text-[10px]", text: "detected on this host" }),
+      button("refresh interfaces", "text-[10px] text-neutral-400 hover:text-white", () => void load(true)),
+    ]);
+    liveSection.append(liveTitle);
+
+    function renderInterfaceRows(items: InterfaceInfo[]): HTMLElement {
+      const tableWrapper = el("div", { class: "overflow-x-auto" });
       const node = document.createElement("table");
       node.className = "w-full text-[11px]";
       node.append(
@@ -609,23 +713,23 @@ export function createNetworkPage(): PageHandle {
         ]),
       );
       const body = document.createElement("tbody");
-      for (const iface of discovered) {
+      for (const iface of items) {
         const wifiText = iface.wifi
           ? `ssid ${iface.wifi.ssid ?? "—"} · ${iface.wifi.mode ?? "?"} · ch ${iface.wifi.channel ?? "?"}${iface.wifi.ap_capable ? " · AP" : ""}`
           : "";
         body.append(
           el("tr", {}, [
-            el("td", { class: "border-b border-white/5 px-2 py-1 text-neutral-300", text: iface.name }),
+            el("td", { class: "border-b border-white/5 px-2 py-1 text-neutral-300 font-mono", text: iface.name }),
             el("td", { class: "border-b border-white/5 px-2 py-1 text-neutral-500", text: iface.kind }),
             el("td", {
               class: `border-b border-white/5 px-2 py-1 ${iface.operstate === "up" ? "text-emerald-400" : "text-neutral-500"}`,
               text: iface.operstate,
             }),
-            el("td", { class: "border-b border-white/5 px-2 py-1 text-neutral-500", text: iface.mac ?? "—" }),
+            el("td", { class: "border-b border-white/5 px-2 py-1 text-neutral-500 font-mono", text: iface.mac ?? "—" }),
             el("td", { class: "border-b border-white/5 px-2 py-1 text-neutral-500", text: iface.mtu === null ? "—" : String(iface.mtu) }),
             el("td", { class: "border-b border-white/5 px-2 py-1 text-neutral-500", text: iface.speed_mbps === null ? "—" : `${iface.speed_mbps}M` }),
             el("td", {
-              class: "border-b border-white/5 px-2 py-1 text-neutral-500",
+              class: "border-b border-white/5 px-2 py-1 text-neutral-500 font-mono",
               text: iface.addresses.map((address) => address.cidr).join(", ") || "—",
             }),
             el("td", { class: "border-b border-white/5 px-2 py-1 text-neutral-500", text: wifiText }),
@@ -633,8 +737,50 @@ export function createNetworkPage(): PageHandle {
         );
       }
       node.append(body);
-      table.append(node);
-      liveSection.append(table);
+      tableWrapper.append(node);
+      return tableWrapper;
+    }
+
+    if (discovered.length === 0) {
+      liveSection.append(
+        el("div", {
+          class: "px-3 py-2 text-neutral-600",
+          text: "no interfaces detected (this host has no /sys/class/net or no permissions)",
+        }),
+      );
+    } else {
+      const isContainerOrVirtual = (iface: InterfaceInfo) =>
+        iface.kind === "virtual" ||
+        iface.kind === "loopback" ||
+        iface.name.startsWith("br-") ||
+        iface.name.startsWith("veth") ||
+        iface.name === "docker0" ||
+        iface.name === "lxcbr0";
+
+      const physicalInterfaces = discovered.filter((i) => !isContainerOrVirtual(i));
+      const containerInterfaces = discovered.filter(isContainerOrVirtual);
+
+      if (physicalInterfaces.length > 0) {
+        liveSection.append(renderInterfaceRows(physicalInterfaces));
+      } else {
+        liveSection.append(
+          el("div", {
+            class: "px-3 py-2 text-neutral-500",
+            text: "no physical network interfaces detected",
+          }),
+        );
+      }
+
+      if (containerInterfaces.length > 0) {
+        const details = el("details", { class: "border-t border-white/5 px-2 py-2" });
+        const summary = el("summary", {
+          class:
+            "cursor-pointer text-[10px] uppercase tracking-wide text-neutral-500 hover:text-neutral-300 py-1 select-none",
+          text: `container & virtual networks (${containerInterfaces.length})`,
+        });
+        details.append(summary, renderInterfaceRows(containerInterfaces));
+        liveSection.append(details);
+      }
     }
     layout.append(liveSection);
 
@@ -662,6 +808,20 @@ export function createNetworkPage(): PageHandle {
         }),
       ),
       field(
+        "LAN interface",
+        select(
+          firewall.lan_interface ?? "",
+          [
+            ["", "none / auto (strict policy)"],
+            ...discovered.map((i): [string, string] => [i.name, i.name]),
+          ],
+          (value) => {
+            firewall.lan_interface = value ? value : null;
+            markDirty();
+          },
+        ),
+      ),
+      field(
         "management ports",
         listInput(firewall.management_ports.map(String), (values) => {
           firewall.management_ports = values.map((value) => Number.parseInt(value, 10) || 0);
@@ -682,24 +842,55 @@ export function createNetworkPage(): PageHandle {
       tableEditor<NetworkConfig["port_forwards"][number]>(
         draft.port_forwards,
         [
-          { header: "id", cell: (row) => textInput(row.id, (value) => { row.id = value; markDirty(); }) },
+          {
+            header: "id",
+            width: "6rem",
+            cell: (row) =>
+              textInput(row.id, (value) => { row.id = value; markDirty(); }, { class: "w-full min-w-0" }),
+          },
           {
             header: "proto",
+            width: "4.5rem",
             cell: (row) =>
               select(row.protocol, [["tcp", "tcp"], ["udp", "udp"]], (value) => {
                 row.protocol = value;
                 markDirty();
               }),
           },
-          { header: "ext", cell: (row) => numberInput(row.external_port, (value) => { row.external_port = value; markDirty(); }, { min: 1, max: 65535, class: "w-20" }) },
-          { header: "to ip", cell: (row) => textInput(row.internal_ip, (value) => { row.internal_ip = value; markDirty(); }) },
-          { header: "int", cell: (row) => numberInput(row.internal_port, (value) => { row.internal_port = value; markDirty(); }, { min: 1, max: 65535, class: "w-20" }) },
-          { header: "comment", cell: (row) => textInput(row.comment, (value) => { row.comment = value; markDirty(); }) },
-          { header: "on", cell: (row) => checkbox(row.enabled, (value) => { row.enabled = value; markDirty(); }) },
+          {
+            header: "ext",
+            width: "4.5rem",
+            cell: (row) =>
+              numberInput(row.external_port, (value) => { row.external_port = value; markDirty(); }, { min: 1, max: 65535, class: "w-full min-w-0" }),
+          },
+          {
+            header: "to ip",
+            width: "8.5rem",
+            cell: (row) =>
+              textInput(row.internal_ip, (value) => { row.internal_ip = value; markDirty(); }, { class: "w-full min-w-0" }),
+          },
+          {
+            header: "int",
+            width: "4.5rem",
+            cell: (row) =>
+              numberInput(row.internal_port, (value) => { row.internal_port = value; markDirty(); }, { min: 1, max: 65535, class: "w-full min-w-0" }),
+          },
+          {
+            header: "comment",
+            cell: (row) =>
+              textInput(row.comment, (value) => { row.comment = value; markDirty(); }, { class: "w-full min-w-0" }),
+          },
+          {
+            header: "on",
+            width: "3rem",
+            cell: (row) =>
+              checkbox(row.enabled, (value) => { row.enabled = value; markDirty(); }),
+          },
         ],
         () => ({ id: "", protocol: "tcp", external_port: 0, internal_ip: "", internal_port: 0, comment: "", enabled: true }),
         rerender,
         "add forward",
+        { fixed: true },
       ),
     );
     layout.append(forwardsSection);
@@ -765,6 +956,25 @@ export function createNetworkPage(): PageHandle {
     const dhcp = draft.dhcp;
     const layout = el("div", { class: "grid gap-4 xl:grid-cols-2" });
 
+    const hasStaticAddress = (name: string): boolean => {
+      if (!name) return true;
+      const iface = draft?.interfaces.find((i) => i.name === name);
+      if (iface?.address) return true;
+      const br = draft?.bridges.find((b) => b.name === name);
+      if (br?.address) return true;
+      const vl = draft?.vlans.find((v) => v.name === name);
+      if (vl?.address) return true;
+      return false;
+    };
+
+    const nicOptions: [string, string][] = [
+      ["", "select interface…"],
+      ...discovered.map((i): [string, string] => [
+        i.name,
+        `${i.name}${!hasStaticAddress(i.name) ? " (no static IP)" : ""}`,
+      ]),
+    ];
+
     const main = el("section", { class: "panel" });
     main.append(sectionTitle("dhcp server"));
     const grid = el("div", { class: "grid grid-cols-2 gap-2 p-3" });
@@ -772,7 +982,14 @@ export function createNetworkPage(): PageHandle {
       el("div", { class: "col-span-2" }, [
         checkbox(dhcp.enabled, (value) => { dhcp.enabled = value; markDirty(); }, "serve DHCP"),
       ]),
-      field("interface", textInput(dhcp.interface, (value) => { dhcp.interface = value; markDirty(); })),
+      field(
+        "interface",
+        select(dhcp.interface, nicOptions, (value) => {
+          dhcp.interface = value;
+          markDirty();
+          rerender();
+        }),
+      ),
       field("domain", textInput(dhcp.domain, (value) => { dhcp.domain = value; markDirty(); })),
       field("range start", textInput(dhcp.range_start, (value) => { dhcp.range_start = value; markDirty(); })),
       field("range end", textInput(dhcp.range_end, (value) => { dhcp.range_end = value; markDirty(); })),
@@ -780,6 +997,16 @@ export function createNetworkPage(): PageHandle {
       field("lease", textInput(dhcp.lease, (value) => { dhcp.lease = value; markDirty(); })),
       field("dns servers", listInput(dhcp.dns_servers, (values) => { dhcp.dns_servers = values; markDirty(); })),
     );
+
+    if (dhcp.enabled && dhcp.interface && !hasStaticAddress(dhcp.interface)) {
+      grid.append(
+        el("div", {
+          class: "col-span-2 text-[10px] text-amber-400/90",
+          text: `⚠ Interface "${dhcp.interface}" has no static IP address configured. dnsmasq requires a static IP address to bind and serve DHCP leases.`,
+        }),
+      );
+    }
+
     main.append(grid);
     layout.append(main);
 
@@ -961,8 +1188,28 @@ export function createNetworkPage(): PageHandle {
         el("span", { class: "min-w-0 flex-1 truncate text-neutral-600", text: row.url }),
       );
       if (row.status) {
-        const tone = row.status === "ok" ? "ok" : row.status === "failed" ? "err" : "muted";
-        line.append(badge(`${row.status}${row.domains !== null ? ` · ${row.domains}` : ""}`, tone));
+        const tone =
+          row.status === "ok"
+            ? "ok"
+            : row.status === "warning"
+              ? "warn"
+              : row.status === "failed"
+                ? "err"
+                : "muted";
+        line.append(
+          badge(
+            `${row.status}${row.domains !== null ? ` · ${row.domains}` : ""}`,
+            tone,
+          ),
+        );
+      }
+      if (row.fetched_at) {
+        line.append(
+          el("span", {
+            class: "tabular text-[10px] text-neutral-500",
+            text: new Date(row.fetched_at * 1000).toLocaleString(),
+          }),
+        );
       }
       if (row.error) {
         line.append(el("span", { class: "w-full truncate text-rose-400", text: row.error }));
@@ -1071,11 +1318,25 @@ export function createNetworkPage(): PageHandle {
     const section = el("section", { class: "panel" });
     section.append(sectionTitle("bufferbloat control (cake)"));
     const grid = el("div", { class: "grid grid-cols-2 gap-2 p-3 xl:grid-cols-4" });
+    const wanOptions: [string, string][] = [
+      ["", "select WAN interface…"],
+      ...discovered.map((i): [string, string] => [
+        i.name,
+        `${i.name}${draft?.interfaces.some((iface) => iface.name === i.name && iface.role === "wan") ? " (WAN)" : ""}`,
+      ]),
+    ];
+
     grid.append(
       el("div", { class: "col-span-full" }, [
         checkbox(sqm.enabled, (value) => { sqm.enabled = value; markDirty(); }, "enable SQM"),
       ]),
-      field("wan interface", textInput(sqm.interface, (value) => { sqm.interface = value; markDirty(); })),
+      field(
+        "wan interface",
+        select(sqm.interface, wanOptions, (value) => {
+          sqm.interface = value;
+          markDirty();
+        }),
+      ),
       field("download kbit/s", numberInput(sqm.download_kbps, (value) => { sqm.download_kbps = value; markDirty(); }, { min: 1 })),
       field("upload kbit/s", numberInput(sqm.upload_kbps, (value) => { sqm.upload_kbps = value; markDirty(); }, { min: 1 })),
       field("link layer", select(sqm.link_layer, [["ethernet", "ethernet"], ["atm", "atm"], ["none", "none"]], (value) => { sqm.link_layer = value; markDirty(); })),
@@ -1097,20 +1358,176 @@ export function createNetworkPage(): PageHandle {
 
   // --- tab: tunnel -------------------------------------------------------
 
+  function tunnelToYaml(tunnel: NetworkConfig["tunnel"]): string {
+    let yaml = `tunnel: ${tunnel.tunnel_id}\ncredentials-file: ${tunnel.credentials_file}\ningress:\n`;
+    for (const item of tunnel.ingress) {
+      yaml += `  - hostname: ${item.hostname}\n    service: ${item.service}\n`;
+      if (item.comment) {
+        yaml += `    # ${item.comment}\n`;
+      }
+    }
+    if (tunnel.expose_ui) {
+      yaml += `  # fallback: the stack-stack UI\n  - service: http://127.0.0.1:8553\n`;
+    }
+    yaml += `  - service: http_status:404\n`;
+    return yaml;
+  }
+
+  function parseTunnelYaml(raw: string, tunnel: NetworkConfig["tunnel"]): { ok: boolean; error?: string } {
+    let currentHostname = "";
+    let currentService = "";
+    let currentComment = "";
+    const newIngress: NetworkConfig["tunnel"]["ingress"] = [];
+    let tunnelId = tunnel.tunnel_id;
+    let credFile = tunnel.credentials_file;
+    let exposeUi = false;
+
+    for (const line of raw.split("\n")) {
+      const trimmed = line.trim();
+      if (!trimmed || trimmed.startsWith("#")) continue;
+
+      if (trimmed.startsWith("tunnel:")) {
+        tunnelId = trimmed.slice(7).trim();
+      } else if (trimmed.startsWith("credentials-file:")) {
+        credFile = trimmed.slice(17).trim();
+      } else if (trimmed.startsWith("- hostname:")) {
+        if (currentHostname && currentService) {
+          newIngress.push({ hostname: currentHostname, service: currentService, comment: currentComment });
+          currentHostname = "";
+          currentService = "";
+          currentComment = "";
+        }
+        currentHostname = trimmed.slice(11).trim();
+      } else if (trimmed.startsWith("hostname:")) {
+        if (currentHostname && currentService) {
+          newIngress.push({ hostname: currentHostname, service: currentService, comment: currentComment });
+          currentHostname = "";
+          currentService = "";
+          currentComment = "";
+        }
+        currentHostname = trimmed.slice(9).trim();
+      } else if (trimmed.startsWith("service:")) {
+        const svc = trimmed.slice(8).trim();
+        if (svc === "http://127.0.0.1:8553") {
+          exposeUi = true;
+        } else if (svc !== "http_status:404") {
+          if (currentHostname) {
+            currentService = svc;
+          }
+        }
+      } else if (trimmed.startsWith("- service:")) {
+        const svc = trimmed.slice(10).trim();
+        if (svc === "http://127.0.0.1:8553") {
+          exposeUi = true;
+        }
+      }
+    }
+    if (currentHostname && currentService) {
+      newIngress.push({ hostname: currentHostname, service: currentService, comment: currentComment });
+    }
+
+    tunnel.tunnel_id = tunnelId;
+    tunnel.credentials_file = credFile;
+    tunnel.ingress = newIngress;
+    tunnel.expose_ui = exposeUi;
+    return { ok: true };
+  }
+
   function buildTunnel(): HTMLElement {
     if (!draft) {
       return el("div");
     }
     const tunnel = draft.tunnel;
+
+    if (tunnelYamlMode) {
+      const yamlPanel = el("section", { class: "panel flex flex-col gap-2 p-3" });
+      yamlPanel.append(
+        el("div", { class: "flex items-center justify-between" }, [
+          el("span", { class: "panel-title text-[10px]", text: "raw tunnel YAML (/etc/cloudflared/config.yml)" }),
+          button("switch to form", "text-[10px] text-sky-400 hover:border-sky-500", () => {
+            tunnelYamlMode = false;
+            tunnelYamlError = null;
+            rerender();
+          }),
+        ]),
+      );
+
+      const textarea = document.createElement("textarea");
+      textarea.className =
+        "h-80 w-full font-mono text-[11px] border border-white/5 bg-black/50 p-2 text-neutral-200 outline-none focus:border-neutral-500";
+      textarea.value = tunnelToYaml(tunnel);
+
+      if (tunnelYamlError) {
+        yamlPanel.append(el("div", { class: "text-rose-400 text-[11px]", text: tunnelYamlError }));
+      }
+
+      yamlPanel.append(textarea);
+
+      const buttons = el("div", { class: "flex gap-2" }, [
+        button("apply YAML to config", "text-emerald-400 hover:border-emerald-500 text-[11px]", () => {
+          const res = parseTunnelYaml(textarea.value, tunnel);
+          if (res.ok) {
+            markDirty();
+            tunnelYamlMode = false;
+            tunnelYamlError = null;
+            rerender();
+          } else {
+            tunnelYamlError = res.error ?? "Failed to parse YAML";
+            rerender();
+          }
+        }),
+        button("cancel", "text-neutral-400 text-[11px]", () => {
+          tunnelYamlMode = false;
+          tunnelYamlError = null;
+          rerender();
+        }),
+      ]);
+      yamlPanel.append(buttons);
+      return yamlPanel;
+    }
+
     const layout = el("div", { class: "grid gap-4 xl:grid-cols-2" });
 
     const main = el("section", { class: "panel" });
-    main.append(sectionTitle("cloudflare tunnel"));
+    const mainTitle = el("div", { class: "flex items-center justify-between border-b border-white/5 px-3 py-1.5" }, [
+      el("span", { class: "panel-title text-[10px]", text: "cloudflare tunnel" }),
+      button("edit as YAML", "text-[10px] text-neutral-400 hover:text-white", () => {
+        tunnelYamlMode = true;
+        tunnelYamlError = null;
+        rerender();
+      }),
+    ]);
+    main.append(mainTitle);
+
+    const exposeCheckbox = checkbox(
+      tunnel.expose_ui,
+      (value) => {
+        tunnel.expose_ui = value;
+        markDirty();
+      },
+      "fall back to the stack-stack UI",
+    );
+    exposeCheckbox.title =
+      "When enabled, unmapped hostnames routed through this tunnel forward to http://127.0.0.1:8553 (the stack-stack web UI) instead of returning HTTP 404.";
+
     const grid = el("div", { class: "grid grid-cols-2 gap-2 p-3" });
     grid.append(
-      el("div", { class: "col-span-2 flex gap-4" }, [
-        checkbox(tunnel.enabled, (value) => { tunnel.enabled = value; markDirty(); }, "enable cloudflared"),
-        checkbox(tunnel.expose_ui, (value) => { tunnel.expose_ui = value; markDirty(); }, "fall back to the stack-stack UI"),
+      el("div", { class: "col-span-2 flex flex-col gap-1" }, [
+        el("div", { class: "flex gap-4" }, [
+          checkbox(
+            tunnel.enabled,
+            (value) => {
+              tunnel.enabled = value;
+              markDirty();
+            },
+            "enable cloudflared",
+          ),
+          exposeCheckbox,
+        ]),
+        el("div", {
+          class: "text-[10px] text-neutral-500",
+          text: "When 'fall back to stack-stack UI' is enabled, any hostname routed to this tunnel that does not match a public rule above routes to the stack-stack web UI (:8553) rather than returning 404.",
+        }),
       ]),
       field("tunnel id or name", textInput(tunnel.tunnel_id, (value) => { tunnel.tunnel_id = value; markDirty(); })),
       field("credentials file", textInput(tunnel.credentials_file, (value) => { tunnel.credentials_file = value; markDirty(); })),
@@ -1359,7 +1776,10 @@ export function createNetworkPage(): PageHandle {
     busy = true;
     setStatus("generating…", "muted");
     try {
-      const info = await networkApi.generateCertificate(name || "local");
+      const info = await networkApi.generateCertificate(
+        name || "local",
+        draft.certs.domains,
+      );
       certificates = await networkApi.certificates();
       setStatus(`generated ${info.name}`, "ok");
     } catch (err) {
@@ -1426,7 +1846,7 @@ export function createNetworkPage(): PageHandle {
   previewButton.addEventListener("click", () => void doPreview());
   applyButton.addEventListener("click", () => void apply());
   confirmButton.addEventListener("click", () => void confirm());
-  reloadButton.addEventListener("click", () => void load());
+  reloadButton.addEventListener("click", () => void load(true));
 
   // Countdown refresh while a firewall change is reversible.
   window.setInterval(() => {
@@ -1441,7 +1861,7 @@ export function createNetworkPage(): PageHandle {
 
   return {
     root,
-    onShow: () => void load(),
+    onShow: () => void load(false),
   };
 }
 
@@ -1452,10 +1872,16 @@ export function createNetworkPage(): PageHandle {
  */
 function serviceNote(unit: string): string | undefined {
   if (unit.startsWith("dnsmasq")) {
-    return "inactive is expected when your router handles DHCP. Enabling the DHCP server on this page and applying starts dnsmasq on demand, DHCP-only, so it never takes port 53 from unbound.";
+    return "dnsmasq serves DHCP only (port=0 inert for DNS so it never conflicts with unbound). Inactive is normal when an upstream router serves DHCP; applying DHCP here starts dnsmasq on demand.";
   }
   if (unit.startsWith("unbound")) {
     return "the resolver: must be active for adblock and local DNS rewrites. If it is failed, another daemon is holding port 53 (check `ss -lunp | grep :53`).";
+  }
+  if (unit.startsWith("hostapd")) {
+    return "hostapd manages Wi-Fi access points and authentication. Required when hotspot is enabled on a wireless interface.";
+  }
+  if (unit.startsWith("cloudflared")) {
+    return "cloudflared tunnels traffic securely through Cloudflare's edge to local services without exposing public ports.";
   }
   return undefined;
 }

@@ -81,6 +81,19 @@ fn render_input(
         let _ = writeln!(out, "    ip6 nexthdr icmpv6 accept");
     }
 
+    if let Some(lan) = &firewall.lan_interface.as_deref().filter(|s| !s.is_empty()) {
+        let _ = writeln!(
+            out,
+            "    # accept all traffic from the designated LAN interface"
+        );
+        let _ = writeln!(out, "    iifname \"{lan}\" accept");
+    } else {
+        let _ = writeln!(
+            out,
+            "    # warning: no LAN interface selected; local traffic may be dropped"
+        );
+    }
+
     let management = port_set(&firewall.management_ports);
 
     if let Some(lan_match) = lan_interface_match(lan_interfaces) {
@@ -196,10 +209,19 @@ fn render_prerouting(out: &mut String, config: &NetworkConfig, wan: Option<&str>
         if let Some(wan) = wan {
             let _ = write!(rule, "iifname \"{wan}\" ");
         }
+        let dnat_target = match forward.internal_ip.parse::<std::net::IpAddr>() {
+            Ok(std::net::IpAddr::V6(v6)) => {
+                format!("dnat ip6 to [{v6}]:{}", forward.internal_port)
+            }
+            _ => format!(
+                "dnat ip to {}:{}",
+                forward.internal_ip, forward.internal_port
+            ),
+        };
         let _ = write!(
             rule,
-            "{} dport {} dnat to {}:{}",
-            forward.protocol, forward.external_port, forward.internal_ip, forward.internal_port
+            "{} dport {} {}",
+            forward.protocol, forward.external_port, dnat_target
         );
         if let Some(comment) = sanitize_comment(&forward.comment) {
             let _ = write!(rule, " comment \"{comment}\"");
@@ -375,7 +397,7 @@ mod tests {
         });
         let ruleset = render(&config);
         assert!(
-            ruleset.contains("iifname \"eth0\" tcp dport 443 dnat to 192.168.1.10:8443"),
+            ruleset.contains("iifname \"eth0\" tcp dport 443 dnat ip to 192.168.1.10:8443"),
             "{ruleset}"
         );
         assert!(ruleset.contains("iifname \"eth0\" ct status dnat accept"));
@@ -394,7 +416,7 @@ mod tests {
             enabled: false,
         });
         let ruleset = render(&config);
-        assert!(!ruleset.contains("dnat to"));
+        assert!(!ruleset.contains("dnat"));
         assert!(!ruleset.contains("ct status dnat"));
     }
 
@@ -496,5 +518,32 @@ mod tests {
             ruleset.contains("192.168.1.0/24, 10.20.0.0/24"),
             "{ruleset}"
         );
+    }
+
+    #[test]
+    fn port_forwards_format_ipv6_dnat() {
+        let mut config = router_config();
+        config.port_forwards.push(PortForward {
+            id: "ipv6web".to_string(),
+            protocol: "tcp".to_string(),
+            external_port: 80,
+            internal_ip: "fd00::1".to_string(),
+            internal_port: 8080,
+            comment: "v6 forward".to_string(),
+            enabled: true,
+        });
+        let ruleset = render(&config);
+        assert!(
+            ruleset.contains("iifname \"eth0\" tcp dport 80 dnat ip6 to [fd00::1]:8080"),
+            "{ruleset}"
+        );
+    }
+
+    #[test]
+    fn firewall_lan_interface_emits_accept_rule() {
+        let mut config = router_config();
+        config.firewall.lan_interface = Some("enp1s0".to_string());
+        let ruleset = render(&config);
+        assert!(ruleset.contains("iifname \"enp1s0\" accept"), "{ruleset}");
     }
 }

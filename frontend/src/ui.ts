@@ -350,7 +350,12 @@ export function button(
 /** A table of editable rows with a per-row remove button. */
 export interface Column<T> {
   header: string;
+  width?: string;
   cell: (row: T, index: number) => Node;
+}
+
+export interface TableEditorOptions {
+  fixed?: boolean;
 }
 
 export function tableEditor<T>(
@@ -359,25 +364,33 @@ export function tableEditor<T>(
   factory: () => T,
   rerender: () => void,
   addLabel: string,
+  options?: TableEditorOptions,
 ): HTMLElement {
+  const isFixed = options?.fixed || columns.some((c) => Boolean(c.width));
   const wrapper = document.createElement("div");
   wrapper.className = "flex flex-col gap-1 overflow-x-auto";
 
   const table = document.createElement("table");
-  table.className = "w-full text-[11px]";
+  table.className = `w-full text-[11px] ${isFixed ? "table-fixed" : ""}`.trim();
 
   const head = document.createElement("thead");
   const headRow = document.createElement("tr");
   for (const column of columns) {
-    headRow.append(
-      el("th", {
-        class:
-          "border-b border-white/5 px-2 py-1 text-left text-[10px] uppercase tracking-wide text-neutral-600",
-        text: column.header,
-      }),
-    );
+    const th = el("th", {
+      class:
+        "border-b border-white/5 px-2 py-1 text-left text-[10px] uppercase tracking-wide text-neutral-600 truncate",
+      text: column.header,
+    });
+    if (column.width) {
+      th.style.width = column.width;
+    }
+    headRow.append(th);
   }
-  headRow.append(el("th", { class: "border-b border-white/5" }));
+  const actionTh = el("th", { class: "border-b border-white/5" });
+  if (isFixed) {
+    actionTh.style.width = "4.5rem";
+  }
+  headRow.append(actionTh);
   head.append(headRow);
 
   const body = document.createElement("tbody");
@@ -385,13 +398,13 @@ export function tableEditor<T>(
     const tr = document.createElement("tr");
     for (const column of columns) {
       tr.append(
-        el("td", { class: "border-b border-white/5 px-2 py-1 align-middle" }, [
+        el("td", { class: "border-b border-white/5 px-2 py-1 align-middle min-w-0" }, [
           column.cell(row, index),
         ]),
       );
     }
     tr.append(
-      el("td", { class: "border-b border-white/5 px-2 py-1 text-right" }, [
+      el("td", { class: "border-b border-white/5 px-2 py-1 text-right whitespace-nowrap" }, [
         button("remove", "text-rose-400 hover:border-rose-500", () => {
           rows.splice(index, 1);
           rerender();

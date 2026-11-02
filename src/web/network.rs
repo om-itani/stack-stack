@@ -55,6 +55,8 @@ pub struct OkResult {
 #[derive(Deserialize)]
 pub struct SelfSignedRequest {
     pub name: String,
+    #[serde(default)]
+    pub domains: Option<Vec<String>>,
 }
 
 pub async fn state(State(state): State<AppState>) -> Result<Json<NetworkState>, ApiError> {
@@ -163,7 +165,12 @@ pub async fn certificate_generate(
 ) -> Result<Json<CertInfo>, ApiError> {
     let ctx = state.network.clone();
     let info = tokio::task::spawn_blocking(move || {
-        let (config, _) = store::load(&ctx.config_path);
+        let (mut config, _) = store::load(&ctx.config_path);
+        if let Some(domains) = request.domains
+            && !domains.is_empty()
+        {
+            config.certs.domains = domains;
+        }
         certs::generate_self_signed(&config, ctx.runner.as_ref(), &request.name)
     })
     .await

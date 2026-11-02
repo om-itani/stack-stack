@@ -207,7 +207,12 @@ pub fn generate_self_signed(
         ));
     }
 
-    let directory = PathBuf::from(&config.certs.directory);
+    let dir_str = if config.certs.directory.trim().is_empty() {
+        "/etc/stack-stack/ca"
+    } else {
+        config.certs.directory.trim()
+    };
+    let directory = PathBuf::from(dir_str);
     std::fs::create_dir_all(&directory).map_err(|err| {
         ApiError::internal(format!("cannot create {}: {err}", directory.display()))
     })?;
@@ -229,7 +234,14 @@ pub fn generate_self_signed(
         .certs
         .domains
         .iter()
-        .map(|domain| format!("DNS:{}", domain.trim()))
+        .map(|domain| {
+            let trimmed = domain.trim();
+            if trimmed.parse::<std::net::IpAddr>().is_ok() {
+                format!("IP:{trimmed}")
+            } else {
+                format!("DNS:{trimmed}")
+            }
+        })
         .collect::<Vec<_>>()
         .join(",");
 

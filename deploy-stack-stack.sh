@@ -91,6 +91,10 @@ APT_PACKAGES=(
   iproute2
   ipset
   jq
+  hostapd
+  wpa_supplicant
+  wireless-tools
+  iw
 )
 
 log() { printf '\033[1;32m==>\033[0m %s\n' "$*"; }
@@ -348,7 +352,7 @@ create_directories() {
   install -d -m 0755 /etc/samba /var/lib/samba
   install -d -m 0700 /var/lib/samba/private
   # DNS and networking configuration directories
-  install -d -m 0755 /etc/unbound/unbound.conf.d /etc/dnsmasq.d /etc/cloudflared
+  install -d -m 0755 /etc/unbound/unbound.conf.d /etc/dnsmasq.d /etc/cloudflared /etc/systemd/system/unbound.service.d "${CONFIG_DIR}/net"
   # Sudo shim for root terminal shells
   cat <<'SHIM' > /etc/profile.d/00-stack-stack-shell.sh
 if [ "$(id -u)" = "0" ]; then
@@ -411,8 +415,9 @@ LimitNOFILE=65536
 NoNewPrivileges=false
 PrivateTmp=false
 ProtectSystem=strict
-ReadWritePaths=/etc/stack-stack /var/lib/stack-stack /run/docker.sock -/run/libvirt -/run/lxc -/run/qemu -/var/cache/lxc -/var/log/stack-stack /mnt /srv /media -/etc/exports -/etc/exports.d /etc/samba /var/lib/samba -/etc/unbound/unbound.conf.d -/etc/dnsmasq.d -/etc/nftables.conf -/etc/cloudflared
-CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_RAW CAP_SYS_ADMIN CAP_DAC_OVERRIDE CAP_CHOWN CAP_FOWNER CAP_SYS_RESOURCE
+ReadWritePaths=/etc/stack-stack /var/lib/stack-stack /run/docker.sock -/run/libvirt -/run/lxc -/run/qemu -/var/cache/lxc -/var/log/stack-stack /mnt /srv /media -/etc/exports -/etc/exports.d /etc/samba /var/lib/samba -/etc/unbound/unbound.conf.d -/etc/dnsmasq.d -/etc/nftables.conf -/etc/cloudflared -/etc/systemd/system/unbound.service.d
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE CAP_NET_ADMIN CAP_NET_RAW CAP_SYS_ADMIN CAP_DAC_OVERRIDE CAP_CHOWN CAP_FOWNER CAP_SYS_RESOURCE
+AmbientCapabilities=CAP_NET_BIND_SERVICE CAP_NET_ADMIN CAP_NET_RAW
 
 [Install]
 WantedBy=multi-user.target

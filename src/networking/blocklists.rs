@@ -147,7 +147,12 @@ pub fn update(
                 let mut domains = BTreeSet::new();
                 parse_domains(&body, &mut domains);
                 stat.domains = domains.len();
-                stat.status = "ok".to_string();
+                if domains.is_empty() {
+                    stat.status = "warning".to_string();
+                    stat.error = Some("0 domains parsed from source".to_string());
+                } else {
+                    stat.status = "ok".to_string();
+                }
                 stat.fetched_at = Some(now);
                 fetched.extend(domains);
             }
@@ -211,7 +216,17 @@ fn reload(runner: &dyn Runner) -> Result<(), String> {
 
 fn fetch(runner: &dyn Runner, url: &str) -> Result<String, String> {
     let output = runner
-        .call("curl", &["-fsSL", "--max-time", "90", url])
+        .call(
+            "curl",
+            &[
+                "-fsSL",
+                "-A",
+                "Mozilla/5.0 (compatible; stack-stack/0.1)",
+                "--max-time",
+                "90",
+                url,
+            ],
+        )
         .map_err(|err| format!("cannot run curl: {err}"))?;
     if output.timed_out {
         return Err("fetch timed out".to_string());
@@ -275,13 +290,33 @@ pub fn is_blocked(config_path: &Path, allowlist: &[String], domain: &str) -> boo
         .unwrap_or(false)
 }
 
-/// Pull blocking domains out of a hosts file or a plain domain list.
+/// Pull blocking domains out of a hosts file, a plain domain list, or Adblock syntax.
 pub fn parse_domains(text: &str, out: &mut BTreeSet<String>) {
     for raw in text.lines() {
         let line = raw.split('#').next().unwrap_or("").trim();
-        if line.is_empty() || line.starts_with('!') {
+        // Ignore comments, adblock metadata, and adblock exception rules (@@)
+        if line.is_empty()
+            || line.starts_with('!')
+            || line.starts_with("@@")
+            || line.starts_with('[')
+        {
             continue;
         }
+
+        // Adblock syntax: ||example.com^ or ||example.com^$third-party
+        if let Some(rest) = line.strip_prefix("||") {
+            let without_opts = rest.split('$').next().unwrap_or(rest);
+            let candidate = without_opts
+                .split('^')
+                .next()
+                .unwrap_or(without_opts)
+                .trim_end_matches('/');
+            if let Some(domain) = normalize_domain(candidate) {
+                out.insert(domain);
+            }
+            continue;
+        }
+
         let mut fields = line.split_whitespace();
         let Some(first) = fields.next() else {
             continue;
@@ -292,9 +327,16 @@ pub fn parse_domains(text: &str, out: &mut BTreeSet<String>) {
         let candidates: Vec<&str> = if looks_like_address(first) {
             fields.collect()
         } else {
-            vec![first]
+            let token = first.split('$').next().unwrap_or(first);
+            let token = token
+                .split('^')
+                .next()
+                .unwrap_or(token)
+                .trim_end_matches('/');
+            vec![token]
         };
         for candidate in candidates {
+            let candidate = candidate.trim_end_matches('^').trim_end_matches('/');
             if let Some(domain) = normalize_domain(candidate) {
                 out.insert(domain);
             }
@@ -443,6 +485,26 @@ another.example.net
         assert!(out.contains("another.example.net"));
         // Loopback names from the hosts preamble must never be blocked.
         assert!(!out.contains("localhost"));
+    }
+
+    #[test]
+    fn parses_adblock_rules() {
+        let text = "\
+[Adblock Plus 2.0]
+! Title: OISD Small
+||adservice.google.com^
+||tracking.oisd.nl^$third-party
+@@||trusted.com^
+||bad-domain.org^$image,domain=sub.example.com
+plain-blocked.com^
+";
+        let mut out = BTreeSet::new();
+        parse_domains(text, &mut out);
+        assert!(out.contains("adservice.google.com"));
+        assert!(out.contains("tracking.oisd.nl"));
+        assert!(out.contains("bad-domain.org"));
+        assert!(out.contains("plain-blocked.com"));
+        assert!(!out.contains("trusted.com"));
     }
 
     #[test]
