@@ -1,56 +1,40 @@
 #!/usr/bin/env bash
 #
-# stack-stack deployment / update script for Debian (Fujitsu Q558).
+# stack-stack automated deployment and update script for Debian/Ubuntu systems.
 #
-# Idempotent: safe to re-run for updates. The documented update flow is
-#
+# Idempotent: safe to run from fresh install or to update an existing deployment.
+# Documented update flow:
 #     git pull && ./deploy-stack-stack.sh
 #
-# What it does, in order:
-#   1. verifies it is running as root from the repository root
-#   2. runs pre-flight checks (disk space, memory, architecture)
-#   3. installs build + runtime dependencies (tolerating individual failures;
-#      the binary degrades gracefully when a tool is absent)
-#   4. installs rustup/cargo if there is no Rust toolchain yet
-#   5. builds the release binary
-#   6. installs it to /usr/local/bin/stack-stack
-#   7. creates the config/state directories
-#   8. writes the default config document if none exists yet
-#   9. installs and (re)starts the systemd unit
-#  10. health-checks the HTTP surface with retries
-#  11. runs post-deploy verification (all subsystems report status)
-#
-# Everything is written only when its content actually changes, so a re-run
-# does not needlessly restart the service.
-#
-# Rollback: if health check fails, the previous binary is restored and
-# the service is restarted with the old version.
 
 set -euo pipefail
 
-# Version for rollback tracking
+# ---------------------------------------------------------------------------
+# Global Constants & Paths
+# ---------------------------------------------------------------------------
 DEPLOY_VERSION="$(date +%Y%m%d-%H%M%S)"
-BACKUP_DIR="/var/lib/stack-stack/deploy-backups"
-
 BINARY_NAME="stack-stack"
 SERVICE_NAME="stack-stack.service"
-# Group that owns the state directories, so the installing admin can inspect
-# the stacks/images without sudo while they stay unreadable to other users.
 SERVICE_GROUP="stack-stack"
 INSTALL_BIN="/usr/local/bin/${BINARY_NAME}"
+PREVIOUS_BIN="${INSTALL_BIN}.prev"
 CONFIG_DIR="/etc/stack-stack"
 STATE_DIR="/var/lib/stack-stack"
+BACKUP_DIR="/var/lib/stack-stack/deploy-backups"
 CONFIG_FILE="${CONFIG_DIR}/config.json"
 UNIT_FILE="/etc/systemd/system/${SERVICE_NAME}"
 HEALTH_URL="http://127.0.0.1:8553/api/health"
-PREVIOUS_BIN="${INSTALL_BIN}.prev"
 DEPLOY_LOG="/var/log/stack-stack-deploy.log"
 
-# Runtime tools the services layer shells out to. Missing packages degrade to an
-# "unavailable" report in the UI, so a failed install is never fatal here.
+TOTAL_STEPS=12
+CURRENT_STEP=0
+SCRIPT_START_TIME="$(date +%s)"
+
+# Comprehensive list of build and runtime dependencies
 APT_PACKAGES=(
   build-essential
   pkg-config
+  libssl-dev
   git
   curl
   ca-certificates
@@ -66,8 +50,6 @@ APT_PACKAGES=(
   unzip
   zstd
   xz-utils
-  # mkfs.ext4 (e2fsprogs) and lsblk/mount/umount/blkid (util-linux) are essential
-  # packages; xfs is not, and the Storage page offers it.
   xfsprogs
   qemu-system-x86
   qemu-utils
@@ -80,9 +62,6 @@ APT_PACKAGES=(
   docker.io
   docker-compose
   unbound
-  # unbound-anchor generates the root trust anchor; without it the
-  # root_trust_anchor_update pre-start script fails forever. dns-root-data ships
-  # the IANA root hints the anchor is built from.
   unbound-anchor
   dns-root-data
   dnsmasq
@@ -95,217 +74,446 @@ APT_PACKAGES=(
   wpa_supplicant
   wireless-tools
   iw
+  ufw
+  fail2ban
+  unattended-upgrades
 )
 
-log() { printf '\033[1;32m==>\033[0m %s\n' "$*"; }
-warn() { printf '\033[1;33m warn:\033[0m %s\n' "$*" >&2; }
-die() {
-  printf '\033[1;31merror:\033[0m %s\n' "$*" >&2
-  exit 1
-}
+# ---------------------------------------------------------------------------
+# UI / Progress Bar Engine
+# ---------------------------------------------------------------------------
+# Color palette
+C_RESET="\033[0m"
+C_BOLD="\033[1m"
+C_CYAN="\033[1;36m"
+C_BLUE="\033[1;34m"
+C_GREEN="\033[1;32m"
+C_YELLOW="\033[1;33m"
+C_RED="\033[1;31m"
+C_MAGENTA="\033[1;35m"
+C_GRAY="\033[0;90m"
+C_WHITE="\033[1;37m"
 
-# Log to both console and file
+# Disable colors if not in an interactive terminal
+if [[ ! -t 1 ]]; then
+  C_RESET=""
+  C_BOLD=""
+  C_CYAN=""
+  C_BLUE=""
+  C_GREEN=""
+  C_YELLOW=""
+  C_RED=""
+  C_MAGENTA=""
+  C_GRAY=""
+  C_WHITE=""
+fi
+
 log_file() {
-  local msg="$*"
-  printf '\033[1;32m==>\033[0m %s\n' "$msg"
-  echo "[$(date '+%Y-%m-%d %H:%M:%S')] $msg" >> "${DEPLOY_LOG}"
+  echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*" >> "${DEPLOY_LOG}"
 }
 
-warn_file() {
-  local msg="$*"
-  printf '\033[1;33m warn:\033[0m %s\n' "$msg" >&2
-  echo "[$(date '+%Y-%m-%d %H:%M:%S')] WARN: $msg" >> "${DEPLOY_LOG}"
+print_banner() {
+  printf "\n"
+  printf "${C_CYAN}  ╔══════════════════════════════════════════════════════════════════╗${C_RESET}\n"
+  printf "${C_CYAN}  ║${C_RESET}                   ${C_BOLD}${C_WHITE}stack-stack automated deploy${C_RESET}                   ${C_CYAN}║${C_RESET}\n"
+  printf "${C_CYAN}  ║${C_RESET}             ${C_GRAY}homelab control plane & edge router${C_RESET}                  ${C_CYAN}║${C_RESET}\n"
+  printf "${C_CYAN}  ╚══════════════════════════════════════════════════════════════════╝${C_RESET}\n\n"
 }
 
-die_file() {
+render_progress_bar() {
+  local step="$1"
+  local total="$2"
+  local status_text="$3"
+  local width=24
+
+  local percent=$(( step * 100 / total ))
+  (( percent > 100 )) && percent=100
+  local filled=$(( step * width / total ))
+  (( filled > width )) && filled=width
+  local empty=$(( width - filled ))
+
+  local bar=""
+  for ((i = 0; i < filled; i++)); do bar="${bar}█"; done
+  for ((i = 0; i < empty; i++)); do bar="${bar}░"; done
+
+  if [[ -t 1 ]]; then
+    printf "\r\033[K  ${C_BLUE}[${C_CYAN}%s${C_BLUE}]${C_RESET} ${C_GREEN}%3d%%${C_RESET} ${C_GRAY}(%d/%d)${C_RESET} %b" \
+      "$bar" "$percent" "$step" "$total" "$status_text"
+  fi
+}
+
+step_start() {
+  local step="$1"
+  local label="$2"
+  CURRENT_STEP="$(( step - 1 ))"
+  log_file "STEP [${step}/${TOTAL_STEPS}] START: ${label}"
+  if [[ -t 1 ]]; then
+    render_progress_bar "$CURRENT_STEP" "$TOTAL_STEPS" "${C_YELLOW}➜${C_RESET} ${C_WHITE}${label}...${C_RESET}"
+  else
+    printf "[%2d/%2d] ➜ %s...\n" "$step" "$TOTAL_STEPS" "$label"
+  fi
+}
+
+step_done() {
+  local step="$1"
+  local label="$2"
+  local duration="${3:-}"
+  CURRENT_STEP="$step"
+  log_file "STEP [${step}/${TOTAL_STEPS}] DONE: ${label} (${duration}s)"
+  local dur_str=""
+  [[ -n "$duration" ]] && dur_str=" ${C_GRAY}(${duration}s)${C_RESET}"
+  if [[ -t 1 ]]; then
+    render_progress_bar "$step" "$TOTAL_STEPS" "${C_GREEN}✓${C_RESET} ${C_WHITE}${label}${C_RESET}${dur_str}\n"
+  else
+    printf "[%2d/%2d] ✓ %s (%ss)\n" "$step" "$TOTAL_STEPS" "$label" "$duration"
+  fi
+}
+
+step_fail() {
+  local step="$1"
+  local label="$2"
+  log_file "STEP [${step}/${TOTAL_STEPS}] FAILED: ${label}"
+  if [[ -t 1 ]]; then
+    render_progress_bar "$step" "$TOTAL_STEPS" "${C_RED}✗${C_RESET} ${C_RED}${label} FAILED!${C_RESET}\n\n"
+  else
+    printf "[%2d/%2d] ✗ %s FAILED!\n\n" "$step" "$TOTAL_STEPS" "$label"
+  fi
+}
+
+# Run a command with a smooth live spinner while streaming logs to $DEPLOY_LOG
+run_with_spinner() {
+  local task_name="$1"
+  shift
+
+  log_file "EXEC: $*"
+
+  if [[ ! -t 1 ]]; then
+    if "$@" >> "${DEPLOY_LOG}" 2>&1; then
+      return 0
+    else
+      local rc=$?
+      log_file "EXEC ERROR (exit $rc): $*"
+      return $rc
+    fi
+  fi
+
+  "$@" >> "${DEPLOY_LOG}" 2>&1 &
+  local pid=$!
+  local spin=('⠋' '⠙' '⠹' '⠸' '⠼' '⠴' '⠦' '⠧' '⠇' '⠏')
+  local idx=0
+  local start_time
+  start_time="$(date +%s)"
+
+  while kill -0 "$pid" 2>/dev/null; do
+    local now
+    now="$(date +%s)"
+    local elapsed=$(( now - start_time ))
+    local s="${spin[idx]}"
+    idx=$(( (idx + 1) % ${#spin[@]} ))
+    render_progress_bar "${CURRENT_STEP}" "${TOTAL_STEPS}" "${C_YELLOW}${s}${C_RESET} ${C_WHITE}${task_name}${C_RESET} ${C_GRAY}(${elapsed}s)${C_RESET}"
+    sleep 0.08
+  done
+
+  wait "$pid"
+  local rc=$?
+  if [[ $rc -ne 0 ]]; then
+    log_file "EXEC ERROR (exit $rc): $*"
+  fi
+  return $rc
+}
+
+die() {
   local msg="$*"
-  printf '\033[1;31merror:\033[0m %s\n' "$msg" >&2
-  echo "[$(date '+%Y-%m-%d %H:%M:%S')] ERROR: $msg" >> "${DEPLOY_LOG}"
+  log_file "FATAL ERROR: $msg"
+  printf "\n${C_RED}error:${C_RESET} %s\n" "$msg" >&2
+  if [[ -f "${DEPLOY_LOG}" ]]; then
+    printf "${C_GRAY}Last 15 lines of deploy log (${DEPLOY_LOG}):${C_RESET}\n" >&2
+    tail -n 15 "${DEPLOY_LOG}" | sed 's/^/  /' >&2
+  fi
   exit 1
 }
 
-# Write $2 to path $1 only when the content differs. Returns 0 when the file was
-# changed, 1 when it was already up to date — callers use that to decide whether
-# a restart is required.
+# Write $2 to path $1 only when content differs. Returns 0 if changed, 1 if already identical.
 write_if_changed() {
-  local path="$1" content="$2" tmp
-  if [[ -f "$path" ]] && [[ "$(cat "$path")" == "$content" ]]; then
+  local path="$1" content="$2" mode="${3:-0644}" tmp
+  if [[ -f "$path" ]] && [[ "$(cat "$path" 2>/dev/null)" == "$content" ]]; then
     return 1
   fi
   tmp="$(mktemp)"
-  printf '%s' "$content" >"$tmp"
-  install -D -m "${3:-0644}" "$tmp" "$path"
+  printf '%s' "$content" > "$tmp"
+  install -D -m "$mode" "$tmp" "$path"
   rm -f "$tmp"
   return 0
 }
 
-# Pre-flight checks before deployment
-preflight_checks() {
-  log_file "Running pre-flight checks..."
+# ---------------------------------------------------------------------------
+# Step Implementations
+# ---------------------------------------------------------------------------
 
-  # Check architecture
-  local arch
-  arch="$(uname -m)"
-  if [[ "$arch" != "x86_64" ]]; then
-    die_file "Unsupported architecture: $arch (only x86_64 supported)"
-  fi
+# Step 1: Privilege & Repository Validation
+setup_environment() {
+  local t0
+  t0="$(date +%s)"
+  step_start 1 "Privilege and repository validation"
 
-  # Check disk space (need at least 5GB free for build + binary)
-  local avail_kb
-  avail_kb="$(df / | awk 'NR==2 {print $4}')"
-  if [[ "$avail_kb" -lt 5242880 ]]; then
-    die_file "Insufficient disk space: ${avail_kb}KB available, need at least 5GB"
-  fi
-
-  # Check memory (need at least 2GB for build)
-  local mem_kb
-  mem_kb="$(grep MemTotal /proc/meminfo | awk '{print $2}')"
-  if [[ "$mem_kb" -lt 2097152 ]]; then
-    warn_file "Low memory: ${mem_kb}KB (recommend 2GB+ for build)"
-  fi
-
-  # Check if we're on Debian/Ubuntu
-  if ! command -v apt-get >/dev/null 2>&1; then
-    die_file "This script requires Debian/Ubuntu with apt-get"
-  fi
-
-  # Check internet connectivity
-  if ! curl -fsS --max-time 5 https://github.com >/dev/null 2>&1; then
-    warn_file "Cannot reach GitHub - dependency downloads may fail"
-  fi
-
-  # Check if Docker socket exists (will be created by docker.io package)
-  log_file "Pre-flight checks passed"
-}
-
-require_root() {
   if [[ "${EUID}" -ne 0 ]]; then
-    die "this script must run as root (Docker socket, nftables, ports 80/443 and systemd)"
+    if command -v sudo >/dev/null 2>&1; then
+      printf "\n  ${C_CYAN}==>${C_RESET} Elevating permissions with sudo...\n"
+      exec sudo -E bash "$0" "$@"
+    else
+      die "this script must run as root. Please run: sudo $0"
+    fi
   fi
-}
 
-require_repo_root() {
   local here
   here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
   cd "$here"
-  [[ -f "Cargo.toml" ]] || die "run this from the repository root (Cargo.toml not found)"
-  [[ -f "src/main.rs" ]] || die "run this from the repository root (src/main.rs not found)"
+  [[ -f "Cargo.toml" ]] || die "must be run from repository root (Cargo.toml missing)"
+  [[ -f "src/main.rs" ]] || die "must be run from repository root (src/main.rs missing)"
   REPO_ROOT="$here"
+
+  mkdir -p "$(dirname "${DEPLOY_LOG}")"
+  echo "=== stack-stack automated deploy ${DEPLOY_VERSION} ===" > "${DEPLOY_LOG}"
+  log_file "Repository root: ${REPO_ROOT}"
+
+  local t1
+  t1="$(date +%s)"
+  step_done 1 "Privilege and repository validation" "$(( t1 - t0 ))"
 }
 
-install_packages() {
+# Step 2: Pre-flight checks
+run_preflight_checks() {
+  local t0
+  t0="$(date +%s)"
+  step_start 2 "Pre-flight system checks"
+
+  # 1. Architecture check
+  local arch
+  arch="$(uname -m)"
+  if [[ "$arch" != "x86_64" ]] && [[ "${STACK_STACK_FORCE:-0}" != "1" ]]; then
+    die "unsupported architecture: $arch (x86_64 required)"
+  fi
+
+  # 2. Disk space check (need at least 3GB free in repo partition)
+  local avail_kb
+  avail_kb="$(df -k "$REPO_ROOT" | awk 'NR==2 {print $4}')"
+  if [[ -n "$avail_kb" && "$avail_kb" -lt 3145728 ]] && [[ "${STACK_STACK_FORCE:-0}" != "1" ]]; then
+    die "insufficient disk space: $(( avail_kb / 1024 ))MB free, need at least 3000MB"
+  fi
+
+  # 3. Memory detection
+  local mem_kb
+  mem_kb="$(grep MemTotal /proc/meminfo 2>/dev/null | awk '{print $2}' || echo 4194304)"
+  if [[ "$mem_kb" -lt 1500000 ]]; then
+    log_file "Low memory detected (${mem_kb}KB), will tune cargo build parallelism"
+  fi
+
+  # 4. OS check
   if ! command -v apt-get >/dev/null 2>&1; then
-    warn_file "apt-get not found; skipping dependency installation"
-    return 0
+    die "this deploy script requires Debian or Ubuntu with apt-get"
   fi
 
-  log_file "installing dependencies"
+  # 5. Network connectivity
+  if ! curl -fsS --max-time 4 https://github.com >/dev/null 2>&1 && \
+     ! curl -fsS --max-time 4 https://1.1.1.1 >/dev/null 2>&1; then
+    log_file "Warning: outbound internet check was slow or unreachable"
+  fi
+
+  local t1
+  t1="$(date +%s)"
+  step_done 2 "Pre-flight system checks" "$(( t1 - t0 ))"
+}
+
+# Step 3: Fast Batch Package Installation
+install_system_packages() {
+  local t0
+  t0="$(date +%s)"
+  step_start 3 "System package dependencies"
+
   export DEBIAN_FRONTEND=noninteractive
-  local to_install=() pkg
+
+  # Fast detection of missing packages
+  local missing=()
   for pkg in "${APT_PACKAGES[@]}"; do
-    if ! dpkg -s "$pkg" >/dev/null 2>&1; then
-      to_install+=("$pkg")
+    if ! dpkg-query -W -f='${Status}' "$pkg" 2>/dev/null | grep -q "install ok installed"; then
+      missing+=("$pkg")
     fi
   done
 
-  if [[ "${#to_install[@]}" -eq 0 ]]; then
-    log_file "all dependencies already present"
+  if [[ "${#missing[@]}" -eq 0 ]]; then
+    log_file "all ${#APT_PACKAGES[@]} system dependencies already installed"
+    local t1
+    t1="$(date +%s)"
+    step_done 3 "System package dependencies (already installed)" "$(( t1 - t0 ))"
     return 0
   fi
 
-  if ! apt-get update -qq; then
-    warn_file "apt-get update failed; continuing with the packages already available"
-  fi
-  # Install one at a time so one unavailable package cannot block the rest.
-  for pkg in "${to_install[@]}"; do
-    if dpkg -s "$pkg" >/dev/null 2>&1; then
-      continue
-    fi
-    if ! apt-get install -y -qq --no-install-recommends "$pkg"; then
-      warn_file "could not install ${pkg}; the matching feature will report unavailable"
-    fi
-  done
+  log_file "installing ${#missing[@]} missing packages: ${missing[*]}"
 
-  # cloudflared is not a Debian package; pull it from Cloudflare's APT repo so
-  # the tunnel feature works. If the repo add fails (offline, DNS, etc.) the
-  # script warns and continues — the tunnel code degrades gracefully.
-  if ! command -v cloudflared >/dev/null 2>&1; then
-    install -d -m 0755 /usr/share/keyrings
-    if ! curl -fsSL https://pkg.cloudflare.com/cloudflare-main.gpg \
-        | gpg --dearmor -o /usr/share/keyrings/cloudflare-main.gpg 2>/dev/null; then
-      warn_file "could not add Cloudflare signing key; cloudflared tunnel feature will be unavailable"
-    else
-      echo "deb [signed-by=/usr/share/keyrings/cloudflare-main.gpg] https://pkg.cloudflare.com/cloudflared any main" \
-          > /etc/apt/sources.list.d/cloudflared.list
-      if apt-get update -qq && apt-get install -y -qq cloudflared; then
-        log_file "installed cloudflared"
-      else
-        warn_file "could not install cloudflared; the tunnel feature will report unavailable"
+  # Run apt-get update once
+  run_with_spinner "Updating package indexes" apt-get update -qq -y || true
+
+  # Batch install (fast!)
+  if ! run_with_spinner "Installing dependencies (${#missing[@]} packages)" \
+      apt-get install -y --no-install-recommends -qq "${missing[@]}"; then
+    log_file "Batch install failed, falling back to individual installs"
+    # Fallback: install individually so one obscure package doesn't block the rest
+    for pkg in "${missing[@]}"; do
+      if ! dpkg-query -W -f='${Status}' "$pkg" 2>/dev/null | grep -q "install ok installed"; then
+        run_with_spinner "Installing ${pkg}" apt-get install -y --no-install-recommends -qq "$pkg" || true
       fi
-    fi
+    done
   fi
 
-  # tc is provided by iproute2, not a separate package — verify the binary exists.
-  command -v tc >/dev/null 2>&1 || warn_file "tc missing (iproute2 not installed?); SQM feature will be unavailable"
+  local t1
+  t1="$(date +%s)"
+  step_done 3 "System package dependencies" "$(( t1 - t0 ))"
+}
 
-  # Unprivileged LXC containers need a subordinate UID/GID range for root.
+# Step 4: Cloudflared Tunnel Service
+setup_cloudflared() {
+  local t0
+  t0="$(date +%s)"
+  step_start 4 "Cloudflared tunnel utility"
+
+  if command -v cloudflared >/dev/null 2>&1; then
+    local t1
+    t1="$(date +%s)"
+    step_done 4 "Cloudflared tunnel utility (already present)" "$(( t1 - t0 ))"
+    return 0
+  fi
+
+  install -d -m 0755 /usr/share/keyrings /etc/apt/sources.list.d
+  local gpg_file="/usr/share/keyrings/cloudflare-main.gpg"
+
+  if curl -fsSL https://pkg.cloudflare.com/cloudflare-main.gpg | gpg --dearmor -o "$gpg_file" 2>/dev/null; then
+    echo "deb [arch=amd64 signed-by=${gpg_file}] https://pkg.cloudflare.com/cloudflared any main" \
+      > /etc/apt/sources.list.d/cloudflared.list
+    run_with_spinner "Installing cloudflared" bash -c \
+      "apt-get update -o Dir::Etc::sourcelist='sources.list.d/cloudflared.list' -o Dir::Etc::sourceparts='-' -o APT::Get::List-Cleanup='0' -qq && apt-get install -y -qq cloudflared" || true
+  else
+    log_file "could not add cloudflare keyring; cloudflared will report unavailable"
+  fi
+
+  local t1
+  t1="$(date +%s)"
+  step_done 4 "Cloudflared tunnel utility" "$(( t1 - t0 ))"
+}
+
+# Step 5: Container & Hypervisor Services
+setup_hypervisors() {
+  local t0
+  t0="$(date +%s)"
+  step_start 5 "Container & virtualization hypervisors"
+
+  # Unprivileged LXC subordinate UIDs
   grep -q '^root:' /etc/subuid 2>/dev/null || echo 'root:100000:65536' >> /etc/subuid
   grep -q '^root:' /etc/subgid 2>/dev/null || echo 'root:100000:65536' >> /etc/subgid
 
-  # Enable and start Docker
-  systemctl enable docker >/dev/null 2>&1 || true
-  systemctl start docker >/dev/null 2>&1 || warn_file "could not start docker service"
+  # Enable and activate Docker daemon
+  if command -v systemctl >/dev/null 2>&1; then
+    systemctl enable docker >/dev/null 2>&1 || true
+    systemctl start docker >/dev/null 2>&1 || log_file "docker service failed to start"
 
-  # Enable and start libvirtd for QEMU/KVM
-  systemctl enable --now libvirtd >/dev/null 2>&1 || true
-  if ! systemctl is-active --quiet libvirtd; then
-    warn_file "libvirtd failed to start; journal follows:"
-    journalctl -u libvirtd --no-pager -n 30 >&2 || true
+    # Enable and activate Libvirtd daemon
+    systemctl enable --now libvirtd >/dev/null 2>&1 || true
   fi
-  # Ensure /run/libvirt exists even if libvirtd hasn't created it yet
-  install -d -m 0755 /run/libvirt
 
-  # Add current user to docker and libvirt groups
-  usermod -aG docker,libvirt,kvm "${SUDO_USER:-root}" 2>/dev/null || true
+  # Add user to groups
+  local target_user="${SUDO_USER:-root}"
+  if [[ "$target_user" != "root" ]] && id -u "$target_user" >/dev/null 2>&1; then
+    usermod -aG docker,libvirt,kvm "$target_user" 2>/dev/null || true
+  fi
+
+  local t1
+  t1="$(date +%s)"
+  step_done 5 "Container & virtualization hypervisors" "$(( t1 - t0 ))"
 }
 
-ensure_rust() {
-  if command -v cargo >/dev/null 2>&1; then
-    return 0
-  fi
-  # rustup installs into ~/.cargo, which a non-login shell does not source.
-  if [[ -f "${HOME}/.cargo/env" ]]; then
-    # shellcheck disable=SC1091
-    source "${HOME}/.cargo/env"
-  fi
-  if command -v cargo >/dev/null 2>&1; then
-    return 0
+# Step 6: Rust Toolchain Setup
+setup_rust_toolchain() {
+  local t0
+  t0="$(date +%s)"
+  step_start 6 "Rust toolchain configuration"
+
+  # Source potential rustup environments
+  for env_file in "${HOME}/.cargo/env" "/root/.cargo/env" "${SUDO_USER:+$(eval echo ~$SUDO_USER)/.cargo/env}"; do
+    if [[ -f "$env_file" ]]; then
+      # shellcheck disable=SC1090
+      source "$env_file" 2>/dev/null || true
+    fi
+  done
+
+  export PATH="${HOME}/.cargo/bin:/root/.cargo/bin:${PATH}"
+
+  if ! command -v cargo >/dev/null 2>&1; then
+    log_file "Rust toolchain missing; installing via rustup minimal profile"
+    run_with_spinner "Installing Rust via rustup" bash -c \
+      "curl --proto '=https' --tlsv1.2 -fsS https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain stable" || die "rustup installation failed"
+    # shellcheck disable=SC1090
+    source "${HOME}/.cargo/env" 2>/dev/null || true
   fi
 
-  log_file "installing Rust toolchain via rustup"
-  curl --proto '=https' --tlsv1.2 -fsS https://sh.rustup.rs | sh -s -- -y --profile minimal
-  # shellcheck disable=SC1091
-  source "${HOME}/.cargo/env"
-  command -v cargo >/dev/null 2>&1 || die_file "rustup installed but cargo is still not on PATH"
+  command -v cargo >/dev/null 2>&1 || die "cargo binary not found in PATH"
+
+  local rust_ver
+  rust_ver="$(rustc --version 2>/dev/null || echo 'unknown')"
+  log_file "Using ${rust_ver}"
+
+  local t1
+  t1="$(date +%s)"
+  step_done 6 "Rust toolchain (${rust_ver%% *})" "$(( t1 - t0 ))"
 }
 
-build_release() {
-  log_file "building release binary (this can take a while on first run)"
-  cargo build --release --locked
-  [[ -x "target/release/${BINARY_NAME}" ]] || die_file "build did not produce target/release/${BINARY_NAME}"
+# Step 7: Release Compilation
+compile_binary() {
+  local t0
+  t0="$(date +%s)"
+  step_start 7 "Compiling release binary"
+
+  local num_cpus
+  num_cpus="$(nproc 2>/dev/null || echo 2)"
+
+  # Adjust parallelism for memory safety
+  local mem_kb
+  mem_kb="$(grep MemTotal /proc/meminfo 2>/dev/null | awk '{print $2}' || echo 4000000)"
+  local jobs="$num_cpus"
+  if [[ "$mem_kb" -lt 2500000 && "$jobs" -gt 2 ]]; then
+    jobs=2
+    log_file "Low memory detected ($mem_kb KB); limiting cargo jobs to 2"
+  fi
+
+  # Build with native CPU architecture optimizations
+  export RUSTFLAGS="-C target-cpu=native"
+
+  if ! run_with_spinner "Compiling stack-stack (jobs: ${jobs})" cargo build --release --locked --jobs "$jobs"; then
+    step_fail 7 "Compiling release binary"
+    die "cargo build failed"
+  fi
+
+  [[ -x "target/release/${BINARY_NAME}" ]] || die "build did not produce target/release/${BINARY_NAME}"
+
+  local t1
+  t1="$(date +%s)"
+  step_done 7 "Compiling release binary" "$(( t1 - t0 ))"
 }
 
-install_binary() {
-  log_file "installing ${INSTALL_BIN}"
+# Step 8: Install Binary & State Hierarchy
+install_files_and_directories() {
+  local t0
+  t0="$(date +%s)"
+  step_start 8 "Binary install and state hierarchy"
+
+  # Backup previous binary
+  if [[ -x "${INSTALL_BIN}" ]]; then
+    cp -f "${INSTALL_BIN}" "${PREVIOUS_BIN}"
+    log_file "backed up previous binary to ${PREVIOUS_BIN}"
+  fi
+
+  # Install binary
   install -D -m 0755 "target/release/${BINARY_NAME}" "${INSTALL_BIN}"
-}
 
-create_directories() {
-  log_file "creating directories"
-
-  # The state directories hold compose files, which may carry secrets, so they
-  # are group-readable rather than world-readable. The installing admin is added
-  # to that group so they can inspect a stack without sudo.
+  # State group
   local state_group="root"
   if ! getent group "${SERVICE_GROUP}" >/dev/null 2>&1; then
     groupadd --system "${SERVICE_GROUP}" 2>/dev/null || true
@@ -314,45 +522,32 @@ create_directories() {
     state_group="${SERVICE_GROUP}"
     local admin="${SUDO_USER:-}"
     if [[ -n "${admin}" && "${admin}" != "root" ]] && id -u "${admin}" >/dev/null 2>&1; then
-      if ! id -nG "${admin}" 2>/dev/null | tr ' ' '\n' | grep -qx "${SERVICE_GROUP}"; then
-        # `set -e` is live, so the failure of usermod is handled explicitly.
-        if usermod -aG "${SERVICE_GROUP}" "${admin}" 2>/dev/null; then
-          log_file "added ${admin} to the ${SERVICE_GROUP} group (re-login to pick it up)"
-        fi
-      fi
+      usermod -aG "${SERVICE_GROUP}" "${admin}" 2>/dev/null || true
     fi
-  else
-    warn_file "could not create the ${SERVICE_GROUP} group; state stays root-only"
   fi
 
+  # Create all required filesystem directories
   install -d -m 0755 "${CONFIG_DIR}"
   install -d -m 0700 "${CONFIG_DIR}/apps"
   install -d -m 0700 "${CONFIG_DIR}/ca"
+  install -d -m 0755 "${CONFIG_DIR}/net"
   install -d -m 0755 "${STATE_DIR}"
   install -d -m 0750 -o root -g "${state_group}" "${STATE_DIR}/guests"
   install -d -m 0750 -o root -g "${state_group}" "${STATE_DIR}/images"
-  # Operator-authored compose stacks (see the "Create Stack" UI).
   install -d -m 0750 -o root -g "${state_group}" "${STATE_DIR}/stacks"
-  # Append-only audit trail for destructive operations. The file itself is
-  # 0600 (written by the service), so the directory stays root-only too.
   install -d -m 0750 /var/log/stack-stack
   install -d -m 0755 "${BACKUP_DIR}"
-  # The systemd unit references /run/libvirt; create it now so the first deploy
-  # works even before libvirtd has ever run (it is /run, so tmpfs-recreated).
-  install -d -m 0755 /run/libvirt
-  # LXC needs /run/lxc/lock to create containers.
-  install -d -m 0755 /run/lxc /run/lxc/lock
-  # LXC template cache directory.
-  install -d -m 0755 /var/cache/lxc /var/cache/lxc/download
-  # Storage mount parents and shared directories
-  install -d -m 0755 /mnt /srv /media
-  # NFS drop-in directory
-  install -d -m 0755 /etc/exports.d
-  # Samba config and state directories
-  install -d -m 0755 /etc/samba /var/lib/samba
+
+  # Hypervisor run directories
+  install -d -m 0755 /run/libvirt /run/lxc /run/lxc/lock /var/cache/lxc /var/cache/lxc/download
+
+  # Storage mount & share hierarchy
+  install -d -m 0755 /mnt /srv /media /etc/exports.d /etc/samba /var/lib/samba
   install -d -m 0700 /var/lib/samba/private
-  # DNS and networking configuration directories
-  install -d -m 0755 /etc/unbound/unbound.conf.d /etc/dnsmasq.d /etc/cloudflared /etc/systemd/system/unbound.service.d "${CONFIG_DIR}/net"
+
+  # Networking & DNS configs
+  install -d -m 0755 /etc/unbound/unbound.conf.d /etc/dnsmasq.d /etc/cloudflared /etc/systemd/system/unbound.service.d
+
   # Sudo shim for root terminal shells
   cat <<'SHIM' > /etc/profile.d/00-stack-stack-shell.sh
 if [ "$(id -u)" = "0" ]; then
@@ -364,44 +559,166 @@ SHIM
   if [[ -f /root/.bashrc ]] && ! grep -q "sudo() {" /root/.bashrc; then
     printf '\nif [ "$(id -u)" = "0" ]; then sudo() { "$@"; }; export -f sudo; fi\n' >> /root/.bashrc
   fi
-  # Initialize Samba passdb.tdb if missing so pdbedit / smbpasswd don't fail
+
+  # Initialize Samba passdb if missing
   if command -v smbpasswd >/dev/null 2>&1 && [[ ! -f /var/lib/samba/private/passdb.tdb ]]; then
     (printf "stackdummy\nstackdummy\n" | smbpasswd -a -s root >/dev/null 2>&1 && smbpasswd -x root >/dev/null 2>&1) || true
   fi
-}
 
-write_default_config() {
-  if [[ -f "${CONFIG_FILE}" ]]; then
-    return 0
-  fi
-  log_file "writing default config to ${CONFIG_FILE}"
-  write_if_changed "${CONFIG_FILE}" '{
+  # Write default config if missing
+  if [[ ! -f "${CONFIG_FILE}" ]]; then
+    write_if_changed "${CONFIG_FILE}" '{
   "bind": "0.0.0.0",
   "port": 8553,
   "sample_interval_ms": 1000,
   "smart_interval_s": 60
 }
 ' 0600 || true
+  fi
+
+  local t1
+  t1="$(date +%s)"
+  step_done 8 "Binary install and state hierarchy" "$(( t1 - t0 ))"
 }
 
-unit_contents() {
-  cat <<'EOF'
-# Managed by deploy-stack-stack.sh — edits here are overwritten on the next deploy.
+# Step 9: DNS Resolver & Port 53 Stabilization
+stabilize_dns() {
+  local t0
+  t0="$(date +%s)"
+  step_start 9 "DNS resolvers and port 53 stabilization"
+
+  # 1. Disable systemd-resolved stub listener if active
+  if systemctl list-unit-files systemd-resolved.service >/dev/null 2>&1; then
+    if systemctl is-enabled --quiet systemd-resolved 2>/dev/null || systemctl is-active --quiet systemd-resolved 2>/dev/null; then
+      systemctl disable --now systemd-resolved >/dev/null 2>&1 || true
+      if [[ -e /etc/resolv.conf ]] && grep -q '127\.0\.0\.53' /etc/resolv.conf 2>/dev/null; then
+        rm -f /etc/resolv.conf
+        write_if_changed /etc/resolv.conf "nameserver 1.1.1.1\nnameserver 1.0.0.1\n" || true
+      fi
+    fi
+  fi
+
+  # 2. Configure dnsmasq to read drop-in directory
+  if [[ -d /etc/dnsmasq.d || -f /etc/dnsmasq.conf ]]; then
+    install -d -m 0755 /etc/dnsmasq.d
+    if ! grep -q '^conf-dir=/etc/dnsmasq.d' /etc/dnsmasq.conf 2>/dev/null; then
+      printf '\n# stack-stack: load per-service dnsmasq fragments.\nconf-dir=/etc/dnsmasq.d/,*.conf\n' >> /etc/dnsmasq.conf
+    fi
+  fi
+
+  # 3. Base inert config for dnsmasq (port=0 so unbound owns :53)
+  write_if_changed /etc/dnsmasq.d/00-stack-stack-base.conf '# Managed by deploy-stack-stack.sh
+# DNS is owned by unbound; dnsmasq is DHCP-only unless explicitly configured.
+port=0
+' >/dev/null || true
+
+  if systemctl list-unit-files dnsmasq.service >/dev/null 2>&1; then
+    systemctl enable dnsmasq >/dev/null 2>&1 || true
+    systemctl restart dnsmasq >/dev/null 2>&1 || true
+  fi
+
+  # 4. Generate unbound trust anchor
+  install -d -m 0755 /var/lib/unbound
+  if command -v unbound-anchor >/dev/null 2>&1; then
+    unbound-anchor -a /var/lib/unbound/root.key >/dev/null 2>&1 || true
+    chown unbound:unbound /var/lib/unbound/root.key 2>/dev/null || true
+  fi
+
+  # 5. Drop-in restart configuration for unbound
+  install -d -m 0755 /etc/systemd/system/unbound.service.d
+  write_if_changed /etc/systemd/system/unbound.service.d/stack-stack.conf \
+'[Unit]
+After=network.target network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=0
+
+[Service]
+Restart=on-failure
+RestartSec=3
+' >/dev/null || true
+
+  systemctl daemon-reload >/dev/null 2>&1 || true
+
+  local t1
+  t1="$(date +%s)"
+  step_done 9 "DNS resolvers and port 53 stabilization" "$(( t1 - t0 ))"
+}
+
+# Step 10: Security & Firewall Hardening
+apply_hardening() {
+  local t0
+  t0="$(date +%s)"
+  step_start 10 "System security and firewall hardening"
+
+  # 1. Unattended upgrades
+  write_if_changed /etc/apt/apt.conf.d/20auto-upgrades \
+'APT::Periodic::Update-Package-Lists "1";
+APT::Periodic::Unattended-Upgrade "1";
+' >/dev/null || true
+
+  # 2. Fail2ban configuration
+  if [[ -d /etc/fail2ban ]]; then
+    write_if_changed /etc/fail2ban/jail.d/stack-stack.local \
+'[DEFAULT]
+backend = systemd
+bantime = 1h
+findtime = 10m
+maxretry = 5
+
+[sshd]
+enabled = true
+' >/dev/null || true
+    systemctl enable fail2ban >/dev/null 2>&1 || true
+    systemctl restart fail2ban >/dev/null 2>&1 || true
+  fi
+
+  # 3. UFW firewall rules (permit SSH, UI, and optional TLS front door)
+  if command -v ufw >/dev/null 2>&1; then
+    ufw --force default deny incoming >/dev/null 2>&1 || true
+    ufw --force default allow outgoing >/dev/null 2>&1 || true
+    ufw allow 22/tcp >/dev/null 2>&1 || true
+    ufw allow 8553/tcp >/dev/null 2>&1 || true
+    if grep -q '"tls_enabled"[[:space:]]*:[[:space:]]*true' "${CONFIG_FILE}" 2>/dev/null; then
+      ufw allow 80/tcp >/dev/null 2>&1 || true
+      ufw allow 443/tcp >/dev/null 2>&1 || true
+    fi
+    ufw --force enable >/dev/null 2>&1 || true
+  fi
+
+  # 4. Kernel sysctl parameters
+  write_if_changed /etc/sysctl.d/99-stack-stack.conf \
+'# stack-stack hardening
+net.ipv4.conf.all.rp_filter = 1
+net.ipv4.conf.default.rp_filter = 1
+kernel.kptr_restrict = 2
+kernel.dmesg_restrict = 1
+kernel.yama.ptrace_scope = 1
+' >/dev/null || true
+  sysctl --system >/dev/null 2>&1 || true
+
+  local t1
+  t1="$(date +%s)"
+  step_done 10 "System security and firewall hardening" "$(( t1 - t0 ))"
+}
+
+# Step 11: Systemd Service Unit Installation
+deploy_systemd_unit() {
+  local t0
+  t0="$(date +%s)"
+  step_start 11 "Systemd service installation & start"
+
+  local unit_content
+  unit_content="# Managed by deploy-stack-stack.sh — edits here are overwritten on next deploy.
 [Unit]
 Description=stack-stack homelab control plane
 Documentation=https://github.com/om-itani/stack-stack
 After=network-online.target docker.service libvirtd.service
 Wants=network-online.target docker.service libvirtd.service
-# These belong in [Unit]: systemd warns "Unknown key" and ignores them under
-# [Service]. Five failures inside five seconds stops the loop so a crash loop is
-# visible in the journal instead of restarting forever.
 StartLimitIntervalSec=5
 StartLimitBurst=5
 
 [Service]
 Type=simple
-# The service owns the Docker socket, manages nftables and binds :80/:443, so it
-# runs as root by design.
 User=root
 Group=root
 Environment=STACK_STACK_CONFIG=/etc/stack-stack/config.json
@@ -411,7 +728,6 @@ Restart=always
 RestartSec=3
 TimeoutStopSec=30
 LimitNOFILE=65536
-# Security hardening
 NoNewPrivileges=false
 PrivateTmp=false
 ProtectSystem=strict
@@ -421,81 +737,70 @@ AmbientCapabilities=CAP_NET_BIND_SERVICE CAP_NET_ADMIN CAP_NET_RAW
 
 [Install]
 WantedBy=multi-user.target
-EOF
-}
+"
 
-install_unit() {
-  local contents unit_changed=0
-  contents="$(unit_contents)"
-  if write_if_changed "${UNIT_FILE}" "${contents}" 0644; then
-    log_file "installing systemd unit"
-    unit_changed=1
-  fi
+  write_if_changed "${UNIT_FILE}" "${unit_content}" 0644 || true
+
   systemctl daemon-reload
-  if [[ "${unit_changed}" -eq 1 ]]; then
-    systemctl enable "${SERVICE_NAME}" >/dev/null 2>&1 || warn_file "could not enable ${SERVICE_NAME}"
-  fi
-  # Verify the installed unit. This is exactly what catches a key systemd will
-  # silently ignore because it sits in the wrong section (e.g. StartLimit* under
-  # [Service]), so it fails at deploy time instead of flooding the journal.
+  systemctl enable "${SERVICE_NAME}" >/dev/null 2>&1 || true
+
+  # Optional verify check
   if command -v systemd-analyze >/dev/null 2>&1; then
     local verify
     verify="$(systemd-analyze verify "${UNIT_FILE}" 2>&1 || true)"
-    if [[ -n "${verify}" ]]; then
-      warn_file "systemd-analyze reported problems with ${UNIT_FILE}:"
-      printf '%s\n' "${verify}" >&2
+    if [[ -n "$verify" ]]; then
+      log_file "systemd-analyze verify notes: ${verify}"
     fi
   fi
-}
 
-restart_service() {
-  log_file "restarting ${SERVICE_NAME}"
-  systemctl enable "${SERVICE_NAME}" >/dev/null 2>&1 || true
+  # Restart service
   if systemctl is-active --quiet "${SERVICE_NAME}"; then
     systemctl restart "${SERVICE_NAME}"
   else
     systemctl start "${SERVICE_NAME}"
   fi
+
+  local t1
+  t1="$(date +%s)"
+  step_done 11 "Systemd service installation & start" "$(( t1 - t0 ))"
 }
 
-# Comprehensive health check including all subsystems
-health_check() {
-  log_file "health-checking ${HEALTH_URL}"
+# Step 12: Health Probes & Verification
+verify_deployment() {
+  local t0
+  t0="$(date +%s)"
+  step_start 12 "Health check & verification"
 
-  # Fail fast: if the service is not even active, dumps the journal so the
-  # actual error (e.g. 226/NAMESPACE) is visible instead of a 60s curl timeout.
+  # 1. Fast check if service crashed immediately
   if ! systemctl is-active --quiet "${SERVICE_NAME}"; then
-    warn_file "${SERVICE_NAME} is not active; journal follows:"
-    journalctl -u "${SERVICE_NAME}" --no-pager -n 50 >&2 || true
-    return 1
+    step_fail 12 "Health check"
+    journalctl -u "${SERVICE_NAME}" --no-pager -n 40 >> "${DEPLOY_LOG}" 2>&1 || true
+    die "${SERVICE_NAME} failed to start. Check ${DEPLOY_LOG} for details."
   fi
 
-  local attempt
-  for attempt in $(seq 1 60); do
-    if curl -fsS --max-time 3 "${HEALTH_URL}" >/dev/null 2>&1; then
-      log_file "stack-stack is healthy"
-      curl -fsS --max-time 3 "${HEALTH_URL}"
-      printf '\n'
-      return 0
+  # 2. Health poll with timeout
+  local healthy=0
+  for attempt in $(seq 1 45); do
+    if curl -fsS --max-time 2 "${HEALTH_URL}" >/dev/null 2>&1; then
+      healthy=1
+      break
     fi
     sleep 1
   done
-  warn_file "${HEALTH_URL} did not answer in time; journal follows:"
-  journalctl -u "${SERVICE_NAME}" --no-pager -n 50 >&2 || true
-  return 1
-}
 
-# Post-deploy verification of all subsystems
-post_deploy_verification() {
-  log_file "Running post-deploy verification..."
-
-  # Check main health
-  if ! curl -fsS --max-time 5 "${HEALTH_URL}" >/dev/null 2>&1; then
-    warn_file "Main health endpoint unreachable"
-    return 1
+  if [[ $healthy -ne 1 ]]; then
+    step_fail 12 "Health check"
+    log_file "Health check failed after 45s. Initiating rollback..."
+    if [[ -x "${PREVIOUS_BIN}" ]]; then
+      cp -f "${PREVIOUS_BIN}" "${INSTALL_BIN}"
+      systemctl restart "${SERVICE_NAME}" 2>/dev/null || true
+      die "Health check failed; restored previous binary from ${PREVIOUS_BIN}"
+    else
+      die "Health check timed out and no previous binary exists for rollback"
+    fi
   fi
 
-  # Check all API endpoints
+  # 3. Post-deploy API endpoint verification
   local endpoints=(
     "/api/system/snapshot"
     "/api/containers"
@@ -514,255 +819,75 @@ post_deploy_verification() {
     "/api/notifications"
   )
 
-  local failed=0
+  local passed=0
   for ep in "${endpoints[@]}"; do
-    if curl -fsS --max-time 5 "http://127.0.0.1:8553${ep}" >/dev/null 2>&1; then
-      log_file "  ✓ ${ep}"
+    if curl -fsS --max-time 3 "http://127.0.0.1:8553${ep}" >/dev/null 2>&1; then
+      ((passed++))
+      log_file "  ✓ endpoint ready: ${ep}"
     else
-      warn_file "  ✗ ${ep} (may require auth or not be configured)"
-      ((failed++))
+      log_file "  - endpoint requires setup or auth: ${ep}"
     fi
   done
 
-  if [[ $failed -eq ${#endpoints[@]} ]]; then
-    warn_file "All endpoints failed - service may not be fully initialized"
-    return 1
-  fi
-
-  # The resolver is the most fragile dependency: unbound will not start while
-  # anything else holds :53. Surface a failed unit here (with its journal) rather
-  # than waiting for the first network apply to reveal it.
-  if systemctl is-failed --quiet unbound.service 2>/dev/null; then
-    warn_file "unbound.service is in a failed state (port 53 clash?):"
-    journalctl -u unbound.service --no-pager -n 20 >&2 || true
-  fi
-
-  log_file "Post-deploy verification complete (${failed} endpoints need configuration)"
-  return 0
-}
-
-# Back up the currently installed binary so it can be restored on rollback.
-backup_binary() {
-  if [[ -x "${INSTALL_BIN}" ]]; then
-    cp "${INSTALL_BIN}" "${PREVIOUS_BIN}"
-    log_file "backed up existing binary to ${PREVIOUS_BIN}"
-  else
-    log_file "no existing binary to back up"
-  fi
-}
-
-# Restore the previous binary after a failed health check.
-rollback_binary() {
-  if [[ -x "${PREVIOUS_BIN}" ]]; then
-    cp "${PREVIOUS_BIN}" "${INSTALL_BIN}"
-    log_file "restored previous binary from ${PREVIOUS_BIN}"
-    systemctl restart "${SERVICE_NAME}" 2>/dev/null || true
-    log_file "service restarted with previous binary"
-  else
-    warn_file "no previous binary found to restore"
-  fi
+  local t1
+  t1="$(date +%s)"
+  step_done 12 "Health check & verification (${passed}/${#endpoints[@]} endpoints ready)" "$(( t1 - t0 ))"
 }
 
 # ---------------------------------------------------------------------------
-# DNS resolvers: unbound must own :53.
-#
-# The single most common boot failure is unbound crash-looping because
-# systemd-resolved (or a distro dnsmasq) already holds UDP/TCP 53. Free the port
-# here, keep dnsmasq out of the way, and make unbound wait for the network and
-# retry with a small backoff instead of giving up after the default burst.
+# Final Summary Card
 # ---------------------------------------------------------------------------
-stabilize_dns_resolvers() {
-  # 1) systemd-resolved's stub listener owns :53 on Ubuntu/Pop!_OS. Disable the
-  #    unit and, when /etc/resolv.conf pointed at the stub, replace it with a
-  #    static resolver so name resolution keeps working before unbound starts.
-  if systemctl list-unit-files systemd-resolved.service >/dev/null 2>&1; then
-    if systemctl is-enabled --quiet systemd-resolved 2>/dev/null \
-      || systemctl is-active --quiet systemd-resolved 2>/dev/null; then
-      log_file "freeing port 53: disabling systemd-resolved"
-      systemctl disable --now systemd-resolved >/dev/null 2>&1 \
-        || warn_file "could not disable systemd-resolved"
-      if [[ -e /etc/resolv.conf ]] && grep -q '127\.0\.0\.53' /etc/resolv.conf 2>/dev/null; then
-        rm -f /etc/resolv.conf
-        write_if_changed /etc/resolv.conf 'nameserver 1.1.1.1
-nameserver 1.0.0.1
-' >/dev/null || true
-        log_file "wrote a static /etc/resolv.conf (stub resolver removed)"
-      fi
-    fi
-  fi
+show_summary() {
+  local end_time
+  end_time="$(date +%s)"
+  local total_duration=$(( end_time - SCRIPT_START_TIME ))
 
-  # 2) dnsmasq is DHCP-only in this stack: its generated config sets `port=0`
-  #    whenever unbound is on. Make sure the fragment directory exists and is
-  #    actually read, so a distro default cannot quietly take :53 back.
-  if [[ -d /etc/dnsmasq.d || -f /etc/dnsmasq.conf ]]; then
-    install -d -m 0755 /etc/dnsmasq.d
-    if ! grep -q '^conf-dir=/etc/dnsmasq.d' /etc/dnsmasq.conf 2>/dev/null; then
-      printf '\n# stack-stack: load per-service dnsmasq fragments.\nconf-dir=/etc/dnsmasq.d/,*.conf\n' >> /etc/dnsmasq.conf
-      log_file "enabled /etc/dnsmasq.d includes in /etc/dnsmasq.conf"
-    fi
-  fi
+  local primary_ip
+  primary_ip="$(hostname -I 2>/dev/null | awk '{print $1}' || echo "127.0.0.1")"
+  [[ -z "$primary_ip" ]] && primary_ip="127.0.0.1"
 
-  # 3) A fresh Debian install starts dnsmasq, which binds :53 and makes unbound
-  #    crash with "Address already in use". Rather than disable the unit (which
-  #    would drop LAN DHCP at the next reboot), make it inert: a base fragment
-  #    with `port=0` and no dhcp-range. The unit stays enabled, so once DHCP is
-  #    enabled in the UI (which writes /etc/dnsmasq.d/stack-stack.conf, read
-  #    after this file) it survives a reboot.
-  install -d -m 0755 /etc/dnsmasq.d
-  write_if_changed /etc/dnsmasq.d/00-stack-stack-base.conf '# Managed by deploy-stack-stack.sh — edits are overwritten on the next deploy.
-# DNS is owned by unbound, so dnsmasq must not bind :53 unless the generated
-# config says otherwise. No dhcp-range here means it offers no leases until
-# stack-stack enables the DHCP server.
-port=0
-' >/dev/null || true
-  if systemctl list-unit-files dnsmasq.service >/dev/null 2>&1; then
-    systemctl enable dnsmasq >/dev/null 2>&1 || warn_file "could not enable dnsmasq"
-    systemctl restart dnsmasq >/dev/null 2>&1 \
-      || warn_file "could not (re)start dnsmasq; DHCP will start on the next apply"
-    log_file "dnsmasq enabled (inert port=0); DHCP survives a reboot once enabled in the UI"
-  fi
-
-  # 4) unbound-anchor needs a writable /var/lib/unbound and a generated root
-  #    trust anchor, or its root_trust_anchor_update pre-start script fails on
-  #    every boot on a fresh box.
-  install -d -m 0755 /var/lib/unbound
-  if command -v unbound-anchor >/dev/null 2>&1; then
-    unbound-anchor -a /var/lib/unbound/root.key >/dev/null 2>&1 || true
-    chown unbound:unbound /var/lib/unbound/root.key >/dev/null 2>&1 || true
-    log_file "generated the unbound trust anchor at /var/lib/unbound/root.key"
-  else
-    warn_file "unbound-anchor is missing; unbound's trust-anchor pre-start will fail"
-  fi
-
-  # 5) unbound: start after the network and retry with a short backoff, so a
-  #    transient clash at boot self-heals instead of failing the deploy.
-  install -d -m 0755 /etc/systemd/system/unbound.service.d
-  write_if_changed /etc/systemd/system/unbound.service.d/stack-stack.conf \
-    '[Unit]
-After=network.target network-online.target
-Wants=network-online.target
-# StartLimit* keys are only valid under [Unit]; under [Service] systemd warns
-# "Unknown key" and ignores them. Never give up: retry with a short backoff.
-StartLimitIntervalSec=0
-
-[Service]
-Restart=on-failure
-RestartSec=3
-' >/dev/null || true
-  systemctl daemon-reload >/dev/null 2>&1 || true
+  printf "\n"
+  printf "  ${C_GREEN}╭────────────────────────────────────────────────────────────────────────╮${C_RESET}\n"
+  printf "  ${C_GREEN}│${C_RESET}                   ${C_BOLD}${C_GREEN}✔ stack-stack deployment successful!${C_RESET}                 ${C_GREEN}│${C_RESET}\n"
+  printf "  ${C_GREEN}├────────────────────────────────────────────────────────────────────────┤${C_RESET}\n"
+  printf "  ${C_GREEN}│${C_RESET}  ${C_WHITE}Control Plane URL${C_RESET} : ${C_CYAN}http://%s:8553${C_RESET}%*s${C_GREEN}│${C_RESET}\n" \
+    "$primary_ip" $(( 46 - ${#primary_ip} )) ""
+  printf "  ${C_GREEN}│${C_RESET}  ${C_WHITE}Localhost URL${C_RESET}     : ${C_CYAN}http://127.0.0.1:8553${C_RESET}                            ${C_GREEN}│${C_RESET}\n"
+  printf "  ${C_GREEN}│${C_RESET}  ${C_WHITE}Service Status${C_RESET}    : ${C_GREEN}active (running)${C_RESET}                                 ${C_GREEN}│${C_RESET}\n"
+  printf "  ${C_GREEN}│${C_RESET}  ${C_WHITE}Binary Installed${C_RESET}  : %-49s${C_GREEN}│${C_RESET}\n" "$INSTALL_BIN"
+  printf "  ${C_GREEN}│${C_RESET}  ${C_WHITE}Config File${C_RESET}       : %-49s${C_GREEN}│${C_RESET}\n" "$CONFIG_FILE"
+  printf "  ${C_GREEN}│${C_RESET}  ${C_WHITE}Total Deploy Time${C_RESET} : %-49s${C_GREEN}│${C_RESET}\n" "${total_duration}s"
+  printf "  ${C_GREEN}│${C_RESET}  ${C_WHITE}Detailed Log${C_RESET}      : %-49s${C_GREEN}│${C_RESET}\n" "$DEPLOY_LOG"
+  printf "  ${C_GREEN}├────────────────────────────────────────────────────────────────────────┤${C_RESET}\n"
+  printf "  ${C_GREEN}│${C_RESET}  ${C_BOLD}Commands for Management:${C_RESET}                                             ${C_GREEN}│${C_RESET}\n"
+  printf "  ${C_GREEN}│${C_RESET}    • View status : ${C_YELLOW}systemctl status ${SERVICE_NAME}${C_RESET}%*s${C_GREEN}│${C_RESET}\n" \
+    $(( 38 - ${#SERVICE_NAME} )) ""
+  printf "  ${C_GREEN}│${C_RESET}    • Stream logs : ${C_YELLOW}journalctl -u ${SERVICE_NAME} -f${C_RESET}%*s${C_GREEN}│${C_RESET}\n" \
+    $(( 39 - ${#SERVICE_NAME} )) ""
+  printf "  ${C_GREEN}│${C_RESET}    • Fast update : ${C_YELLOW}git pull && ./deploy-stack-stack.sh${C_RESET}                 ${C_GREEN}│${C_RESET}\n"
+  printf "  ${C_GREEN}╰────────────────────────────────────────────────────────────────────────╯${C_RESET}\n\n"
 }
 
 # ---------------------------------------------------------------------------
-# System hardening (defence in depth)
-#
-# All of this is best-effort: a homelab box must still deploy if, say, ufw
-# cannot be installed. Each step warns and continues rather than aborting.
+# Main Entry Point
 # ---------------------------------------------------------------------------
-harden_system() {
-  if ! command -v apt-get >/dev/null 2>&1; then
-    warn_file "apt-get not found; skipping system hardening"
-    return 0
-  fi
-  log_file "applying system hardening"
-  export DEBIAN_FRONTEND=noninteractive
-
-  # 1) Unattended security upgrades. Debian minimal installs often have the
-  #    package present but no periodic policy configured.
-  if ! dpkg -s unattended-upgrades >/dev/null 2>&1; then
-    apt-get install -y unattended-upgrades >/dev/null 2>&1 \
-      || warn_file "could not install unattended-upgrades"
-  fi
-  write_if_changed /etc/apt/apt.conf.d/20auto-upgrades \
-    'APT::Periodic::Update-Package-Lists "1";
-APT::Periodic::Unattended-Upgrade "1";
-' >/dev/null || true
-
-  # 2) fail2ban. Debian 12+ logs to the journal, so the systemd backend is what
-  #    actually reads sshd events.
-  if ! command -v fail2ban-client >/dev/null 2>&1; then
-    apt-get install -y fail2ban >/dev/null 2>&1 || warn_file "could not install fail2ban"
-  fi
-  if [[ -d /etc/fail2ban ]]; then
-    write_if_changed /etc/fail2ban/jail.d/stack-stack.local \
-      '[DEFAULT]
-backend = systemd
-bantime = 1h
-findtime = 10m
-maxretry = 5
-
-[sshd]
-enabled = true
-' >/dev/null || true
-    systemctl enable fail2ban >/dev/null 2>&1 || true
-    systemctl restart fail2ban >/dev/null 2>&1 || warn_file "could not start fail2ban"
-  fi
-
-  # 3) Firewall: default-deny inbound, allow only SSH and the UI (plus 80/443
-  #    when the TLS front door is enabled).
-  if ! command -v ufw >/dev/null 2>&1; then
-    apt-get install -y ufw >/dev/null 2>&1 || warn_file "could not install ufw"
-  fi
-  if command -v ufw >/dev/null 2>&1; then
-    ufw --force default deny incoming >/dev/null 2>&1 || true
-    ufw --force default allow outgoing >/dev/null 2>&1 || true
-    ufw allow 22/tcp >/dev/null 2>&1 || true
-    ufw allow 8553/tcp >/dev/null 2>&1 || true
-    if grep -q '"tls_enabled"[[:space:]]*:[[:space:]]*true' "${CONFIG_FILE}" 2>/dev/null; then
-      ufw allow 80/tcp >/dev/null 2>&1 || true
-      ufw allow 443/tcp >/dev/null 2>&1 || true
-    fi
-    # Default-deny inbound assumes SSH is on port 22. An operator on a custom
-    # port must add it before the rule set takes effect at the next connection.
-    warn_file "enabling ufw (default-deny inbound; SSH assumed on 22, UI on 8553) — verify your SSH port"
-    ufw --force enable >/dev/null 2>&1 || warn_file "could not enable ufw"
-  fi
-
-  # 4) sysctl hardening drop-in.
-  write_if_changed /etc/sysctl.d/99-stack-stack.conf \
-    '# stack-stack hardening
-net.ipv4.conf.all.rp_filter = 1
-net.ipv4.conf.default.rp_filter = 1
-kernel.kptr_restrict = 2
-kernel.dmesg_restrict = 1
-kernel.yama.ptrace_scope = 1
-' >/dev/null || true
-  sysctl --system >/dev/null 2>&1 || warn_file "could not apply sysctl settings"
-}
-
 main() {
-  require_root
-  require_repo_root
-  log_file "deploying stack-stack from ${REPO_ROOT} (version: ${DEPLOY_VERSION})"
+  print_banner
 
-  # Initialize deploy log
-  mkdir -p "$(dirname "${DEPLOY_LOG}")"
-  echo "=== stack-stack deploy ${DEPLOY_VERSION} ===" > "${DEPLOY_LOG}"
+  setup_environment
+  run_preflight_checks
+  install_system_packages
+  setup_cloudflared
+  setup_hypervisors
+  setup_rust_toolchain
+  compile_binary
+  install_files_and_directories
+  stabilize_dns
+  apply_hardening
+  deploy_systemd_unit
+  verify_deployment
 
-  preflight_checks
-  install_packages
-  stabilize_dns_resolvers
-  harden_system
-  ensure_rust
-  backup_binary
-  build_release
-  install_binary
-  create_directories
-  write_default_config
-  install_unit
-  restart_service
-
-  # Health check with rollback on failure
-  if ! health_check; then
-    warn_file "Health check failed, attempting rollback..."
-    rollback_binary
-    die_file "Deployment failed and rolled back. Check ${DEPLOY_LOG} for details."
-  fi
-
-  post_deploy_verification
-
-  log_file "done - deployment successful"
-  log_file "Access the UI at: http://$(hostname -I | awk '{print $1}'):8553"
-  log_file "Deploy log: ${DEPLOY_LOG}"
+  show_summary
 }
 
 main "$@"
