@@ -84,16 +84,16 @@ APT_PACKAGES=(
 # UI / Progress Bar Engine
 # ---------------------------------------------------------------------------
 # Color palette
-C_RESET="\033[0m"
-C_BOLD="\033[1m"
-C_CYAN="\033[1;36m"
-C_BLUE="\033[1;34m"
-C_GREEN="\033[1;32m"
-C_YELLOW="\033[1;33m"
-C_RED="\033[1;31m"
-C_MAGENTA="\033[1;35m"
-C_GRAY="\033[0;90m"
-C_WHITE="\033[1;37m"
+C_RESET=$'\033[0m'
+C_BOLD=$'\033[1m'
+C_CYAN=$'\033[1;36m'
+C_BLUE=$'\033[1;34m'
+C_GREEN=$'\033[1;32m'
+C_YELLOW=$'\033[1;33m'
+C_RED=$'\033[1;31m'
+C_MAGENTA=$'\033[1;35m'
+C_GRAY=$'\033[0;90m'
+C_WHITE=$'\033[1;37m'
 
 # Disable colors if not in an interactive terminal
 if [[ ! -t 1 ]]; then
@@ -907,31 +907,27 @@ print_box_row() {
   local key="$1" val="$2" val_color="${3:-$C_CYAN}"
   local pad=$(( 47 - ${#val} ))
   (( pad < 0 )) && pad=0
-  printf "  %s│%s  %s%-18s%s : %s%s%s%*s%s│%s\n" \
-    "$C_GREEN" "$C_RESET" \
-    "$C_WHITE" "$key" "$C_RESET" \
-    "$val_color" "$val" "$C_RESET" \
-    "$pad" "" \
-    "$C_GREEN" "$C_RESET"
+  printf "  ${C_GREEN}│${C_RESET}  ${C_WHITE}%-18s${C_RESET} : ${val_color}%s${C_RESET}%*s${C_GREEN}│${C_RESET}\n" \
+    "$key" \
+    "$val" \
+    "$pad" ""
 }
 
 print_box_cmd() {
   local label="$1" cmd="$2"
   local pad=$(( 47 - ${#cmd} ))
   (( pad < 0 )) && pad=0
-  printf "  %s│%s    • %s%-14s%s : %s%s%s%*s%s│%s\n" \
-    "$C_GREEN" "$C_RESET" \
-    "$C_WHITE" "$label" "$C_RESET" \
-    "$C_YELLOW" "$cmd" "$C_RESET" \
-    "$pad" "" \
-    "$C_GREEN" "$C_RESET"
+  printf "  ${C_GREEN}│${C_RESET}    • ${C_WHITE}%-14s${C_RESET} : ${C_YELLOW}%s${C_RESET}%*s${C_GREEN}│${C_RESET}\n" \
+    "$label" \
+    "$cmd" \
+    "$pad" ""
 }
 
 border_line() {
   local left="$1" mid="$2" right="$3"
   local bar=""
   for ((i = 0; i < 70; i++)); do bar="${bar}─"; done
-  printf "  %s%s%s%s%s\n" "$C_GREEN" "$left" "$bar" "$right" "$C_RESET"
+  printf "  ${C_GREEN}%s%s%s${C_RESET}\n" "$left" "$bar" "$right"
 }
 
 show_summary() {
@@ -945,13 +941,9 @@ show_summary() {
 
   printf "\n"
   border_line "╭" "─" "╮"
-  local title="✔ stack-stack deployment successful!"
-  printf "  %s│%s%*s%s%s%s%*s%s│%s\n" \
-    "$C_GREEN" "$C_RESET" \
+  printf "  ${C_GREEN}│${C_RESET}%*s${C_BOLD}${C_GREEN}✔ stack-stack deployment successful!${C_RESET}%*s${C_GREEN}│${C_RESET}\n" \
     17 "" \
-    "$C_BOLD$C_GREEN" "$title" "$C_RESET" \
-    17 "" \
-    "$C_GREEN" "$C_RESET"
+    17 ""
   border_line "├" "─" "┤"
   print_box_row "Control Plane URL" "http://${primary_ip}:8553" "$C_CYAN"
   print_box_row "Localhost URL" "http://127.0.0.1:8553" "$C_CYAN"
@@ -961,11 +953,8 @@ show_summary() {
   print_box_row "Total Deploy Time" "${total_duration}s" "$C_WHITE"
   print_box_row "Detailed Log" "$DEPLOY_LOG" "$C_WHITE"
   border_line "├" "─" "┤"
-  printf "  %s│%s  %sCommands for Management:%s%*s%s│%s\n" \
-    "$C_GREEN" "$C_RESET" \
-    "$C_BOLD$C_WHITE" "$C_RESET" \
-    44 "" \
-    "$C_GREEN" "$C_RESET"
+  printf "  ${C_GREEN}│${C_RESET}  ${C_BOLD}${C_WHITE}Commands for Management:${C_RESET}%*s${C_GREEN}│${C_RESET}\n" \
+    44 ""
   print_box_cmd "View status" "systemctl status ${SERVICE_NAME}"
   print_box_cmd "Stream logs" "journalctl -u ${SERVICE_NAME} -f"
   print_box_cmd "Fast update" "git pull && ./deploy-stack-stack.sh"

@@ -160,24 +160,21 @@ textarea {
 }
 
 .badge-ok {
-  background: rgba(16, 185, 129, 0.14);
+  background: rgba(16, 185, 129, 0.12);
   color: #34d399;
-  border-color: rgba(16, 185, 129, 0.28);
-  box-shadow: 0 0 12px rgba(16, 185, 129, 0.12);
+  border-color: rgba(16, 185, 129, 0.25);
 }
 
 .badge-warn {
-  background: rgba(245, 158, 11, 0.14);
+  background: rgba(245, 158, 11, 0.12);
   color: #fbbf24;
-  border-color: rgba(245, 158, 11, 0.28);
-  box-shadow: 0 0 12px rgba(245, 158, 11, 0.12);
+  border-color: rgba(245, 158, 11, 0.25);
 }
 
 .badge-err {
-  background: rgba(239, 68, 68, 0.14);
+  background: rgba(239, 68, 68, 0.12);
   color: #f87171;
-  border-color: rgba(239, 68, 68, 0.28);
-  box-shadow: 0 0 12px rgba(239, 68, 68, 0.12);
+  border-color: rgba(239, 68, 68, 0.25);
 }
 
 .badge-muted {

@@ -222,11 +222,11 @@ const ICONS: Record<string, string> = {
   settings: `<svg class="size-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>`,
 };
 
-/** Modern nav item styling with glass highlight and active accent border. */
+/** Modern nav item styling with clean hover highlight and active indicator. */
 const NAV_IDLE =
-  "group relative flex items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-left text-[12px] text-neutral-400 transition-all duration-150 hover:bg-white/[0.06] hover:text-white";
+  "group relative flex items-center gap-3 rounded-lg px-2.5 py-2 text-left text-[12.5px] text-neutral-400 transition-colors duration-150 hover:bg-white/[0.06] hover:text-white";
 const NAV_ACTIVE =
-  "group relative flex items-center gap-2.5 rounded-lg bg-white/[0.08] px-2.5 py-1.5 text-left text-[12px] font-semibold text-white shadow-sm ring-1 ring-white/10 before:absolute before:left-0 before:top-2 before:bottom-2 before:w-1 before:rounded-r-full before:bg-emerald-400";
+  "group relative flex items-center gap-3 rounded-lg bg-white/[0.08] px-2.5 py-2 text-left text-[12.5px] font-medium text-white ring-1 ring-white/10 before:absolute before:left-0 before:top-2 before:bottom-2 before:w-0.5 before:rounded-r-full before:bg-emerald-400";
 
 function startShell(): void {
   if (shellStarted) {
@@ -238,13 +238,13 @@ function startShell(): void {
 <div class="flex h-screen bg-[#0b0d13]">
   <aside data-ref="sidebar" class="flex w-56 shrink-0 flex-col border-r border-white/10 bg-[#0f1219]/95 backdrop-blur-md transition-[width] duration-200 ease-out">
     <div class="flex items-center gap-2 border-b border-white/10 bg-white/[0.02] px-3.5 py-3">
-      <div class="flex min-w-0 items-center gap-2">
-        <span class="inline-block size-2 shrink-0 rounded-full bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.7)] animate-pulse"></span>
-        <span data-ref="brand" class="min-w-0 truncate text-xs font-bold tracking-[0.2em] bg-gradient-to-r from-emerald-400 via-teal-300 to-cyan-400 bg-clip-text text-transparent">STACK-STACK</span>
+      <div class="flex min-w-0 items-center gap-2.5">
+        <span class="inline-block size-2 shrink-0 rounded-full bg-emerald-500"></span>
+        <span data-ref="brand" class="min-w-0 truncate text-xs font-bold tracking-[0.18em] text-white">STACK-STACK</span>
       </div>
-      <button data-ref="collapse" type="button" class="ml-auto shrink-0 rounded-lg border border-white/10 bg-white/5 px-2 py-0.5 text-[11px] text-neutral-400 transition-all duration-150 hover:border-white/20 hover:bg-white/10 hover:text-white" title="Collapse sidebar">&laquo;</button>
+      <button data-ref="collapse" type="button" class="ml-auto shrink-0 rounded-lg border border-white/10 bg-white/5 px-2 py-0.5 text-[11px] text-neutral-400 transition-colors duration-150 hover:border-white/20 hover:bg-white/10 hover:text-white" title="Collapse sidebar">&laquo;</button>
     </div>
-    <nav data-ref="nav" class="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto px-2 py-3"></nav>
+    <nav data-ref="nav" class="flex min-h-0 flex-1 flex-col gap-5 overflow-y-auto px-2 py-3"></nav>
   </aside>
   <div class="flex min-w-0 flex-1 flex-col">
     <header class="z-20 flex items-center gap-x-3 border-b border-white/10 bg-[#0f1219]/95 backdrop-blur-md px-4 py-2.5 shadow-sm">
@@ -338,7 +338,7 @@ function startShell(): void {
   // Grouped sidebar: a hairline-separated section per group, each item an icon
   // plus label. Group names are hidden when the sidebar is collapsed to icons.
   for (const group of [...new Set(pages.map((page) => page.group))]) {
-    const section = el("div", { class: "flex flex-col gap-0.5" });
+    const section = el("div", { class: "flex flex-col gap-1" });
     const header = el("span", {
       class: "px-2.5 pb-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-neutral-500",
       text: group,
@@ -352,7 +352,7 @@ function startShell(): void {
       navButton.title = def.label;
       navButton.className = NAV_IDLE;
       const iconWrap = document.createElement("span");
-      iconWrap.className = `flex size-6 shrink-0 items-center justify-center rounded-md border ${def.badgeBorder} ${def.badgeBg} ${def.color} shadow-xs transition-transform duration-150 group-hover:scale-110`;
+      iconWrap.className = `flex size-6 shrink-0 items-center justify-center rounded-md border ${def.badgeBorder} ${def.badgeBg} ${def.color} transition-colors duration-150`;
       iconWrap.innerHTML = def.icon;
 
       const label = el("span", { class: "truncate font-medium", text: def.label });
@@ -375,6 +375,10 @@ function startShell(): void {
     }
     for (const node of navEl.querySelectorAll<HTMLElement>("[data-nav-label]")) {
       node.style.display = collapsed ? "none" : "";
+    }
+    for (const [id, btn] of navButtons.entries()) {
+      const isActive = id === activeId;
+      btn.className = `${isActive ? NAV_ACTIVE : NAV_IDLE}${collapsed ? " justify-center px-0" : ""}`;
     }
     brandEl.style.display = collapsed ? "none" : "";
     collapseEl.textContent = collapsed ? "»" : "«";
@@ -420,7 +424,7 @@ function startShell(): void {
 
       const navButton = navButtons.get(def.id);
       if (navButton) {
-        navButton.className = isActive ? NAV_ACTIVE : NAV_IDLE;
+        navButton.className = `${isActive ? NAV_ACTIVE : NAV_IDLE}${collapsed ? " justify-center px-0" : ""}`;
       }
     }
 

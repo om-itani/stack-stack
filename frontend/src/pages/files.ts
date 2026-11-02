@@ -122,7 +122,7 @@ export function createFilesPage(): PageHandle {
     class: "hidden h-1 w-full overflow-hidden rounded-full bg-white/10",
   });
   const progressBar = el("div", {
-    class: "h-full w-0 rounded-full bg-gradient-to-r from-emerald-500 to-teal-400",
+    class: "h-full w-0 rounded-full bg-emerald-500",
   });
   progressTrack.append(progressBar);
   function setProgress(pct: number | null): void {
