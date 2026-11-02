@@ -11,6 +11,7 @@ pub mod health;
 pub mod logs;
 pub mod nfs;
 pub mod pty;
+pub mod remote_access;
 pub mod samba;
 pub mod smart;
 pub mod tasks;

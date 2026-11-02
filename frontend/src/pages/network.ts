@@ -36,6 +36,7 @@ import {
   field,
   listInput,
   numberInput,
+  openModal,
   select,
   tableEditor,
   textInput,
@@ -1601,6 +1602,9 @@ export function createNetworkPage(): PageHandle {
       button("import PEM", "", () => {
         void importPair(nameInput.value);
       }),
+      button("issue Let's Encrypt / ACME", "text-sky-400 hover:border-sky-500", () => {
+        openAcmeModal(nameInput.value);
+      }),
     );
     config.append(actions);
     config.append(
@@ -1839,6 +1843,90 @@ export function createNetworkPage(): PageHandle {
       busy = false;
       renderAll();
     }
+  }
+
+  function openAcmeModal(defaultName: string): void {
+    const modal = openModal("Issue Let's Encrypt / ACME Certificate");
+    let name = defaultName || "acme-wildcard";
+    let domain = draft?.certs.domains[0] || "*.example.com";
+    let email = "";
+    let provider = "cloudflare";
+    let cfToken = "";
+
+    const errorEl = el("div", { class: "text-xs text-rose-400 min-h-4" });
+    const nameInput = textInput(name, (v) => (name = v), { placeholder: "certificate name (e.g. acme-wildcard)" });
+    const domainInput = textInput(domain, (v) => (domain = v), { placeholder: "*.example.com or sub.example.com" });
+    const emailInput = textInput(email, (v) => (email = v), { placeholder: "admin@example.com (for expiration alerts)" });
+    const tokenInput = textInput(cfToken, (v) => (cfToken = v), { type: "password", placeholder: "Zone.DNS:Edit Cloudflare API token" });
+    const tokenField = field("Cloudflare API Token", tokenInput);
+
+    const providerSelect = select(
+      provider,
+      [
+        ["cloudflare", "Cloudflare DNS-01 (Wildcard, no open ports required)"],
+        ["http01", "HTTP-01 Challenge (Requires public Port 80 forwarded)"],
+      ],
+      (v) => {
+        provider = v;
+        tokenField.style.display = provider === "cloudflare" ? "block" : "none";
+      },
+    );
+
+    const submitBtn = button("Request Certificate", "border-emerald-600 text-emerald-400 hover:border-emerald-500", async () => {
+      errorEl.textContent = "";
+      if (!name.trim()) {
+        errorEl.textContent = "Please enter a certificate name.";
+        return;
+      }
+      if (!domain.trim()) {
+        errorEl.textContent = "Please enter a domain name.";
+        return;
+      }
+      if (!email.trim() || !email.includes("@")) {
+        errorEl.textContent = "Please enter a valid email address.";
+        return;
+      }
+      if (provider === "cloudflare" && !cfToken.trim()) {
+        errorEl.textContent = "Cloudflare API token is required for DNS-01.";
+        return;
+      }
+
+      submitBtn.disabled = true;
+      submitBtn.textContent = "Issuing ACME certificate (up to 30s)...";
+
+      try {
+        const info = await networkApi.issueAcmeCertificate({
+          name: name.trim(),
+          domain: domain.trim(),
+          email: email.trim(),
+          provider,
+          cloudflare_token: provider === "cloudflare" ? cfToken.trim() : undefined,
+        });
+        certificates = await networkApi.certificates();
+        setStatus(`issued ACME certificate ${info.name}`, "ok");
+        modal.close();
+        renderAll();
+      } catch (err) {
+        errorEl.textContent = errorText(err);
+        submitBtn.disabled = false;
+        submitBtn.textContent = "Request Certificate";
+      }
+    });
+
+    const cancelBtn = button("Cancel", "", () => modal.close());
+
+    modal.body.append(
+      field("Certificate Name", nameInput),
+      field("Domain Name", domainInput),
+      field("Contact Email", emailInput),
+      field("Validation Method", providerSelect),
+      tokenField,
+      el("div", { class: "text-[11px] text-neutral-500 mt-1", text: "Cloudflare DNS-01 uses DNS TXT records to prove domain ownership. It supports wildcard certs (*.domain.com) and works without opening port 80." }),
+      errorEl,
+    );
+
+    const actions = el("div", { class: "flex justify-end gap-2 mt-2" }, [cancelBtn, submitBtn]);
+    modal.body.append(actions);
   }
 
   // --- wiring ------------------------------------------------------------

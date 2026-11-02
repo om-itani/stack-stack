@@ -10,16 +10,54 @@
  * therefore survives the browser being closed.
  */
 
-import { metricsApi } from "../api";
-import type { HistoryRange, HistoryPoint } from "../api";
+import { containersApi, metricsApi } from "../api";
+import type { Container, HistoryRange, HistoryPoint } from "../api";
 import { Sparkline } from "../spark";
 import type { Telemetry } from "../telemetry";
 import type { Disk, Network, Smart, Snapshot } from "../telemetry";
-import { animateNumber, bytes, emptyNote, fill, must, percent, rate } from "../ui";
+import { animateNumber, bytes, button, emptyNote, field, fill, must, openModal, percent, rate, textInput } from "../ui";
 import { buildSmartPanel } from "./smartPanel";
 
 const EMERALD = "#34d399";
 const SKY = "#38bdf8";
+
+interface CustomBookmark {
+  id: string;
+  name: string;
+  url: string;
+  category?: string;
+}
+
+const BADGE_COLORS = [
+  "text-emerald-400 bg-emerald-500/10 border-emerald-500/25",
+  "text-sky-400 bg-sky-500/10 border-sky-500/25",
+  "text-purple-400 bg-purple-500/10 border-purple-500/25",
+  "text-amber-400 bg-amber-500/10 border-amber-500/25",
+  "text-teal-400 bg-teal-500/10 border-teal-500/25",
+  "text-rose-400 bg-rose-500/10 border-rose-500/25",
+  "text-indigo-400 bg-indigo-500/10 border-indigo-500/25",
+];
+
+function getCategoryColor(category: string): string {
+  let hash = 0;
+  for (let i = 0; i < category.length; i++) {
+    hash = (hash << 5) - hash + category.charCodeAt(i);
+  }
+  return BADGE_COLORS[Math.abs(hash) % BADGE_COLORS.length];
+}
+
+function loadCustomBookmarks(): CustomBookmark[] {
+  try {
+    const raw = localStorage.getItem("stack-stack:custom-bookmarks");
+    return raw ? JSON.parse(raw) : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveCustomBookmarks(bookmarks: CustomBookmark[]): void {
+  localStorage.setItem("stack-stack:custom-bookmarks", JSON.stringify(bookmarks));
+}
 
 /** Live is 1 Hz; a range is the once-a-minute history, so the window is wider. */
 type Range = HistoryRange | "live";
@@ -32,6 +70,23 @@ const RANGES: Array<{ id: Range; label: string }> = [
 ];
 
 const MARKUP = `
+  <section class="panel col-span-full" data-ref="services-section">
+    <div class="panel-title flex items-center justify-between gap-4 border-b border-white/5 px-3 py-1.5 text-[10px]">
+      <div class="flex items-center gap-2">
+        <span class="font-semibold text-neutral-300">services & applications</span>
+        <span data-ref="services-count" class="rounded-full bg-emerald-500/10 border border-emerald-500/25 px-1.5 py-0.2 text-[10px] text-emerald-400">0 active</span>
+      </div>
+      <div class="flex items-center gap-2">
+        <input data-ref="services-filter" type="text" placeholder="filter..." class="h-5 w-24 rounded border border-white/10 bg-white/5 px-1.5 text-[10px] text-white placeholder-neutral-500 focus:w-36 focus:border-white/20 focus:outline-none transition-all duration-150" />
+        <button data-ref="add-bookmark-btn" type="button" class="rounded border border-white/10 bg-white/5 px-2 py-0.5 text-[10px] text-neutral-300 hover:border-emerald-500/40 hover:bg-emerald-500/10 hover:text-emerald-400 transition-colors">+ bookmark</button>
+      </div>
+    </div>
+    <div data-ref="services-grid" class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 2xl:grid-cols-6 gap-2 p-2.5"></div>
+    <div data-ref="services-empty" class="hidden p-6 text-center text-xs text-neutral-500">
+      No active web services or bookmarks found. Deploy apps from the <a href="#/apps" class="text-emerald-400 hover:underline">App Store</a> or click <span class="text-neutral-400 font-medium">+ bookmark</span>.
+    </div>
+  </section>
+
   <section class="panel col-span-full">
     <div class="panel-title flex items-center justify-between gap-4 border-b border-white/5 px-3 py-1.5 text-[10px]">
       <span>network</span>
@@ -106,7 +161,13 @@ const MARKUP = `
   </section>
 `;
 
-export function createSystemPage(telemetry: Telemetry): { root: HTMLElement } {
+export interface PageHandle {
+  root: HTMLElement;
+  onShow?: () => void;
+  onHide?: () => void;
+}
+
+export function createSystemPage(telemetry: Telemetry): PageHandle {
   const root = document.createElement("div");
   root.className = "grid grid-cols-1 gap-4 p-4 xl:grid-cols-2 2xl:grid-cols-3";
   root.innerHTML = MARKUP;
@@ -560,5 +621,227 @@ export function createSystemPage(telemetry: Telemetry): { root: HTMLElement } {
   // SMART self-tests: a schedule + history card next to the live health badge.
   root.append(buildSmartPanel());
 
-  return { root };
+  // --- Services & Applications Launcher ----------------------------------
+  const servicesCountEl = ref<HTMLElement>("services-count");
+  const servicesFilterEl = ref<HTMLInputElement>("services-filter");
+  const addBookmarkBtn = ref<HTMLButtonElement>("add-bookmark-btn");
+  const servicesGridEl = ref<HTMLElement>("services-grid");
+  const servicesEmptyEl = ref<HTMLElement>("services-empty");
+
+  let containers: Container[] = [];
+  let customBookmarks = loadCustomBookmarks();
+  let filterText = "";
+
+  function renderServices(): void {
+    const items: Array<{
+      id: string;
+      name: string;
+      url: string;
+      category: string;
+      running: boolean;
+      ports: string;
+      isCustom?: boolean;
+    }> = [];
+
+    for (const c of containers) {
+      const name = (c.app_id || c.name).replace(/^\//, "");
+      if (c.web_urls && c.web_urls.length > 0) {
+        items.push({
+          id: c.id,
+          name,
+          url: c.web_urls[0],
+          category: c.stack || "app",
+          running: c.state === "running",
+          ports: c.ports.map((p) => `:${p.public ?? p.private}`).join(", "),
+          isCustom: false,
+        });
+      } else if (c.ports && c.ports.length > 0) {
+        const p = c.ports[0].public ?? c.ports[0].private;
+        items.push({
+          id: c.id,
+          name,
+          url: `http://${location.hostname}:${p}`,
+          category: c.stack || "container",
+          running: c.state === "running",
+          ports: c.ports.map((p) => `:${p.public ?? p.private}`).join(", "),
+          isCustom: false,
+        });
+      }
+    }
+
+    for (const b of customBookmarks) {
+      items.push({
+        id: b.id,
+        name: b.name,
+        url: b.url,
+        category: b.category || "custom",
+        running: true,
+        ports: "",
+        isCustom: true,
+      });
+    }
+
+    const filtered = filterText.trim()
+      ? items.filter(
+          (item) =>
+            item.name.toLowerCase().includes(filterText.toLowerCase()) ||
+            item.category.toLowerCase().includes(filterText.toLowerCase()) ||
+            item.url.toLowerCase().includes(filterText.toLowerCase()),
+        )
+      : items;
+
+    servicesCountEl.textContent = `${items.filter((i) => i.running).length} active`;
+
+    if (filtered.length === 0) {
+      servicesGridEl.innerHTML = "";
+      servicesEmptyEl.classList.remove("hidden");
+      return;
+    }
+
+    servicesEmptyEl.classList.add("hidden");
+    servicesGridEl.innerHTML = "";
+
+    for (const item of filtered) {
+      const card = document.createElement("div");
+      card.className =
+        "group relative flex flex-col justify-between rounded-lg border border-white/10 bg-[#0f1219]/90 p-2.5 hover:border-white/20 hover:bg-white/[0.04] transition-all duration-150";
+
+      const top = document.createElement("div");
+      top.className = "flex items-start justify-between gap-2";
+
+      const titleWrap = document.createElement("div");
+      titleWrap.className = "min-w-0 flex-1";
+
+      const nameEl = document.createElement("div");
+      nameEl.className = "truncate text-xs font-semibold text-white tracking-wide";
+      nameEl.textContent = item.name;
+
+      const catBadge = document.createElement("span");
+      catBadge.className = `inline-block mt-0.5 rounded px-1.5 py-0.2 text-[9px] font-medium border ${getCategoryColor(item.category)}`;
+      catBadge.textContent = item.category;
+
+      titleWrap.append(nameEl, catBadge);
+
+      const statusDot = document.createElement("span");
+      statusDot.className = `size-2 rounded-full shrink-0 mt-1 ${item.running ? "bg-emerald-400 ring-2 ring-emerald-400/20" : "bg-neutral-600"}`;
+      statusDot.title = item.running ? "Running" : "Stopped";
+
+      top.append(titleWrap, statusDot);
+
+      const bottom = document.createElement("div");
+      bottom.className = "mt-2.5 flex items-center justify-between gap-2 border-t border-white/5 pt-1.5 text-[10px]";
+
+      const portEl = document.createElement("span");
+      portEl.className = "truncate text-neutral-500 font-mono text-[9.5px]";
+      portEl.textContent = item.ports;
+
+      const actionWrap = document.createElement("div");
+      actionWrap.className = "flex items-center gap-1.5 shrink-0";
+
+      if (item.isCustom) {
+        const delBtn = document.createElement("button");
+        delBtn.type = "button";
+        delBtn.className = "text-neutral-500 hover:text-rose-400 text-xs transition-colors px-1";
+        delBtn.title = "Delete bookmark";
+        delBtn.textContent = "✕";
+        delBtn.addEventListener("click", (e) => {
+          e.stopPropagation();
+          customBookmarks = customBookmarks.filter((b) => b.id !== item.id);
+          saveCustomBookmarks(customBookmarks);
+          renderServices();
+        });
+        actionWrap.append(delBtn);
+      }
+
+      const openLink = document.createElement("a");
+      openLink.href = item.url;
+      openLink.target = "_blank";
+      openLink.rel = "noopener noreferrer";
+      openLink.className =
+        "flex items-center gap-1 rounded border border-white/10 bg-white/5 px-2 py-0.5 text-[10px] font-medium text-neutral-300 transition-colors group-hover:border-emerald-500/40 group-hover:bg-emerald-500/10 group-hover:text-emerald-400";
+      openLink.innerHTML = `open <span class="text-[9px]">↗</span>`;
+
+      actionWrap.append(openLink);
+      bottom.append(portEl, actionWrap);
+
+      card.append(top, bottom);
+      servicesGridEl.append(card);
+    }
+  }
+
+  servicesFilterEl.addEventListener("input", () => {
+    filterText = servicesFilterEl.value;
+    renderServices();
+  });
+
+  addBookmarkBtn.addEventListener("click", () => {
+    let name = "";
+    let url = "";
+    let category = "custom";
+
+    const modal = openModal("Add Application Bookmark");
+    const errorEl = document.createElement("div");
+    errorEl.className = "text-xs text-rose-400 min-h-4";
+
+    const nameInput = textInput("", (v) => (name = v), { placeholder: "e.g. Router Admin, Proxmox, Home Assistant" });
+    const urlInput = textInput("", (v) => (url = v), { placeholder: "e.g. http://192.168.1.1:8080" });
+    const catInput = textInput("", (v) => (category = v), { placeholder: "e.g. Network, Smart Home, Storage" });
+
+    const saveBtn = button("Add Bookmark", "border-emerald-700 text-emerald-300 hover:border-emerald-400", () => {
+      errorEl.textContent = "";
+      if (!name.trim()) {
+        errorEl.textContent = "Please enter an application name.";
+        return;
+      }
+      if (!url.trim()) {
+        errorEl.textContent = "Please enter a valid URL.";
+        return;
+      }
+      let formattedUrl = url.trim();
+      if (!/^https?:\/\//i.test(formattedUrl)) {
+        formattedUrl = `http://${formattedUrl}`;
+      }
+
+      customBookmarks.push({
+        id: `bm-${Date.now()}`,
+        name: name.trim(),
+        url: formattedUrl,
+        category: category.trim() || "custom",
+      });
+      saveCustomBookmarks(customBookmarks);
+      renderServices();
+      modal.close();
+    });
+
+    const cancelBtn = button("Cancel", "", () => modal.close());
+
+    modal.body.append(
+      field("Name", nameInput),
+      field("URL", urlInput),
+      field("Category (optional)", catInput),
+      errorEl,
+    );
+    const actions = document.createElement("div");
+    actions.className = "flex justify-end gap-2 mt-2";
+    actions.append(cancelBtn, saveBtn);
+    modal.body.append(actions);
+  });
+
+  async function loadServices(): Promise<void> {
+    try {
+      containers = await containersApi.containers();
+      renderServices();
+    } catch {
+      renderServices();
+    }
+  }
+
+  void loadServices();
+
+  return {
+    root,
+    onShow: () => {
+      void loadServices();
+    },
+  };
 }

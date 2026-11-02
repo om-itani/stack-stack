@@ -68,6 +68,8 @@ APT_PACKAGES=(
   dnsmasq
   nftables
   iptables
+  certbot
+  python3-certbot-dns-cloudflare
   iproute2
   ipset
   jq

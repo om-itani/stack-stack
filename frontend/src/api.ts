@@ -510,6 +510,13 @@ export const networkApi = {
     jsonRequest<CertInfo>("/api/network/certificates", "POST", upload),
   generateCertificate: (name: string, domains?: string[]) =>
     jsonRequest<CertInfo>("/api/network/certificates/self-signed", "POST", { name, domains }),
+  issueAcmeCertificate: (params: {
+    name: string;
+    domain: string;
+    email: string;
+    provider: string;
+    cloudflare_token?: string;
+  }) => jsonRequest<CertInfo>("/api/network/certificates/acme", "POST", params),
   removeCertificate: (name: string) =>
     request<{ ok: boolean }>(`/api/network/certificates/${encodeURIComponent(name)}`, {
       method: "DELETE",
@@ -625,6 +632,53 @@ export const wireguardApi = {
   addPeer: (peer: WgPeer) => jsonRequest<WgState>("/api/wireguard/peers", "POST", peer),
   removePeer: (name: string) =>
     request<WgState>(`/api/wireguard/peers/${encodeURIComponent(name)}`, { method: "DELETE" }),
+};
+
+// ---------------------------------------------------------------------------
+// Remote Access (Tailscale, NetBird, Cloudflare)
+// ---------------------------------------------------------------------------
+
+export interface TailscaleStatus {
+  installed: boolean;
+  running: boolean;
+  ip: string | null;
+  hostname: string | null;
+  peers_count: number;
+  auth_url: string | null;
+  raw: string | null;
+}
+
+export interface NetBirdStatus {
+  installed: boolean;
+  running: boolean;
+  ip: string | null;
+  peers_count: number;
+  management_url: string | null;
+  raw: string | null;
+}
+
+export interface CloudflaredStatus {
+  installed: boolean;
+  active: boolean;
+  version: string | null;
+}
+
+export interface RemoteAccessOverview {
+  tailscale: TailscaleStatus;
+  netbird: NetBirdStatus;
+  cloudflared: CloudflaredStatus;
+}
+
+export const remoteAccessApi = {
+  status: () => request<RemoteAccessOverview>("/api/remote-access"),
+  tailscaleUp: (params: { auth_key: string; hostname?: string; exit_node?: boolean; accept_routes?: boolean }) =>
+    jsonRequest<{ ok: boolean; message?: string; error?: string }>("/api/remote-access/tailscale/up", "POST", params),
+  tailscaleDown: () =>
+    post<{ ok: boolean; message?: string; error?: string }>("/api/remote-access/tailscale/down"),
+  netbirdUp: (params: { setup_key: string; management_url?: string }) =>
+    jsonRequest<{ ok: boolean; message?: string; error?: string }>("/api/remote-access/netbird/up", "POST", params),
+  netbirdDown: () =>
+    post<{ ok: boolean; message?: string; error?: string }>("/api/remote-access/netbird/down"),
 };
 
 // ---------------------------------------------------------------------------
@@ -1323,6 +1377,8 @@ export const api = {
   reset: (id: string) =>
     request<OpResult>(`/api/apps/${encodeURIComponent(id)}/reset`, { method: "POST" }),
 };
+
+export const containersApi = api;
 
 /** A Docker Hub repository search result. */
 export interface HubRepo {

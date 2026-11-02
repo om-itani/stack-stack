@@ -18,6 +18,7 @@ pub mod metrics;
 pub mod network;
 pub mod notify;
 pub mod proxy;
+pub mod remote_access;
 pub mod shares;
 pub mod shell_ws;
 pub mod smart;
@@ -153,6 +154,10 @@ pub fn router(state: AppState) -> Router {
             post(network::certificate_generate),
         )
         .route(
+            "/api/network/certificates/acme",
+            post(network::certificate_issue_acme),
+        )
+        .route(
             "/api/network/certificates/{name}",
             delete(network::certificate_remove),
         )
@@ -218,6 +223,23 @@ pub fn router(state: AppState) -> Router {
         .route(
             "/api/wireguard/peers/{name}",
             delete(wireguard::remove_peer),
+        )
+        .route("/api/remote-access", get(remote_access::status))
+        .route(
+            "/api/remote-access/tailscale/up",
+            post(remote_access::tailscale_up),
+        )
+        .route(
+            "/api/remote-access/tailscale/down",
+            post(remote_access::tailscale_down),
+        )
+        .route(
+            "/api/remote-access/netbird/up",
+            post(remote_access::netbird_up),
+        )
+        .route(
+            "/api/remote-access/netbird/down",
+            post(remote_access::netbird_down),
         )
         .route("/api/shell/ws", get(shell_ws::shell_ws))
         .route("/api/tasks", get(tasks::list).post(tasks::upsert))

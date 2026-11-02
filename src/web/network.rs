@@ -178,6 +178,20 @@ pub async fn certificate_generate(
     Ok(Json(info))
 }
 
+pub async fn certificate_issue_acme(
+    State(state): State<AppState>,
+    Json(request): Json<certs::AcmeIssueRequest>,
+) -> Result<Json<CertInfo>, ApiError> {
+    let ctx = state.network.clone();
+    let info = tokio::task::spawn_blocking(move || {
+        let (config, _) = store::load(&ctx.config_path);
+        certs::issue_acme(&config, ctx.runner.as_ref(), &request)
+    })
+    .await
+    .map_err(|err| ApiError::internal(format!("certificate task failed: {err}")))??;
+    Ok(Json(info))
+}
+
 pub async fn certificate_remove(
     State(state): State<AppState>,
     Path(name): Path<String>,

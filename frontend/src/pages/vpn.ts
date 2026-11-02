@@ -6,15 +6,18 @@
  * `qrencode` is installed.
  */
 
-import { wireguardApi } from "../api";
-import type { ClientExport, WgPeer, WgState } from "../api";
+import { remoteAccessApi, wireguardApi } from "../api";
+import type { ClientExport, RemoteAccessOverview, WgPeer, WgState } from "../api";
 import { bytes, uptime } from "../ui";
 import { button, checkbox, el, emptyNote, field, panel, tableEditor, textInput } from "../ui";
 
 export interface PageHandle {
   root: HTMLElement;
   onShow?: () => void;
+  onHide?: () => void;
 }
+
+type VpnTab = "wireguard" | "tailscale" | "netbird" | "cloudflared";
 
 function errorText(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
@@ -39,7 +42,9 @@ function freshPeer(): WgPeer {
 export function createVpnPage(): PageHandle {
   const root = el("div", { class: "flex min-h-0 flex-1 flex-col gap-2 overflow-auto p-3" });
 
+  let activeTab: VpnTab = "wireguard";
   let state: WgState | null = null;
+  let remoteOverview: RemoteAccessOverview | null = null;
   let steps: { subsystem: string; ok: boolean; detail: string }[] | null = null;
   let busy = false;
   let status = "";
@@ -55,17 +60,49 @@ export function createVpnPage(): PageHandle {
   );
   const addPeerButton = button("add peer", "", () => void addPeer());
 
-  const header = el("div", { class: "flex flex-wrap items-center gap-2" }, [
-    el("span", { class: "text-neutral-300", text: "vpn · wireguard" }),
-    refreshButton,
+  const tabStrip = el("div", { class: "flex items-center gap-1 border-b border-white/10 pb-2" });
+  const tabs: { id: VpnTab; label: string }[] = [
+    { id: "wireguard", label: "WireGuard" },
+    { id: "tailscale", label: "Tailscale" },
+    { id: "netbird", label: "NetBird" },
+    { id: "cloudflared", label: "Cloudflare Tunnel" },
+  ];
+
+  function renderTabs(): void {
+    tabStrip.innerHTML = "";
+    for (const t of tabs) {
+      const active = t.id === activeTab;
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.textContent = t.label;
+      btn.className = active
+        ? "rounded-md border border-emerald-500/30 bg-emerald-500/10 px-2.5 py-1 text-xs font-medium text-emerald-400"
+        : "rounded-md border border-white/5 bg-white/[0.02] px-2.5 py-1 text-xs text-neutral-400 hover:border-white/10 hover:text-white transition-colors";
+      btn.addEventListener("click", () => {
+        if (activeTab !== t.id) {
+          activeTab = t.id;
+          render();
+        }
+      });
+      tabStrip.append(btn);
+    }
+  }
+
+  const wgActions = el("div", { class: "flex items-center gap-2" }, [
     keyButton,
     addPeerButton,
     applyButton,
+  ]);
+
+  const header = el("div", { class: "flex flex-wrap items-center gap-2" }, [
+    el("span", { class: "text-neutral-300 font-semibold text-xs tracking-wider uppercase", text: "remote access & vpn" }),
+    refreshButton,
+    wgActions,
     el("span", { class: "ml-auto" }, [statusLine]),
   ]);
 
   const body = el("div", { class: "flex flex-col gap-2" });
-  root.append(header, body);
+  root.append(header, tabStrip, body);
 
   async function load(): Promise<void> {
     if (busy) return;
@@ -73,7 +110,12 @@ export function createVpnPage(): PageHandle {
     status = "loading…";
     render();
     try {
-      state = await wireguardApi.state();
+      const [wgState, remote] = await Promise.all([
+        wireguardApi.state(),
+        remoteAccessApi.status().catch(() => null),
+      ]);
+      state = wgState;
+      remoteOverview = remote;
       status = "";
     } catch (err) {
       status = errorText(err);
@@ -106,6 +148,8 @@ export function createVpnPage(): PageHandle {
     addPeerButton.disabled = busy;
     applyButton.disabled = busy || !state;
     applyButton.textContent = state?.config.enabled ? "apply (up)" : "apply (down)";
+    wgActions.style.display = activeTab === "wireguard" ? "flex" : "none";
+    renderTabs();
   }
 
   function render(): void {
@@ -115,6 +159,21 @@ export function createVpnPage(): PageHandle {
       body.append(emptyNote("loading…"));
       return;
     }
+
+    if (activeTab === "tailscale") {
+      body.append(renderTailscale());
+      return;
+    }
+    if (activeTab === "netbird") {
+      body.append(renderNetBird());
+      return;
+    }
+    if (activeTab === "cloudflared") {
+      body.append(renderCloudflared());
+      return;
+    }
+
+    // Default: WireGuard
     if (!state) {
       body.append(emptyNote(status || "the wireguard API is unavailable"));
       return;
@@ -126,6 +185,194 @@ export function createVpnPage(): PageHandle {
     body.append(peersCard());
     body.append(previewPanel());
     if (steps) body.append(reportPanel());
+  }
+
+  function renderTailscale(): HTMLElement {
+    const ts = remoteOverview?.tailscale;
+    const { root: card, body: cardBody } = panel("tailscale overlay network");
+    cardBody.className = "flex flex-col gap-3 p-4 text-xs";
+
+    if (!ts || !ts.installed) {
+      cardBody.append(
+        el("div", { class: "rounded border border-amber-500/20 bg-amber-500/10 p-3 text-amber-300" }, [
+          el("div", { class: "font-semibold mb-1", text: "Tailscale is not installed on this host" }),
+          el("div", { class: "text-neutral-400 mb-2", text: "To use Tailscale for zero-config mesh networking, install the official package:" }),
+          el("pre", { class: "rounded bg-black/50 p-2 font-mono text-[11px] text-emerald-400", text: "curl -fsSL https://tailscale.com/install.sh | sh\nsudo systemctl enable --now tailscaled" }),
+        ]),
+      );
+      return card;
+    }
+
+    // Status Header
+    const statusBox = el("div", { class: "flex items-center justify-between rounded-lg border border-white/10 bg-white/[0.02] p-3" });
+    const left = el("div", { class: "flex items-center gap-3" });
+    const dot = el("span", { class: `size-2.5 rounded-full ${ts.running ? "bg-emerald-400 ring-2 ring-emerald-400/20" : "bg-neutral-600"}` });
+    const info = el("div", { class: "flex flex-col" });
+    info.append(
+      el("span", { class: "font-semibold text-white", text: ts.running ? `Connected as ${ts.hostname || "host"}` : "Disconnected" }),
+      el("span", { class: "text-[11px] text-neutral-400", text: ts.ip ? `Tailscale IP: ${ts.ip} · ${ts.peers_count} peer(s)` : "Not logged into a tailnet" }),
+    );
+    left.append(dot, info);
+    statusBox.append(left);
+
+    if (ts.running) {
+      const disconnectBtn = button("Disconnect", "border-rose-500/40 text-rose-400 hover:bg-rose-500/10", async () => {
+        disconnectBtn.disabled = true;
+        await withBusy(async () => {
+          await remoteAccessApi.tailscaleDown();
+          await load();
+        });
+      });
+      statusBox.append(disconnectBtn);
+      cardBody.append(statusBox);
+    } else {
+      cardBody.append(statusBox);
+
+      // Connect Form
+      const form = el("div", { class: "flex flex-col gap-3 rounded-lg border border-white/10 bg-white/[0.02] p-3" });
+      let authKey = "";
+      let hostname = "";
+      let exitNode = false;
+      let acceptRoutes = true;
+
+      const authKeyInput = textInput("", (v) => (authKey = v), { type: "password", placeholder: "tskey-auth-..." });
+      const hostnameInput = textInput("", (v) => (hostname = v), { placeholder: "fujitsu-server (optional)" });
+      const exitNodeBox = checkbox(exitNode, (v) => (exitNode = v));
+      const acceptRoutesBox = checkbox(acceptRoutes, (v) => (acceptRoutes = v));
+
+      form.append(
+        field("Tailscale Auth Key", authKeyInput),
+        field("Node Hostname (optional)", hostnameInput),
+        el("div", { class: "flex items-center gap-4 text-xs text-neutral-400 mt-1" }, [
+          el("label", { class: "flex items-center gap-1.5 cursor-pointer" }, [exitNodeBox, el("span", { text: "Advertise as exit node" })]),
+          el("label", { class: "flex items-center gap-1.5 cursor-pointer" }, [acceptRoutesBox, el("span", { text: "Accept subnet routes" })]),
+        ]),
+      );
+
+      const connectBtn = button("Connect to Tailnet", "border-emerald-600 text-emerald-400 hover:border-emerald-500", async () => {
+        if (!authKey.trim()) return;
+        connectBtn.disabled = true;
+        await withBusy(async () => {
+          await remoteAccessApi.tailscaleUp({
+            auth_key: authKey.trim(),
+            hostname: hostname.trim() || undefined,
+            exit_node: exitNode,
+            accept_routes: acceptRoutes,
+          });
+          await load();
+        });
+      });
+
+      form.append(el("div", { class: "flex justify-end mt-1" }, [connectBtn]));
+      cardBody.append(form);
+    }
+
+    return card;
+  }
+
+  function renderNetBird(): HTMLElement {
+    const nb = remoteOverview?.netbird;
+    const { root: card, body: cardBody } = panel("netbird mesh network");
+    cardBody.className = "flex flex-col gap-3 p-4 text-xs";
+
+    if (!nb || !nb.installed) {
+      cardBody.append(
+        el("div", { class: "rounded border border-amber-500/20 bg-amber-500/10 p-3 text-amber-300" }, [
+          el("div", { class: "font-semibold mb-1", text: "NetBird is not installed on this host" }),
+          el("div", { class: "text-neutral-400 mb-2", text: "To use NetBird for open-source WireGuard mesh networking, install the official package:" }),
+          el("pre", { class: "rounded bg-black/50 p-2 font-mono text-[11px] text-emerald-400", text: "curl -fsSL https://pkgs.netbird.io/install.sh | sh\nsudo systemctl enable --now netbird" }),
+        ]),
+      );
+      return card;
+    }
+
+    // Status Header
+    const statusBox = el("div", { class: "flex items-center justify-between rounded-lg border border-white/10 bg-white/[0.02] p-3" });
+    const left = el("div", { class: "flex items-center gap-3" });
+    const dot = el("span", { class: `size-2.5 rounded-full ${nb.running ? "bg-emerald-400 ring-2 ring-emerald-400/20" : "bg-neutral-600"}` });
+    const info = el("div", { class: "flex flex-col" });
+    info.append(
+      el("span", { class: "font-semibold text-white", text: nb.running ? "Connected to NetBird" : "Disconnected" }),
+      el("span", { class: "text-[11px] text-neutral-400", text: nb.ip ? `NetBird IP: ${nb.ip} · ${nb.peers_count} peer(s)` : "Not connected to management server" }),
+    );
+    left.append(dot, info);
+    statusBox.append(left);
+
+    if (nb.running) {
+      const disconnectBtn = button("Disconnect", "border-rose-500/40 text-rose-400 hover:bg-rose-500/10", async () => {
+        disconnectBtn.disabled = true;
+        await withBusy(async () => {
+          await remoteAccessApi.netbirdDown();
+          await load();
+        });
+      });
+      statusBox.append(disconnectBtn);
+      cardBody.append(statusBox);
+    } else {
+      cardBody.append(statusBox);
+
+      // Connect Form
+      const form = el("div", { class: "flex flex-col gap-3 rounded-lg border border-white/10 bg-white/[0.02] p-3" });
+      let setupKey = "";
+      let managementUrl = "";
+
+      const setupKeyInput = textInput("", (v) => (setupKey = v), { type: "password", placeholder: "Setup key" });
+      const mgmtInput = textInput("", (v) => (managementUrl = v), { placeholder: "https://api.netbird.io (or custom URL)" });
+
+      form.append(
+        field("Setup Key", setupKeyInput),
+        field("Management URL (optional)", mgmtInput),
+      );
+
+      const connectBtn = button("Connect to NetBird", "border-emerald-600 text-emerald-400 hover:border-emerald-500", async () => {
+        if (!setupKey.trim()) return;
+        connectBtn.disabled = true;
+        await withBusy(async () => {
+          await remoteAccessApi.netbirdUp({
+            setup_key: setupKey.trim(),
+            management_url: managementUrl.trim() || undefined,
+          });
+          await load();
+        });
+      });
+
+      form.append(el("div", { class: "flex justify-end mt-1" }, [connectBtn]));
+      cardBody.append(form);
+    }
+
+    return card;
+  }
+
+  function renderCloudflared(): HTMLElement {
+    const cf = remoteOverview?.cloudflared;
+    const { root: card, body: cardBody } = panel("cloudflare tunnel");
+    cardBody.className = "flex flex-col gap-3 p-4 text-xs";
+
+    const statusBox = el("div", { class: "flex items-center justify-between rounded-lg border border-white/10 bg-white/[0.02] p-3" });
+    const left = el("div", { class: "flex items-center gap-3" });
+    const dot = el("span", { class: `size-2.5 rounded-full ${cf?.active ? "bg-emerald-400 ring-2 ring-emerald-400/20" : "bg-neutral-600"}` });
+    const info = el("div", { class: "flex flex-col" });
+    info.append(
+      el("span", { class: "font-semibold text-white", text: cf?.active ? "Cloudflare Tunnel Active" : "Tunnel Inactive" }),
+      el("span", { class: "text-[11px] text-neutral-400", text: cf?.installed ? `cloudflared ${cf.version || "installed"}` : "cloudflared binary is not installed" }),
+    );
+    left.append(dot, info);
+    statusBox.append(left);
+
+    const configBtn = button("Configure Tunnel Ingress ↗", "text-neutral-300 hover:text-white", () => {
+      location.hash = "#/network";
+    });
+    statusBox.append(configBtn);
+
+    cardBody.append(
+      statusBox,
+      el("div", { class: "text-neutral-400 leading-relaxed text-[11.5px]" }, [
+        el("div", { text: "Cloudflare Tunnels create an encrypted, outbound-only connection between your server and Cloudflare's global edge. This allows you to securely access your internal services without opening any router ports or exposing your public home IP." }),
+        el("div", { class: "mt-1.5 text-neutral-500", text: "Configure hostnames, credentials, and ingress routing from the Network → Tunnel page." }),
+      ]),
+    );
+
+    return card;
   }
 
   function problemsPanel(): HTMLElement | null {
@@ -356,5 +603,10 @@ export function createVpnPage(): PageHandle {
   }
 
   void load();
-  return { root };
+  return {
+    root,
+    onShow: () => {
+      void load();
+    },
+  };
 }

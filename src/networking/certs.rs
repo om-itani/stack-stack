@@ -281,6 +281,151 @@ pub fn generate_self_signed(
     Ok(inspect(&cert_path, config, runner))
 }
 
+#[derive(Debug, Clone, Deserialize)]
+pub struct AcmeIssueRequest {
+    pub name: String,
+    pub domain: String,
+    pub email: String,
+    pub provider: String,
+    pub cloudflare_token: Option<String>,
+}
+
+/// Issue an automated Let's Encrypt / ACME certificate using certbot (DNS-01 or HTTP-01).
+pub fn issue_acme(
+    config: &NetworkConfig,
+    runner: &dyn Runner,
+    req: &AcmeIssueRequest,
+) -> Result<CertInfo, ApiError> {
+    let name = sanitize_name(&req.name)?;
+    let domain = req.domain.trim();
+    if domain.is_empty() {
+        return Err(ApiError::bad_request("a domain name is required"));
+    }
+    let email = req.email.trim();
+    if !email.contains('@') {
+        return Err(ApiError::bad_request("a valid contact email is required"));
+    }
+
+    if !runner.available("certbot", &["--version"]) {
+        return Err(ApiError::unavailable(
+            "certbot is not installed. Run 'sudo apt-get install -y certbot python3-certbot-dns-cloudflare' to enable automated ACME certificates.",
+        ));
+    }
+
+    let dir_str = if config.certs.directory.trim().is_empty() {
+        "/etc/stack-stack/ca"
+    } else {
+        config.certs.directory.trim()
+    };
+    let directory = PathBuf::from(dir_str);
+    std::fs::create_dir_all(&directory).map_err(|err| {
+        ApiError::internal(format!("cannot create {}: {err}", directory.display()))
+    })?;
+
+    let cert_path = directory.join(format!("{name}.crt"));
+    let key_path = directory.join(format!("{name}.key"));
+
+    let certbot_cert_name = format!("stack-stack-{name}");
+
+    if req.provider == "cloudflare" {
+        let Some(token) = req
+            .cloudflare_token
+            .as_deref()
+            .filter(|t| !t.trim().is_empty())
+        else {
+            return Err(ApiError::bad_request(
+                "a Cloudflare API token is required for DNS-01 verification",
+            ));
+        };
+
+        let creds_dir = std::env::temp_dir().join("stack-stack-acme");
+        let _ = std::fs::create_dir_all(&creds_dir);
+        let creds_file = creds_dir.join(format!("cf-{name}.ini"));
+        let creds_content = format!("dns_cloudflare_api_token = {}\n", token.trim());
+        write_atomic(&creds_file, creds_content.as_bytes())
+            .map_err(|err| ApiError::internal(format!("cannot write credentials: {err}")))?;
+        restrict_permissions(&creds_file);
+
+        let creds_path = creds_file.to_string_lossy().to_string();
+        let args = [
+            "certonly",
+            "--dns-cloudflare",
+            "--dns-cloudflare-credentials",
+            &creds_path,
+            "--dns-cloudflare-propagation-seconds",
+            "20",
+            "--non-interactive",
+            "--agree-tos",
+            "-m",
+            email,
+            "--cert-name",
+            &certbot_cert_name,
+            "-d",
+            domain,
+        ];
+
+        let res = runner.call("certbot", &args);
+        let _ = std::fs::remove_file(&creds_file);
+
+        let output = res.map_err(|err| ApiError::internal(format!("cannot run certbot: {err}")))?;
+        if !output.success() {
+            return Err(ApiError::internal(format!(
+                "certbot ACME issuance failed: {}",
+                output.combined().trim()
+            )));
+        }
+    } else {
+        let args = [
+            "certonly",
+            "--standalone",
+            "--non-interactive",
+            "--agree-tos",
+            "-m",
+            email,
+            "--cert-name",
+            &certbot_cert_name,
+            "-d",
+            domain,
+        ];
+
+        let output = runner
+            .call("certbot", &args)
+            .map_err(|err| ApiError::internal(format!("cannot run certbot: {err}")))?;
+
+        if !output.success() {
+            return Err(ApiError::internal(format!(
+                "certbot ACME HTTP-01 issuance failed: {}",
+                output.combined().trim()
+            )));
+        }
+    }
+
+    let live_dir = PathBuf::from(format!("/etc/letsencrypt/live/{certbot_cert_name}"));
+    let fullchain = live_dir.join("fullchain.pem");
+    let privkey = live_dir.join("privkey.pem");
+
+    if fullchain.is_file() && privkey.is_file() {
+        let cert_bytes = std::fs::read(&fullchain).map_err(|err| {
+            ApiError::internal(format!("cannot read issued fullchain.pem: {err}"))
+        })?;
+        let key_bytes = std::fs::read(&privkey)
+            .map_err(|err| ApiError::internal(format!("cannot read issued privkey.pem: {err}")))?;
+
+        write_atomic(&cert_path, &cert_bytes)
+            .map_err(|err| ApiError::internal(format!("cannot save certificate: {err}")))?;
+        write_atomic(&key_path, &key_bytes)
+            .map_err(|err| ApiError::internal(format!("cannot save private key: {err}")))?;
+        restrict_permissions(&key_path);
+    } else {
+        return Err(ApiError::internal(format!(
+            "certbot reported success but certificates not found at {}",
+            live_dir.display()
+        )));
+    }
+
+    Ok(inspect(&cert_path, config, runner))
+}
+
 /// Delete a certificate/key pair.
 pub fn remove(config: &NetworkConfig, name: &str) -> Result<(), ApiError> {
     let name = sanitize_name(name)?;
