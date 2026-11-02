@@ -325,7 +325,7 @@ export function createAppsPage(): PageHandle {
     heading.append(title, subtitle);
 
     const track = document.createElement("div");
-    track.className = "flex snap-x gap-3 overflow-x-auto pb-2";
+    track.className = "app-row flex flex-wrap gap-3 pb-2";
     for (const app of items) {
       track.append(card(app));
     }
@@ -337,7 +337,7 @@ export function createAppsPage(): PageHandle {
   function card(app: App): HTMLElement {
     const el = document.createElement("section");
     // Fixed width so the row scrolls rather than reflowing.
-    el.className = "panel flex w-60 shrink-0 snap-start flex-col";
+    el.className = "panel flex w-60 shrink-0 flex-col";
 
     const head = document.createElement("div");
     head.className = "flex items-center gap-3 px-3 pt-3";
@@ -417,9 +417,20 @@ export function createAppsPage(): PageHandle {
       }
     });
 
-    const state = badge(app.installed ? "installed" : "not installed", app.installed ? "ok" : "muted");
+    const stateName = app.container_state;
+    const state = badge(
+      app.installed ? `installed${stateName ? ` (${stateName})` : ""}` : "not installed",
+      !app.installed ? "muted" : stateName === "running" ? "ok" : "warn",
+    );
+    const resetBtn = button("reset data", "text-amber-400 hover:border-amber-500");
+    resetBtn.disabled = busy || !app.installed;
+    resetBtn.addEventListener("click", () => {
+      if (window.confirm(`Reset ${app.name} data and reinstall it? This removes its Docker volumes.`)) {
+        void run(() => api.reset(app.id), `resetting ${app.name}…`);
+      }
+    });
 
-    actions.append(installBtn, removeBtn, state);
+    actions.append(installBtn, removeBtn, resetBtn, state);
     el.append(head, body, actions);
     return el;
   }

@@ -109,6 +109,9 @@ pub struct App {
     /// Runtime-only flag; never read from a catalog file.
     #[serde(default, skip_deserializing)]
     pub installed: bool,
+    /// Current Docker state for the app's compose project, when present.
+    #[serde(default)]
+    pub container_state: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

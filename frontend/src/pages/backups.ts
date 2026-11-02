@@ -7,7 +7,7 @@
  * never displayed back.
  */
 
-import { backupApi } from "../api";
+import { backupApi, filesApi } from "../api";
 import type { BackupJob, BackupRun, BackupState, LsEntry, Snapshot } from "../api";
 import { bytes } from "../ui";
 import { button, checkbox, el, emptyNote, field, panel, textInput } from "../ui";
@@ -21,9 +21,10 @@ function errorText(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 
-function formatTime(ms: number | null | undefined): string {
-  if (!ms) return "—";
-  return new Date(ms).toLocaleString();
+function formatTime(val: number | string | null | undefined): string {
+  if (!val) return "—";
+  const date = typeof val === "number" ? new Date(val) : new Date(val);
+  return Number.isNaN(date.getTime()) ? String(val) : date.toLocaleString();
 }
 
 function freshJob(): BackupJob {
@@ -214,6 +215,80 @@ export function createBackupsPage(): PageHandle {
     }
   }
 
+  function openFolderPicker(title: string, onSelect: (dirPath: string) => void): void {
+    let currentDir = "";
+    const overlay = el("div", {
+      class: "fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4",
+    });
+    const panel = el("div", {
+      class: "flex w-full max-w-lg flex-col gap-2 border border-white/5 bg-[#0e0e0e] p-3 text-[11px]",
+    });
+    const close = (): void => overlay.remove();
+
+    const dirTitle = el("span", { class: "font-mono text-neutral-300", text: "loading…" });
+    const header = el("div", { class: "flex items-center gap-2" }, [
+      el("span", { class: "font-medium text-neutral-200", text: title }),
+      el("span", { class: "ml-auto" }),
+      button("close", "text-[10px]", close),
+    ]);
+
+    const dirList = el("div", {
+      class: "flex max-h-60 min-h-32 flex-col gap-0.5 overflow-y-auto border border-white/5 p-1",
+    });
+
+    const selectBtn = button("Select this directory", "text-emerald-400 hover:border-emerald-500", () => {
+      if (currentDir) {
+        onSelect(currentDir);
+        close();
+      }
+    });
+
+    panel.append(
+      header,
+      el("div", { class: "border-b border-white/5 pb-1 text-neutral-400" }, [dirTitle]),
+      dirList,
+      el("div", { class: "flex justify-end gap-2 pt-1" }, [selectBtn]),
+    );
+    overlay.append(panel);
+    document.body.append(overlay);
+    overlay.addEventListener("mousedown", (event) => {
+      if (event.target === overlay) close();
+    });
+
+    async function navigateTo(target: string): Promise<void> {
+      dirList.replaceChildren(el("span", { class: "p-2 text-neutral-500", text: "loading…" }));
+      try {
+        const fileState = await filesApi.state(target);
+        currentDir = fileState.listing.path;
+        dirTitle.textContent = currentDir;
+        dirList.replaceChildren();
+
+        if (fileState.listing.parent) {
+          const parentBtn = button("📁 .. (parent)", "w-full justify-start text-left text-neutral-400 hover:text-white", () => {
+            void navigateTo(fileState.listing.parent!);
+          });
+          dirList.append(parentBtn);
+        }
+
+        const dirs = fileState.listing.entries.filter((e) => e.kind === "dir");
+        if (dirs.length === 0) {
+          dirList.append(el("span", { class: "p-2 italic text-neutral-500", text: "no subdirectories" }));
+        } else {
+          for (const d of dirs) {
+            const btn = button(`📁 ${d.name}/`, "w-full justify-start text-left text-emerald-400 hover:underline", () => {
+              void navigateTo(d.path);
+            });
+            dirList.append(btn);
+          }
+        }
+      } catch (err) {
+        dirList.replaceChildren(el("span", { class: "p-2 text-rose-400", text: errorText(err) }));
+      }
+    }
+
+    void navigateTo("");
+  }
+
   function editor(): HTMLElement {
     const job = editing!;
     const { root: card, body: cardBody } = panel(isNew ? "new job" : `edit ${job.id}`);
@@ -243,16 +318,24 @@ export function createBackupsPage(): PageHandle {
     toggle("documents", "documents");
     toggle("certificates + CA", "certs_ca");
     toggle("file roots", "file_roots");
+
+    const customInput = textInput(job.sources.custom.join(", "), (value) => {
+      job.sources.custom = value
+        .split(",")
+        .map((part) => part.trim())
+        .filter(Boolean);
+    }) as HTMLInputElement;
+    const browseCustom = button("browse…", "text-[10px]", () => {
+      openFolderPicker("Choose source directory", (selectedPath) => {
+        if (!job.sources.custom.includes(selectedPath)) {
+          job.sources.custom.push(selectedPath);
+          customInput.value = job.sources.custom.join(", ");
+        }
+      });
+    });
+
     sources.append(
-      field(
-        "custom paths",
-        textInput(job.sources.custom.join(", "), (value) => {
-          job.sources.custom = value
-            .split(",")
-            .map((part) => part.trim())
-            .filter(Boolean);
-        }),
-      ),
+      field("custom paths", el("div", { class: "flex items-center gap-1" }, [customInput, browseCustom])),
       field(
         "excludes",
         textInput(job.excludes.join(", "), (value) => {
@@ -335,7 +418,14 @@ export function createBackupsPage(): PageHandle {
     backend.append(field("backend", kindSelect));
     const currentBackend = job.backend;
     if (currentBackend.kind === "local") {
-      backend.append(field("path", textInput(currentBackend.path, (value) => (job.backend = { kind: "local", path: value }))));
+      const pathInput = textInput(currentBackend.path, (value) => (job.backend = { kind: "local", path: value })) as HTMLInputElement;
+      const browseBackend = button("browse…", "text-[10px]", () => {
+        openFolderPicker("Choose backup destination directory", (selectedPath) => {
+          job.backend = { kind: "local", path: selectedPath };
+          pathInput.value = selectedPath;
+        });
+      });
+      backend.append(field("path", el("div", { class: "flex items-center gap-1" }, [pathInput, browseBackend])));
     } else if (currentBackend.kind === "s3") {
       backend.append(
         field(
@@ -362,6 +452,26 @@ export function createBackupsPage(): PageHandle {
       );
     }
 
+    const credentials = el("div", { class: "flex flex-wrap items-end gap-3" });
+    const passwordInput = el("input", {
+      type: "password",
+      class: "border border-white/5 bg-black/40 px-1.5 py-0.5 text-neutral-200 text-[11px]",
+      placeholder: hasSecret(job) ? "leave blank to keep current" : "min 8 characters",
+    }) as HTMLInputElement;
+    credentials.append(field("repository password", passwordInput));
+
+    let accessKeyInput: HTMLInputElement | null = null;
+    let secretKeyInput: HTMLInputElement | null = null;
+    if (job.backend.kind === "s3") {
+      accessKeyInput = textInput("", () => {}, { placeholder: "AWS access key id" }) as HTMLInputElement;
+      secretKeyInput = el("input", {
+        type: "password",
+        class: "border border-white/5 bg-black/40 px-1.5 py-0.5 text-neutral-200 text-[11px]",
+        placeholder: "AWS secret access key",
+      }) as HTMLInputElement;
+      credentials.append(field("s3 access key", accessKeyInput), field("s3 secret key", secretKeyInput));
+    }
+
     const actions = el("div", { class: "flex gap-2" }, [
       button("save job", "text-emerald-400 hover:border-emerald-500", () => void saveJob()),
       button("cancel", "", () => {
@@ -371,40 +481,60 @@ export function createBackupsPage(): PageHandle {
       }),
     ]);
 
-    cardBody.append(identity, panelSection("sources", sources), panelSection("schedule", schedule), panelSection("retention", retention), panelSection("backend", backend), actions);
+    cardBody.append(
+      identity,
+      panelSection("sources", sources),
+      panelSection("schedule", schedule),
+      panelSection("retention", retention),
+      panelSection("backend", backend),
+      panelSection("credentials", credentials),
+      actions,
+    );
     return card;
+
+    async function saveJob(): Promise<void> {
+      if (!job.id.trim()) {
+        const slug = job.name
+          .toLowerCase()
+          .replace(/[^a-z0-9]+/g, "-")
+          .replace(/^-+|-+$/g, "");
+        job.id = slug || `job-${Date.now()}`;
+      }
+      if (!job.secret_ref.trim()) {
+        job.secret_ref = job.id;
+      }
+      const pw = passwordInput.value.trim();
+      const jobs = isNew
+        ? [...state!.config.jobs, job]
+        : state!.config.jobs.map((entry) => (entry.id === job.id ? job : entry));
+      const result = await withBusy(() => backupApi.saveConfig({ jobs }));
+      if (result) {
+        state = result;
+        if (pw) {
+          try {
+            await backupApi.saveSecrets(
+              job.id,
+              pw,
+              accessKeyInput?.value.trim() || null,
+              secretKeyInput?.value.trim() || null,
+              true,
+            );
+          } catch (err) {
+            status = `job saved but credentials error: ${errorText(err)}`;
+          }
+        }
+        editing = null;
+        isNew = false;
+        status = "saved";
+        await load();
+      }
+    }
   }
 
   function panelSection(title: string, content: HTMLElement): HTMLElement {
     const box = el("div", { class: "flex flex-col gap-1" });
     box.append(el("div", { class: "text-[10px] uppercase tracking-wide text-neutral-600", text: title }), content);
     return box;
-  }
-
-  async function saveJob(): Promise<void> {
-    const job = editing!;
-    if (!job.id.trim()) {
-      const slug = job.name
-        .toLowerCase()
-        .replace(/[^a-z0-9]+/g, "-")
-        .replace(/^-+|-+$/g, "");
-      job.id = slug || `job-${Date.now()}`;
-    }
-    if (!job.secret_ref.trim()) {
-      // The secrets document is keyed by id unless the operator chose a key.
-      job.secret_ref = job.id;
-    }
-    const jobs = isNew
-      ? [...state!.config.jobs, job]
-      : state!.config.jobs.map((entry) => (entry.id === job.id ? job : entry));
-    const result = await withBusy(() => backupApi.saveConfig({ jobs }));
-    if (result) {
-      state = result;
-      editing = null;
-      isNew = false;
-      status = "saved";
-      await load();
-    }
   }
 
   async function setCredentials(job: BackupJob): Promise<void> {
@@ -469,7 +599,7 @@ export function createBackupsPage(): PageHandle {
       tbody.append(
         el("tr", { class: "border-b border-white/5" }, [
           el("td", { class: "px-2 py-1 text-neutral-300", text: snapshot.short_id || snapshot.id }),
-          el("td", { class: "px-2 py-1 text-neutral-500", text: snapshot.time }),
+          el("td", { class: "px-2 py-1 text-neutral-500", text: formatTime(snapshot.time) }),
           el("td", { class: "px-2 py-1 text-neutral-500", text: snapshot.paths.join(", ") }),
           el("td", { class: "px-2 py-1 text-right", text: "" }, [browse, restore]),
         ]),
@@ -536,13 +666,13 @@ export function createBackupsPage(): PageHandle {
   }
 
   async function restoreSnapshot(job: BackupJob, snapshot: Snapshot): Promise<void> {
-    const target = window.prompt("Restore into which directory?");
-    if (!target) return;
-    const result = await withBusy(() =>
-      backupApi.restore(job.id, snapshot.short_id || snapshot.id, target, null),
-    );
-    status = result?.detail ?? "restore finished";
-    render();
+    openFolderPicker("Choose restore destination directory", async (target) => {
+      const result = await withBusy(() =>
+        backupApi.restore(job.id, snapshot.short_id || snapshot.id, target, null),
+      );
+      status = result?.detail ?? "restore finished";
+      render();
+    });
   }
 
   function historyPanel(): HTMLElement {

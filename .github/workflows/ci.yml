@@ -45,6 +45,35 @@ jobs:
         run: npm run build
         working-directory: frontend
 
+  catalog-image-tags:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: Validate catalog image tags on Docker Hub
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import json, re, urllib.request
+          catalog = json.load(open('src/containers/catalog.json'))
+          for app in catalog:
+              for image in re.findall(r'image:\s*([^\s]+)', app.get('compose', '')):
+                  if '/' not in image or ':' not in image.rsplit('/', 1)[-1]:
+                      continue
+                  repo, tag = image.rsplit(':', 1)
+                  if repo.startswith('ghcr.io/'):
+                      continue
+                  repo = repo.removeprefix('docker.io/')
+                  if '/' not in repo:
+                      repo = 'library/' + repo
+                  url = f'https://registry.hub.docker.com/v2/repositories/{repo}/tags/{tag}'
+                  try:
+                      urllib.request.urlopen(url, timeout=15)
+                  except urllib.error.HTTPError as err:
+                      if err.code == 404:
+                          raise SystemExit(f'{app["id"]}: missing Docker Hub tag {repo}:{tag}')
+                      raise
+          PY
+
   # Headless browser tests against a real instance of the binary. The release
   # build is booted in the background, the first-run password is created by the
   # suite itself, and Playwright drives the UI (login, scheduled tasks, health

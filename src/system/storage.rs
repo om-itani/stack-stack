@@ -176,6 +176,11 @@ impl StorageContext {
                 node.kind
             )));
         }
+        if node.kind == "disk" && !node.children.is_empty() {
+            return Err(ApiError::bad_request(format!(
+                "{device} contains partitions; format the individual partitions instead"
+            )));
+        }
         if node.has_mounted_descendant() {
             return Err(ApiError::bad_request(format!(
                 "{device} is mounted (or has a mounted partition); unmount it first"
@@ -708,6 +713,28 @@ mod tests {
                 && args.first().map(String::as_str) == Some("-F")),
             "{calls:?}"
         );
+    }
+
+    #[test]
+    fn format_refuses_a_disk_with_partitions() {
+        let sample = r#"{
+          "blockdevices": [
+            {
+              "name": "sdc", "path": "/dev/sdc", "type": "disk", "size": 1000204886016,
+              "model": "TEST", "fstype": null, "mountpoint": null, "label": null,
+              "children": [
+                {"name":"sdc1","path":"/dev/sdc1","type":"part","size":500000000000,
+                 "fstype":null,"mountpoint":null,"label":null}
+              ]
+            }
+          ]
+        }"#;
+        let (ctx, _) = context(vec![("lsblk", ok(sample))]);
+        let err = ctx.format("/dev/sdc", "ext4").expect_err("must refuse");
+        match err {
+            ApiError::BadRequest(msg) => assert!(msg.contains("contains partitions"), "{msg}"),
+            _ => panic!("expected BadRequest, got {err:?}"),
+        }
     }
 
     #[test]

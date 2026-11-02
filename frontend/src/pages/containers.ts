@@ -465,6 +465,12 @@ export function createContainersPage(): PageHandle {
           ? `${port.public}→${port.private}/${port.protocol}`
           : `${port.private}/${port.protocol}`;
         ports.append(span);
+        if (!port.public) {
+          const unpublished = document.createElement("span");
+          unpublished.className = "text-neutral-700";
+          unpublished.textContent = "(not published)";
+          ports.append(unpublished);
+        }
       }
       body.append(ports);
     }

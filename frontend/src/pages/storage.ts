@@ -108,8 +108,18 @@ export function createStoragePage(): PageHandle {
 
     const mounted = Boolean(device.mountpoint);
     const isRoot = state.root_device === device.path;
+    const isOptical =
+      device.kind === "rom" ||
+      device.name.startsWith("sr") ||
+      device.path.includes("/sr");
+    const isPartitionedDisk = device.kind === "disk" && device.children.length > 0;
+
     if (device.fstype) {
       row.append(badge(device.fstype, "muted"));
+    } else if (isOptical) {
+      row.append(badge("empty", "muted"));
+    } else if (isPartitionedDisk) {
+      row.append(badge("partitioned", "muted"));
     } else if (device.kind === "disk" || device.kind === "part") {
       row.append(badge("unformatted", "warn"));
     }
@@ -128,6 +138,7 @@ export function createStoragePage(): PageHandle {
       const canFormat =
         !mounted &&
         !isRoot &&
+        !isOptical &&
         !hasMountedDescendant(device) &&
         (device.kind === "part" || (device.kind === "disk" && device.children.length === 0));
       if (canFormat) {

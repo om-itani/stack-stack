@@ -55,5 +55,9 @@ export const HARDENING_FRAGMENT = `    security_opt:
 /** A minimal, valid, hardened compose document that runs one image. */
 export function composeForImage(repo: string): string {
   const name = serviceName(repo);
-  return `services:\n  ${name}:\n    image: ${repo}\n    restart: unless-stopped\n${HARDENING_FRAGMENT}`;
+  const lower = repo.toLowerCase();
+  const ports = lower === "nginx" || lower === "library/nginx"
+    ? '    ports:\n      - "8080:80"\n'
+    : '    # add ports: ["8080:80"] if this image serves HTTP\n';
+  return `services:\n  ${name}:\n    image: ${repo}\n    restart: unless-stopped\n${ports}${HARDENING_FRAGMENT}`;
 }

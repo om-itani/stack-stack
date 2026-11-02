@@ -18,7 +18,7 @@ use crate::networking::store::write_atomic;
 use crate::runner::Runner;
 use crate::services::{step, trimmed};
 
-pub const EXPORTS: &str = "/etc/exports";
+pub const EXPORTS: &str = "/etc/exports.d/stack-stack.exports";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]

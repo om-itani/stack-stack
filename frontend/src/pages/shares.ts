@@ -115,6 +115,11 @@ export function createSharesPage(): PageHandle {
       status = report.steps.every((step) => step.ok) ? "applied" : "applied with problems";
     } catch (err) {
       status = errorText(err);
+      steps = [{
+        subsystem: "samba",
+        ok: false,
+        detail: errorText(err),
+      }];
     } finally {
       busy = false;
       render();
@@ -133,6 +138,11 @@ export function createSharesPage(): PageHandle {
       status = report.steps.every((step) => step.ok) ? "applied" : "applied with problems";
     } catch (err) {
       status = errorText(err);
+      steps = [{
+        subsystem: "nfs",
+        ok: false,
+        detail: errorText(err),
+      }];
     } finally {
       busy = false;
       render();
@@ -169,6 +179,8 @@ export function createSharesPage(): PageHandle {
       }
       const problems = problemsPanel(samba.problems, samba.config_error);
       if (problems) body.append(problems);
+      const report = reportPanel();
+      if (report) body.append(report);
       body.append(sambaSettings());
       body.append(sharesEditor());
       body.append(accountsPanel());
@@ -178,13 +190,15 @@ export function createSharesPage(): PageHandle {
         body.append(emptyNote(status || "the NFS API is unavailable"));
         return;
       }
+      const problems = problemsPanel(nfs.problems, nfs.config_error);
+      if (problems) body.append(problems);
+      const report = reportPanel();
+      if (report) body.append(report);
       body.append(nfsSettings());
       body.append(exportsEditor());
-      body.append(previewPanel("/etc/exports", nfs.preview));
+      body.append(previewPanel("/etc/exports.d/stack-stack.exports", nfs.preview));
       body.append(activeExports());
     }
-    const report = reportPanel();
-    if (report) body.append(report);
   }
 
   function problemsPanel(problems: { field: string; message: string }[], configError: string | null): HTMLElement | null {

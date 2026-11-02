@@ -40,6 +40,72 @@ export function createFilesPage(): PageHandle {
   let view: "list" | "grid" = "list";
   /** Entry shown in the preview pane, if any. */
   let preview: FileEntry | null = null;
+  /** Multi-selected entry paths. */
+  const selected = new Set<string>();
+
+  async function copyToClipboard(text: string): Promise<boolean> {
+    if (navigator.clipboard && window.isSecureContext) {
+      try {
+        await navigator.clipboard.writeText(text);
+        return true;
+      } catch {
+        // fallback below
+      }
+    }
+    try {
+      const el = document.createElement("textarea");
+      el.value = text;
+      el.setAttribute("readonly", "");
+      el.style.position = "fixed";
+      el.style.left = "-9999px";
+      el.style.top = "-9999px";
+      document.body.appendChild(el);
+      el.select();
+      const success = document.execCommand("copy");
+      document.body.removeChild(el);
+      if (success) return true;
+    } catch {
+      // fallback below
+    }
+    window.prompt("Copy path to clipboard: Ctrl+C, Enter", text);
+    return true;
+  }
+
+  function openArchiveDialog(targetPath: string): void {
+    const targetName = targetPath.split("/").pop() || targetPath;
+    const close = modal(
+      `Archive ${targetName}`,
+      el("div", { class: "flex flex-col gap-3 text-[11px]" }, [
+        el("p", {
+          class: "text-neutral-400",
+          text: "Choose how to create or download this archive (.tar.zst):",
+        }),
+        el("div", { class: "flex gap-2" }, [
+          button("Create archive here", "text-emerald-400", async () => {
+            close();
+            try {
+              status = "archiving…";
+              renderChrome();
+              await filesApi.createArchive(targetPath);
+              status = "archive created";
+              await load(current);
+            } catch (err) {
+              status = errorText(err);
+              renderChrome();
+            }
+          }),
+          button("Download as archive", "", () => {
+            close();
+            window.location.href = filesApi.archiveUrl(targetPath);
+          }),
+        ]),
+        el("div", {
+          class: "text-[10px] text-neutral-500 border-t border-white/5 pt-2",
+          text: "Tip: Downloads over plain HTTP may trigger browser security warnings. Use Certificates to enable HTTPS.",
+        }),
+      ]),
+    );
+  }
 
   const statusLine = el("span", { class: "tabular text-[11px] text-neutral-500" });
   const hiddenToggle = el("input", {
@@ -86,7 +152,7 @@ export function createFilesPage(): PageHandle {
     void promptName("New file", (name) => filesApi.createFile(join(current, name))),
   );
   const archiveButton = button("archive", "", () => {
-    window.location.href = filesApi.archiveUrl(current);
+    openArchiveDialog(current);
   });
   const uploadButton = button("upload", "text-emerald-400 hover:border-emerald-500", () => uploadInput.click());
   const viewToggle = button("grid view", "", () => {
@@ -148,6 +214,7 @@ export function createFilesPage(): PageHandle {
     busy = true;
     status = "loading…";
     loadError = null;
+    selected.clear();
     renderChrome();
     try {
       state = await filesApi.state(path);
@@ -202,6 +269,14 @@ export function createFilesPage(): PageHandle {
       return;
     }
 
+    if (state.roots.length === 0) {
+      sidebar.append(
+        el("span", {
+          class: "p-2 text-[11px] italic text-neutral-500",
+          text: "no roots configured",
+        }),
+      );
+    }
     for (const node of state.roots) {
       sidebar.append(
         button(node, "text-left text-[11px] truncate", () => void load(node)),
@@ -214,10 +289,30 @@ export function createFilesPage(): PageHandle {
   }
 
   function renderCrumbs(path: string): void {
-    const parts = path.split("/").filter(Boolean);
-    let accumulated = "";
-    const rootButton = button("/", "text-[11px]", () => void load("/"));
-    crumbs.append(rootButton);
+    if (!state || state.roots.length === 0) {
+      crumbs.append(el("span", { class: "text-[11px] text-neutral-500", text: path || "/" }));
+      return;
+    }
+
+    // Find the longest configured root that prefixes `path`
+    const matchingRoot = state.roots
+      .filter((r) => path === r || path.startsWith(r + "/") || path.startsWith(r + "\\"))
+      .sort((a, b) => b.length - a.length)[0];
+
+    if (!matchingRoot) {
+      const fallback = state.roots[0];
+      crumbs.append(button(fallback, "text-[11px]", () => void load(fallback)));
+      return;
+    }
+
+    crumbs.append(
+      button(matchingRoot, "text-[11px] font-medium text-neutral-200", () => void load(matchingRoot)),
+    );
+
+    const remainder = path.slice(matchingRoot.length);
+    const parts = remainder.split("/").filter(Boolean);
+    let accumulated = matchingRoot.replace(/\/+$/, "");
+
     for (const part of parts) {
       accumulated += `/${part}`;
       const target = accumulated;
@@ -232,11 +327,39 @@ export function createFilesPage(): PageHandle {
       tableHost.append(emptyNote("this directory is empty"));
       return;
     }
+    if (selected.size > 0) {
+      tableHost.append(bulkActionBar());
+    }
     if (view === "grid") {
       renderGrid();
     } else {
       renderTable();
     }
+  }
+
+  function bulkActionBar(): HTMLElement {
+    const bar = el("div", {
+      class: "mb-2 flex items-center gap-2 border border-emerald-500/30 bg-emerald-950/20 px-3 py-1.5 text-[11px]",
+    });
+    bar.append(
+      el("span", { class: "font-medium text-emerald-400", text: `${selected.size} selected` }),
+      button(`Delete (${selected.size})`, "text-rose-400 hover:border-rose-500", async () => {
+        if (!window.confirm(`Delete ${selected.size} selected item(s)?`)) return;
+        const targets = Array.from(selected);
+        await withBusy(async () => {
+          for (const target of targets) {
+            await filesApi.remove(target, true);
+          }
+        });
+        selected.clear();
+        await load(current);
+      }),
+      button("Deselect all", "text-neutral-400", () => {
+        selected.clear();
+        render();
+      }),
+    );
+    return bar;
   }
 
   /** Grid view: one tile per entry with an icon, name and size. */
@@ -260,9 +383,14 @@ export function createFilesPage(): PageHandle {
           text: entry.kind === "dir" ? "folder" : bytes(entry.size),
         }),
       );
-      tile.addEventListener("dblclick", () => {
+      tile.classList.add("cursor-pointer");
+      tile.addEventListener("click", () => {
         if (entry.kind === "dir") void load(entry.path);
         else void openPreview(entry);
+      });
+      tile.addEventListener("dblclick", () => {
+        if (entry.kind === "dir") void load(entry.path);
+        else void openEditor(entry);
       });
       tile.addEventListener("contextmenu", (event) => {
         event.preventDefault();
@@ -289,18 +417,22 @@ export function createFilesPage(): PageHandle {
 
     const menu = el("div", {
       class:
-        "ss-context-menu panel fixed z-50 flex min-w-40 flex-col py-1 text-[11px] shadow-lg",
+        "ss-context-menu panel fixed z-50 flex min-w-44 flex-col py-1.5 text-[11px] shadow-lg",
     });
-    menu.style.left = `${Math.min(x, window.innerWidth - 180)}px`;
-    menu.style.top = `${Math.min(y, window.innerHeight - 220)}px`;
+    menu.style.left = `${Math.min(x, window.innerWidth - 190)}px`;
+    menu.style.top = `${Math.min(y, window.innerHeight - 260)}px`;
 
     const add = (label: string, action: () => void, tone = ""): void => {
-      const item = button(label, `w-full justify-start text-left text-[11px] ${tone}`.trim(), () => {
+      const item = button(label, `w-full justify-start text-left px-3 py-1.5 hover:bg-white/10 ${tone}`.trim(), () => {
         close();
         action();
       });
       item.style.textAlign = "left";
       menu.append(item);
+    };
+
+    const separator = (): void => {
+      menu.append(el("div", { class: "my-1 border-t border-white/10" }));
     };
 
     const close = (): void => {
@@ -314,6 +446,12 @@ export function createFilesPage(): PageHandle {
 
     if (entry.kind === "dir") {
       add("Open", () => void load(entry.path));
+      add("Create archive here", () =>
+        void promptName("Archive file name", (name) => filesApi.createArchive(entry.path, name)).then(() => load(current)),
+      );
+      add("Download as archive", () => {
+        window.location.href = filesApi.archiveUrl(entry.path);
+      });
     } else {
       add("Download", () => {
         window.location.href = filesApi.downloadUrl(entry.path);
@@ -323,6 +461,7 @@ export function createFilesPage(): PageHandle {
         add("Edit", () => void openEditor(entry));
       }
     }
+    separator();
     if (entry.kind === "file" && isArchive(entry.name)) {
       add("Extract", () => void withBusy(() => filesApi.extract(entry.path)).then(() => load(current)));
     }
@@ -332,16 +471,17 @@ export function createFilesPage(): PageHandle {
       ),
     );
     add("Copy path", () => {
-      void navigator.clipboard?.writeText(entry.path).then(
-        () => setStatus(`copied ${entry.path}`, "ok"),
-        () => setStatus("clipboard is unavailable in this browser", "error"),
-      );
+      void copyToClipboard(entry.path).then((ok) => {
+        if (ok) setStatus(`copied ${entry.path}`, "ok");
+      });
     });
+    separator();
     if (entry.kind === "file") {
       add("Permissions", () =>
         void promptName("Mode (e.g. 644)", (mode) => filesApi.chmod(entry.path, mode)),
       );
       add("Owner", () => void promptOwner(entry));
+      separator();
     }
     add("Delete", () => void removeEntry(entry), "text-rose-400 hover:border-rose-500");
 
@@ -438,8 +578,24 @@ export function createFilesPage(): PageHandle {
       return;
     }
 
+    const allSelected = listing.entries.length > 0 && listing.entries.every((e) => selected.has(e.path));
+    const selectAllBox = el("input", {
+      type: "checkbox",
+      class: "accent-emerald-500",
+    }) as HTMLInputElement;
+    selectAllBox.checked = allSelected;
+    selectAllBox.addEventListener("change", () => {
+      if (selectAllBox.checked) {
+        for (const e of listing.entries) selected.add(e.path);
+      } else {
+        selected.clear();
+      }
+      render();
+    });
+
     const table = el("table", { class: "w-full text-[11px]" });
     const head = el("tr", {}, [
+      el("th", { class: "w-6 px-2 py-1 text-center" }, [selectAllBox]),
       el("th", { class: "px-2 py-1 text-left text-[10px] uppercase text-neutral-600", text: "name" }),
       el("th", { class: "px-2 py-1 text-right text-[10px] uppercase text-neutral-600", text: "size" }),
       el("th", { class: "px-2 py-1 text-left text-[10px] uppercase text-neutral-600", text: "modified" }),
@@ -458,10 +614,28 @@ export function createFilesPage(): PageHandle {
   }
 
   function row(entry: FileEntry): HTMLElement {
+    const isSelected = selected.has(entry.path);
+    const selectBox = el("input", {
+      type: "checkbox",
+      class: "accent-emerald-500",
+    }) as HTMLInputElement;
+    selectBox.checked = isSelected;
+    selectBox.addEventListener("change", (e) => {
+      e.stopPropagation();
+      if (selectBox.checked) selected.add(entry.path);
+      else selected.delete(entry.path);
+      render();
+    });
+    const checkCell = el("td", { class: "w-6 px-2 py-1 text-center" }, [selectBox]);
+
     const nameCell = el("td", { class: "px-2 py-1" });
     const nameLabel = el("span", {
-      class: entry.kind === "dir" ? "text-emerald-400" : "text-neutral-300",
+      class: `${entry.kind === "dir" ? "text-emerald-400 font-medium" : "text-neutral-300"} cursor-pointer hover:underline`,
       text: entry.kind === "dir" ? `${entry.name}/` : entry.name,
+    });
+    nameLabel.addEventListener("click", () => {
+      if (entry.kind === "dir") void load(entry.path);
+      else void openPreview(entry);
     });
     nameCell.append(nameLabel);
     if (entry.symlink_target) {
@@ -476,7 +650,7 @@ export function createFilesPage(): PageHandle {
     const actions = el("td", { class: "px-2 py-1 text-right whitespace-nowrap" });
     if (entry.kind !== "dir") {
       actions.append(
-        el("a", { href: filesApi.downloadUrl(entry.path), class: "mr-2 text-emerald-400 underline", text: "get" }),
+        el("a", { href: filesApi.downloadUrl(entry.path), class: "mr-2 text-emerald-400 underline", text: "Download" }),
       );
     }
     if (entry.kind === "file") {
@@ -506,7 +680,8 @@ export function createFilesPage(): PageHandle {
     });
     actions.append(moreButton);
 
-    const tr = el("tr", { class: "border-b border-white/5" }, [
+    const tr = el("tr", { class: `border-b border-white/5 ${isSelected ? "bg-white/5" : ""}` }, [
+      checkCell,
       nameCell,
       el("td", { class: "tabular px-2 py-1 text-right text-neutral-500", text: entry.kind === "dir" ? "—" : bytes(entry.size) }),
       el("td", { class: "px-2 py-1 text-neutral-500", text: formatTime(entry.modified_ms) }),
@@ -745,6 +920,9 @@ export function createFilesPage(): PageHandle {
             close();
             status = "saved";
             await load(current);
+            if (preview && preview.path === entry.path) {
+              void openPreview(entry);
+            }
           } catch (err) {
             error.textContent = errorText(err);
           }

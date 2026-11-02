@@ -112,6 +112,7 @@ pub fn catalog(cfg: &Config) -> Vec<App> {
 }
 
 /// Catalog with the runtime `installed` flag filled in, ready to serialise.
+#[allow(dead_code)]
 pub fn catalog_with_state(cfg: &Config) -> Vec<App> {
     let installed = installed_ids(cfg);
     catalog(cfg)
@@ -201,6 +202,23 @@ pub async fn remove(cfg: &Config, raw_id: &str) -> Result<String, ApiError> {
 
     tracing::info!(app = %id, "app-store app removed");
     Ok(output)
+}
+
+/// Remove an app and its named compose volumes, then install it fresh.
+pub async fn reset(cfg: &Config, raw_id: &str) -> Result<String, ApiError> {
+    let id = sanitize_app_id(raw_id)?.to_string();
+    let dir = app_dir(cfg, &id);
+    if !compose_path(cfg, &id).is_file() {
+        return Err(ApiError::not_found(format!("app {id} is not installed")));
+    }
+    let output = run_compose(&dir, &["down", "-v"], cfg.compose_timeout_s).await?;
+    let dir_for_remove = dir.clone();
+    tokio::task::spawn_blocking(move || std::fs::remove_dir_all(&dir_for_remove))
+        .await
+        .map_err(|err| ApiError::internal(format!("reset task failed: {err}")))?
+        .map_err(|err| ApiError::internal(format!("cannot remove {}: {err}", dir.display())))?;
+    let install_output = install(cfg, &id).await?;
+    Ok(format!("{output}\n{install_output}"))
 }
 
 // ---------------------------------------------------------------------------

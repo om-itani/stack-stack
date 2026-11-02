@@ -634,6 +634,7 @@ mod tests {
             web_port: Some(8096),
             compose: String::new(),
             installed: false,
+            container_state: None,
         }];
 
         let container = summary_to_container(summary, "192.168.1.10", &[], &apps);

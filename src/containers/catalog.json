@@ -519,7 +519,7 @@
                           "protocol":  "tcp"
                       }
                   ],
-        "compose":  "services:\r\n  code-server:\r\n    image: linuxserver/code-server:4.98.1\r\n    container_name: code-server\r\n    restart: unless-stopped\r\n    labels:\r\n      - stack-stack.app=code-server\r\n    ports:\r\n      - \"8443:8443\"\r\n    volumes:\r\n      - codeserver-config:/config\r\n      - /srv/projects:/config/workspace\r\nvolumes:\r\n  codeserver-config:\r\n"
+        "compose":  "services:\r\n  code-server:\r\n    image: linuxserver/code-server:4.96.4\r\n    container_name: code-server\r\n    restart: unless-stopped\r\n    labels:\r\n      - stack-stack.app=code-server\r\n    ports:\r\n      - \"8443:8443\"\r\n    volumes:\r\n      - codeserver-config:/config\r\n      - /srv/projects:/config/workspace\r\nvolumes:\r\n  codeserver-config:\r\n"
     },
     {
         "id":  "filebrowser",

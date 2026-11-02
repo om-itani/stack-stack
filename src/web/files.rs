@@ -72,6 +72,13 @@ pub struct DeleteBody {
 }
 
 #[derive(Deserialize)]
+pub struct CreateArchiveBody {
+    pub path: String,
+    #[serde(default)]
+    pub name: Option<String>,
+}
+
+#[derive(Deserialize)]
 pub struct ChmodBody {
     pub path: String,
     pub mode: String,
@@ -436,6 +443,67 @@ pub async fn archive(
     .map_err(|err| ApiError::internal(format!("archive task failed: {err}")))??;
 
     stream_file(temp, true).await
+}
+
+/// Create a `.tar.zst` archive on the server in the target directory or parent.
+pub async fn create_archive(
+    State(state): State<AppState>,
+    Json(body): Json<CreateArchiveBody>,
+) -> Result<Json<OkResult>, ApiError> {
+    let (_, guard, _) = context(&state).await?;
+    let runner = state.files.runner.clone();
+    let target = body.path.clone();
+    let custom_name = body.name.clone();
+
+    let created_path = tokio::task::spawn_blocking(move || -> Result<PathBuf, ApiError> {
+        let source = guard.read(&target)?;
+        if !source.is_dir() {
+            return Err(ApiError::bad_request("only directories can be archived"));
+        }
+        let base_name = files_archive_name(&source);
+        let archive_filename = match custom_name.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+            Some(n) => {
+                let clean = n.replace(['/', '\\'], "");
+                if clean.ends_with(".tar.zst") {
+                    clean
+                } else {
+                    format!("{clean}.tar.zst")
+                }
+            }
+            None => format!("{base_name}.tar.zst"),
+        };
+
+        let parent_dir = source.parent().unwrap_or(&source);
+        let dest_path = parent_dir.join(&archive_filename);
+        let _ = guard.write(&dest_path.to_string_lossy())?;
+
+        let base = parent_dir.to_string_lossy().to_string();
+        let leaf = source
+            .file_name()
+            .map(|name| name.to_string_lossy().to_string())
+            .unwrap_or_default();
+        let dest_str = dest_path.to_string_lossy().to_string();
+        let args = files::create_tar_args(&base, &[leaf], &dest_str);
+        let output = runner
+            .run_timeout("tar", &args, std::time::Duration::from_secs(1800))
+            .map_err(|err| ApiError::unavailable(format!("tar is not available: {err}")))?;
+        if !output.success() {
+            let _ = std::fs::remove_file(&dest_path);
+            return Err(ApiError::internal(format!(
+                "archiving failed: {}",
+                output.combined().trim()
+            )));
+        }
+        Ok(dest_path)
+    })
+    .await
+    .map_err(|err| ApiError::internal(format!("archive task failed: {err}")))??;
+
+    Ok(Json(OkResult {
+        ok: true,
+        path: Some(created_path.to_string_lossy().to_string()),
+        bytes: None,
+    }))
 }
 
 fn files_archive_name(path: &Path) -> String {

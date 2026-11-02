@@ -246,8 +246,8 @@ fn collect_nfs(state: &AppState) -> NfsState {
     }
 }
 
-/// The LAN network in CIDR form, from the router document's first addressed
-/// interface or bridge. Used for Samba's `hosts allow`.
+/// The LAN network in CIDR form, from the router document or the host's primary
+/// private network interface. Used for Samba's `hosts allow`.
 fn lan_cidr(state: &AppState) -> Option<String> {
     let path = PathBuf::from(&state.config.network_path);
     let (config, _) = store::load(&path);
@@ -256,6 +256,32 @@ fn lan_cidr(state: &AppState) -> Option<String> {
             && let Ok(net) = Ipv4Net::parse(address)
         {
             return Some(net.network_cidr());
+        }
+    }
+    for iface in &config.interfaces {
+        if let Some(address) = iface.address.as_deref()
+            && let Ok(net) = Ipv4Net::parse(address)
+        {
+            return Some(net.network_cidr());
+        }
+    }
+    let interfaces = crate::networking::interfaces::discover(state.samba.runner.as_ref());
+    for iface in interfaces {
+        if iface.kind == crate::networking::interfaces::InterfaceKind::Loopback {
+            continue;
+        }
+        for addr in iface.addresses {
+            if (addr.scope == "global" || addr.scope.is_empty())
+                && let Ok(net) = Ipv4Net::parse(&addr.cidr)
+            {
+                let octets = net.addr().octets();
+                if octets[0] == 10
+                    || (octets[0] == 172 && (16..=31).contains(&octets[1]))
+                    || (octets[0] == 192 && octets[1] == 168)
+                {
+                    return Some(net.network_cidr());
+                }
+            }
         }
     }
     None

@@ -111,6 +111,7 @@ pub fn router(state: AppState) -> Router {
         .route("/api/apps/catalog", get(apps::catalog))
         .route("/api/apps/hub-search", get(apps::hub_search))
         .route("/api/apps/{app}/install", post(apps::install))
+        .route("/api/apps/{app}/reset", post(apps::reset))
         .route("/api/apps/{app}", delete(apps::remove))
         .route(
             "/api/network",
@@ -165,7 +166,7 @@ pub fn router(state: AppState) -> Router {
         .route("/api/files/config", put(files::save_config))
         .route("/api/files/read", get(files::read))
         .route("/api/files/download", get(files::download))
-        .route("/api/files/archive", get(files::archive))
+        .route("/api/files/archive", get(files::archive).post(files::create_archive))
         .route("/api/files/accounts", get(files::accounts))
         .route("/api/files/mkdir", post(files::mkdir))
         .route("/api/files/file", post(files::create_file))

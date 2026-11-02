@@ -282,13 +282,20 @@ pub fn parse_pdbedit(output: &str) -> Vec<SmbUserStatus> {
         .collect()
 }
 
-/// Read the Samba account list; a missing tool is reported, not fatal.
+/// Read the Samba account list; a missing tool or uninitialized passdb is reported, not fatal.
 pub fn list_users(runner: &dyn Runner) -> Result<Vec<SmbUserStatus>, String> {
     let output = runner
         .run_timeout("pdbedit", &["-L".to_string()], Duration::from_secs(15))
         .map_err(|err| format!("pdbedit is not available: {err}"))?;
     if !output.success() {
-        return Err(format!("pdbedit failed: {}", trimmed(&output.combined())));
+        let combined = trimmed(&output.combined());
+        if combined.contains("passdb.tdb")
+            || combined.contains("Failed to open/create TDB")
+            || combined.contains("No such file or directory")
+        {
+            return Ok(Vec::new());
+        }
+        return Err(format!("pdbedit failed: {combined}"));
     }
     Ok(parse_pdbedit(&output.stdout))
 }
@@ -412,7 +419,17 @@ fn apply_sync(
             config.shares.len()
         ))
     })();
+    let config_ok = write.is_ok();
     steps.push(step("config", write));
+
+    if !config_ok {
+        steps.push(StepResult {
+            subsystem: "smbd".to_string(),
+            ok: false,
+            detail: "skipped restart because smb.conf validation failed".to_string(),
+        });
+        return steps;
+    }
 
     if !config.enabled {
         // Best effort: stopping a service that is already stopped is fine.
@@ -631,6 +648,46 @@ mod tests {
 
         let steps = apply_sync(&context, &SmbConfig::default(), None);
         assert!(steps.iter().all(|s| s.ok), "{steps:?}");
+        assert!(!runner.ran_with("systemctl", &["restart", "smbd"]));
+    }
+
+    #[test]
+    fn uninitialized_passdb_returns_empty_user_list() {
+        let runner = FakeRunner::new().respond(
+            "pdbedit",
+            Some(1),
+            "",
+            "Failed to open/create TDB passwd [/var/lib/samba/private/passdb.tdb]",
+        );
+        let users = list_users(&runner).expect("empty users");
+        assert!(users.is_empty());
+    }
+
+    #[test]
+    fn config_testparm_failure_skips_smbd_restart() {
+        let dir = std::env::temp_dir().join(format!("ss-samba-err-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let runner = Arc::new(
+            FakeRunner::new()
+                .respond("testparm", Some(1), "", "ERROR: syntax error in smb.conf")
+                .respond("systemctl", Some(0), "", ""),
+        );
+        let context = SambaContext::new(
+            dir.join("samba.json"),
+            dir.join("smb.conf"),
+            runner.clone() as Arc<dyn Runner>,
+        );
+
+        let config = SmbConfig {
+            enabled: true,
+            shares: vec![share("media")],
+            ..SmbConfig::default()
+        };
+        let steps = apply_sync(&context, &config, None);
+        assert!(!steps[0].ok);
+        assert!(steps[0].detail.contains("syntax error"));
+        assert!(!steps[1].ok);
+        assert!(steps[1].detail.contains("skipped restart"));
         assert!(!runner.ran_with("systemctl", &["restart", "smbd"]));
     }
 }

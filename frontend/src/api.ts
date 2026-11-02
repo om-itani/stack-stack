@@ -1116,6 +1116,8 @@ export const filesApi = {
     jsonRequest<ActionResult>("/api/files/chown", "POST", { path, user, group }),
   extract: (path: string) =>
     jsonRequest<ActionResult>("/api/files/extract", "POST", { path }),
+  createArchive: (path: string, name?: string) =>
+    jsonRequest<ActionResult>("/api/files/archive", "POST", { path, name }),
   accounts: () => request<Accounts>("/api/files/accounts"),
   saveConfig: (config: FilesConfig) =>
     jsonRequest<{ ok: boolean; roots: string[] }>("/api/files/config", "PUT", config),

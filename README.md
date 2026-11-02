@@ -132,6 +132,8 @@ copy path, permissions, owner and delete. Selecting a text file loads it into a
 preview pane, and an image shows inline; uploads report real byte progress rather
 than a spinner.
 
+> **Note on downloads**: File and archive downloads over plain HTTP (`:8553`) may trigger browser security warnings on some modern browsers. To download without warnings, enable HTTPS with Certificates on `:443`.
+
 ### Storage
 
 Every physical disk and partition on the box, read from `lsblk`: its size,

@@ -19,40 +19,100 @@ const MAX_OUTPUT: usize = 4000;
 #[derive(Serialize)]
 pub struct OpResult {
     pub ok: bool,
-    /// Trimmed compose output, useful when an install takes a while.
+    /// Detached operations return their activity-drawer job id immediately.
+    pub job_id: Option<String>,
+    /// Trimmed compose output, useful for completed synchronous operations.
     pub output: String,
 }
 
 pub async fn catalog(State(state): State<AppState>) -> Result<Json<Vec<App>>, ApiError> {
     let config = state.config.clone();
-    let apps = tokio::task::spawn_blocking(move || store::catalog_with_state(&config))
+    let mut apps = tokio::task::spawn_blocking(move || store::catalog(&config))
         .await
         .map_err(|err| ApiError::internal(format!("catalog task failed: {err}")))?;
+    let installed = store::installed_ids(&state.config);
+    let containers = state
+        .docker
+        .list("", &installed, &apps)
+        .await
+        .unwrap_or_default();
+    for app in &mut apps {
+        let members: Vec<_> = containers
+            .iter()
+            .filter(|container| {
+                container.app_id.as_deref() == Some(&app.id)
+                    || container.stack.as_deref() == Some(&app.id)
+            })
+            .collect();
+        app.installed = installed.iter().any(|id| id == &app.id) && !members.is_empty();
+        app.container_state = members
+            .iter()
+            .map(|container| container.state.as_str())
+            .find(|state| *state != "running")
+            .or_else(|| members.first().map(|container| container.state.as_str()))
+            .map(str::to_string);
+    }
     Ok(Json(apps))
+}
+
+pub async fn reset(
+    State(state): State<AppState>,
+    Path(app): Path<String>,
+) -> Result<Json<OpResult>, ApiError> {
+    if !store::compose_path(&state.config, &app).is_file() {
+        return Err(ApiError::not_found(format!("app {app} is not installed")));
+    }
+    let config = state.config.clone();
+    let app_for_job = app.clone();
+    let docker = state.docker.clone();
+    let job_id = state
+        .jobs
+        .spawn(format!("Resetting {app}"), move |ctx| async move {
+            ctx.step(10, format!("removing data for {app_for_job}"));
+            match store::reset(&config, &app_for_job).await {
+                Ok(output) => {
+                    docker.invalidate().await;
+                    Ok(trim(&output))
+                }
+                Err(err) => Err(err.to_string()),
+            }
+        });
+    state.audit(
+        "app.reset",
+        &app,
+        "compose down -v and reinstall (background)",
+    );
+    Ok(Json(OpResult {
+        ok: true,
+        job_id: Some(job_id),
+        output: String::new(),
+    }))
 }
 
 pub async fn install(
     State(state): State<AppState>,
     Path(app): Path<String>,
 ) -> Result<Json<OpResult>, ApiError> {
-    // A pull + up is the canonical long-running operation: run it as a tracked
-    // job so it shows in the activity drawer while the request waits.
     let config = state.config.clone();
     let app_for_job = app.clone();
-    let output = state
+    let docker = state.docker.clone();
+    let job_id = state
         .jobs
-        .track_with(format!("Installing {app}"), move |ctx| async move {
+        .spawn(format!("Installing {app}"), move |ctx| async move {
             ctx.step(10, format!("deploying {app_for_job}"));
-            let output = store::install(&config, &app_for_job).await?;
-            Ok::<String, ApiError>(output)
-        })
-        .await?;
-    // Compose created containers outside the Docker client; drop the cached list.
-    state.docker.invalidate().await;
-    state.audit("app.install", &app, "compose up -d");
+            match store::install(&config, &app_for_job).await {
+                Ok(output) => {
+                    docker.invalidate().await;
+                    Ok(trim(&output))
+                }
+                Err(err) => Err(err.to_string()),
+            }
+        });
+    state.audit("app.install", &app, "compose up -d (background)");
     Ok(Json(OpResult {
         ok: true,
-        output: trim(&output),
+        job_id: Some(job_id),
+        output: String::new(),
     }))
 }
 
@@ -60,11 +120,29 @@ pub async fn remove(
     State(state): State<AppState>,
     Path(app): Path<String>,
 ) -> Result<Json<OpResult>, ApiError> {
-    let output = store::remove(&state.config, &app).await?;
-    state.docker.invalidate().await;
+    if !store::compose_path(&state.config, &app).is_file() {
+        return Err(ApiError::not_found(format!("app {app} is not installed")));
+    }
+    let config = state.config.clone();
+    let app_for_job = app.clone();
+    let docker = state.docker.clone();
+    let job_id = state
+        .jobs
+        .spawn(format!("Removing {app}"), move |ctx| async move {
+            ctx.step(10, format!("removing {app_for_job}"));
+            match store::remove(&config, &app_for_job).await {
+                Ok(output) => {
+                    docker.invalidate().await;
+                    Ok(trim(&output))
+                }
+                Err(err) => Err(err.to_string()),
+            }
+        });
+    state.audit("app.remove", &app, "compose down (background)");
     Ok(Json(OpResult {
         ok: true,
-        output: trim(&output),
+        job_id: Some(job_id),
+        output: String::new(),
     }))
 }
 

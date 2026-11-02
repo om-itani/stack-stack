@@ -340,6 +340,17 @@ create_directories() {
   install -d -m 0755 /run/lxc /run/lxc/lock
   # LXC template cache directory.
   install -d -m 0755 /var/cache/lxc /var/cache/lxc/download
+  # Storage mount parents and shared directories
+  install -d -m 0755 /mnt /srv /media
+  # NFS drop-in directory
+  install -d -m 0755 /etc/exports.d
+  # Samba config and state directories
+  install -d -m 0755 /etc/samba /var/lib/samba
+  install -d -m 0700 /var/lib/samba/private
+  # Initialize Samba passdb.tdb if missing so pdbedit / smbpasswd don't fail
+  if command -v smbpasswd >/dev/null 2>&1 && [[ ! -f /var/lib/samba/private/passdb.tdb ]]; then
+    (printf "stackdummy\nstackdummy\n" | smbpasswd -a -s root >/dev/null 2>&1 && smbpasswd -x root >/dev/null 2>&1) || true
+  fi
 }
 
 write_default_config() {
@@ -387,7 +398,7 @@ LimitNOFILE=65536
 NoNewPrivileges=false
 PrivateTmp=true
 ProtectSystem=strict
-ReadWritePaths=/etc/stack-stack /var/lib/stack-stack /run/docker.sock -/run/libvirt -/run/lxc -/var/cache/lxc -/var/log/stack-stack
+ReadWritePaths=/etc/stack-stack /var/lib/stack-stack /run/docker.sock -/run/libvirt -/run/lxc -/run/qemu -/var/cache/lxc -/var/log/stack-stack /mnt /srv /media -/etc/exports -/etc/exports.d /etc/samba /var/lib/samba
 CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_RAW CAP_SYS_ADMIN CAP_DAC_OVERRIDE CAP_CHOWN CAP_FOWNER CAP_SYS_RESOURCE
 
 [Install]
