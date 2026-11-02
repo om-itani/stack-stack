@@ -533,7 +533,9 @@ compile_binary() {
     log_file "Low memory detected ($mem_kb KB); limiting cargo jobs to 2"
   fi
 
-  # Build with native CPU architecture optimizations
+  # Build with native CPU architecture optimizations, ThinLTO, and parallel codegen units
+  export CARGO_PROFILE_RELEASE_LTO="thin"
+  export CARGO_PROFILE_RELEASE_CODEGEN_UNITS="${jobs}"
   export RUSTFLAGS="-C target-cpu=native"
 
   local build_cmd=(cargo build --release --locked --jobs "$jobs")
@@ -733,27 +735,30 @@ enabled = true
 
   # 3. UFW firewall rules (permit SSH, UI, and optional TLS front door)
   if command -v ufw >/dev/null 2>&1; then
-    ufw --force default deny incoming >/dev/null 2>&1 || true
-    ufw --force default allow outgoing >/dev/null 2>&1 || true
-    ufw allow 22/tcp >/dev/null 2>&1 || true
-    ufw allow 8553/tcp >/dev/null 2>&1 || true
-    if grep -q '"tls_enabled"[[:space:]]*:[[:space:]]*true' "${CONFIG_FILE}" 2>/dev/null; then
-      ufw allow 80/tcp >/dev/null 2>&1 || true
-      ufw allow 443/tcp >/dev/null 2>&1 || true
+    if ! ufw status 2>/dev/null | grep -q "8553/tcp"; then
+      ufw --force default deny incoming >/dev/null 2>&1 || true
+      ufw --force default allow outgoing >/dev/null 2>&1 || true
+      ufw allow 22/tcp >/dev/null 2>&1 || true
+      ufw allow 8553/tcp >/dev/null 2>&1 || true
+      if grep -q '"tls_enabled"[[:space:]]*:[[:space:]]*true' "${CONFIG_FILE}" 2>/dev/null; then
+        ufw allow 80/tcp >/dev/null 2>&1 || true
+        ufw allow 443/tcp >/dev/null 2>&1 || true
+      fi
+      ufw --force enable >/dev/null 2>&1 || true
     fi
-    ufw --force enable >/dev/null 2>&1 || true
   fi
 
   # 4. Kernel sysctl parameters
-  write_if_changed /etc/sysctl.d/99-stack-stack.conf \
+  if write_if_changed /etc/sysctl.d/99-stack-stack.conf \
 '# stack-stack hardening
 net.ipv4.conf.all.rp_filter = 1
 net.ipv4.conf.default.rp_filter = 1
 kernel.kptr_restrict = 2
 kernel.dmesg_restrict = 1
 kernel.yama.ptrace_scope = 1
-' >/dev/null || true
-  sysctl --system >/dev/null 2>&1 || true
+'; then
+    sysctl -p /etc/sysctl.d/99-stack-stack.conf >/dev/null 2>&1 || true
+  fi
 
   local t1
   t1="$(date +%s)"
@@ -880,11 +885,13 @@ verify_deployment() {
 
   local passed=0
   for ep in "${endpoints[@]}"; do
-    if curl -fsS --max-time 3 "http://127.0.0.1:8553${ep}" >/dev/null 2>&1; then
+    local code
+    code="$(curl -s -o /dev/null -w "%{http_code}" --max-time 2 "http://127.0.0.1:8553${ep}" 2>/dev/null || echo "000")"
+    if [[ "$code" =~ ^(200|204|301|302|401|403)$ ]]; then
       ((passed++))
-      log_file "  ✓ endpoint ready: ${ep}"
+      log_file "  ✓ endpoint responsive (HTTP $code): ${ep}"
     else
-      log_file "  - endpoint requires setup or auth: ${ep}"
+      log_file "  - endpoint unresponsive (HTTP $code): ${ep}"
     fi
   done
 
@@ -896,6 +903,37 @@ verify_deployment() {
 # ---------------------------------------------------------------------------
 # Final Summary Card
 # ---------------------------------------------------------------------------
+print_box_row() {
+  local key="$1" val="$2" val_color="${3:-$C_CYAN}"
+  local pad=$(( 47 - ${#val} ))
+  (( pad < 0 )) && pad=0
+  printf "  %s│%s  %s%-18s%s : %s%s%s%*s%s│%s\n" \
+    "$C_GREEN" "$C_RESET" \
+    "$C_WHITE" "$key" "$C_RESET" \
+    "$val_color" "$val" "$C_RESET" \
+    "$pad" "" \
+    "$C_GREEN" "$C_RESET"
+}
+
+print_box_cmd() {
+  local label="$1" cmd="$2"
+  local pad=$(( 47 - ${#cmd} ))
+  (( pad < 0 )) && pad=0
+  printf "  %s│%s    • %s%-14s%s : %s%s%s%*s%s│%s\n" \
+    "$C_GREEN" "$C_RESET" \
+    "$C_WHITE" "$label" "$C_RESET" \
+    "$C_YELLOW" "$cmd" "$C_RESET" \
+    "$pad" "" \
+    "$C_GREEN" "$C_RESET"
+}
+
+border_line() {
+  local left="$1" mid="$2" right="$3"
+  local bar=""
+  for ((i = 0; i < 70; i++)); do bar="${bar}─"; done
+  printf "  %s%s%s%s%s\n" "$C_GREEN" "$left" "$bar" "$right" "$C_RESET"
+}
+
 show_summary() {
   local end_time
   end_time="$(date +%s)"
@@ -906,25 +944,33 @@ show_summary() {
   [[ -z "$primary_ip" ]] && primary_ip="127.0.0.1"
 
   printf "\n"
-  printf "  ${C_GREEN}╭────────────────────────────────────────────────────────────────────────╮${C_RESET}\n"
-  printf "  ${C_GREEN}│${C_RESET}                   ${C_BOLD}${C_GREEN}✔ stack-stack deployment successful!${C_RESET}                 ${C_GREEN}│${C_RESET}\n"
-  printf "  ${C_GREEN}├────────────────────────────────────────────────────────────────────────┤${C_RESET}\n"
-  printf "  ${C_GREEN}│${C_RESET}  ${C_WHITE}Control Plane URL${C_RESET} : ${C_CYAN}http://%s:8553${C_RESET}%*s${C_GREEN}│${C_RESET}\n" \
-    "$primary_ip" $(( 46 - ${#primary_ip} )) ""
-  printf "  ${C_GREEN}│${C_RESET}  ${C_WHITE}Localhost URL${C_RESET}     : ${C_CYAN}http://127.0.0.1:8553${C_RESET}                            ${C_GREEN}│${C_RESET}\n"
-  printf "  ${C_GREEN}│${C_RESET}  ${C_WHITE}Service Status${C_RESET}    : ${C_GREEN}active (running)${C_RESET}                                 ${C_GREEN}│${C_RESET}\n"
-  printf "  ${C_GREEN}│${C_RESET}  ${C_WHITE}Binary Installed${C_RESET}  : %-49s${C_GREEN}│${C_RESET}\n" "$INSTALL_BIN"
-  printf "  ${C_GREEN}│${C_RESET}  ${C_WHITE}Config File${C_RESET}       : %-49s${C_GREEN}│${C_RESET}\n" "$CONFIG_FILE"
-  printf "  ${C_GREEN}│${C_RESET}  ${C_WHITE}Total Deploy Time${C_RESET} : %-49s${C_GREEN}│${C_RESET}\n" "${total_duration}s"
-  printf "  ${C_GREEN}│${C_RESET}  ${C_WHITE}Detailed Log${C_RESET}      : %-49s${C_GREEN}│${C_RESET}\n" "$DEPLOY_LOG"
-  printf "  ${C_GREEN}├────────────────────────────────────────────────────────────────────────┤${C_RESET}\n"
-  printf "  ${C_GREEN}│${C_RESET}  ${C_BOLD}Commands for Management:${C_RESET}                                             ${C_GREEN}│${C_RESET}\n"
-  printf "  ${C_GREEN}│${C_RESET}    • View status : ${C_YELLOW}systemctl status ${SERVICE_NAME}${C_RESET}%*s${C_GREEN}│${C_RESET}\n" \
-    $(( 38 - ${#SERVICE_NAME} )) ""
-  printf "  ${C_GREEN}│${C_RESET}    • Stream logs : ${C_YELLOW}journalctl -u ${SERVICE_NAME} -f${C_RESET}%*s${C_GREEN}│${C_RESET}\n" \
-    $(( 39 - ${#SERVICE_NAME} )) ""
-  printf "  ${C_GREEN}│${C_RESET}    • Fast update : ${C_YELLOW}git pull && ./deploy-stack-stack.sh${C_RESET}                 ${C_GREEN}│${C_RESET}\n"
-  printf "  ${C_GREEN}╰────────────────────────────────────────────────────────────────────────╯${C_RESET}\n\n"
+  border_line "╭" "─" "╮"
+  local title="✔ stack-stack deployment successful!"
+  printf "  %s│%s%*s%s%s%s%*s%s│%s\n" \
+    "$C_GREEN" "$C_RESET" \
+    17 "" \
+    "$C_BOLD$C_GREEN" "$title" "$C_RESET" \
+    17 "" \
+    "$C_GREEN" "$C_RESET"
+  border_line "├" "─" "┤"
+  print_box_row "Control Plane URL" "http://${primary_ip}:8553" "$C_CYAN"
+  print_box_row "Localhost URL" "http://127.0.0.1:8553" "$C_CYAN"
+  print_box_row "Service Status" "active (running)" "$C_GREEN"
+  print_box_row "Binary Installed" "$INSTALL_BIN" "$C_WHITE"
+  print_box_row "Config File" "$CONFIG_FILE" "$C_WHITE"
+  print_box_row "Total Deploy Time" "${total_duration}s" "$C_WHITE"
+  print_box_row "Detailed Log" "$DEPLOY_LOG" "$C_WHITE"
+  border_line "├" "─" "┤"
+  printf "  %s│%s  %sCommands for Management:%s%*s%s│%s\n" \
+    "$C_GREEN" "$C_RESET" \
+    "$C_BOLD$C_WHITE" "$C_RESET" \
+    44 "" \
+    "$C_GREEN" "$C_RESET"
+  print_box_cmd "View status" "systemctl status ${SERVICE_NAME}"
+  print_box_cmd "Stream logs" "journalctl -u ${SERVICE_NAME} -f"
+  print_box_cmd "Fast update" "git pull && ./deploy-stack-stack.sh"
+  border_line "╰" "─" "╯"
+  printf "\n"
 }
 
 # ---------------------------------------------------------------------------

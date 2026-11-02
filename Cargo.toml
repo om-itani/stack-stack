@@ -37,7 +37,7 @@ tower-http = { version = "0.7.1", features = ["compression-gzip"] }
 
 [profile.release]
 opt-level = 3
-lto = true
-codegen-units = 1
+lto = "thin"
+codegen-units = 16
 panic = "abort"
 strip = true
