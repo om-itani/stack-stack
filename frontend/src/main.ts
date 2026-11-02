@@ -39,6 +39,7 @@ import { button, el, field, must, textInput, uptime } from "./ui";
 interface PageHandle {
   root: HTMLElement;
   onShow?: () => void;
+  onHide?: () => void;
 }
 
 interface PageDef {
@@ -386,6 +387,9 @@ function startShell(): void {
         void handle.root.offsetWidth;
         handle.root.classList.add("page-enter");
       } else {
+        if (handle.root.style.display !== "none") {
+          handle.onHide?.();
+        }
         handle.root.style.display = "none";
       }
 

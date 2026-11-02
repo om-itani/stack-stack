@@ -69,6 +69,17 @@ pub fn run_env(
     run_inner(program, args, None, env, timeout, None)
 }
 
+/// Like [`run_env`], but also sets a working directory.
+pub fn run_env_cwd(
+    program: &str,
+    args: &[String],
+    cwd: Option<&Path>,
+    env: &[(String, String)],
+    timeout: Duration,
+) -> io::Result<Output> {
+    run_inner(program, args, cwd, env, timeout, None)
+}
+
 /// Like [`run`], but writes `input` to the child's stdin before closing it.
 ///
 /// This is how a secret is handed to `chpasswd` without ever appearing in the

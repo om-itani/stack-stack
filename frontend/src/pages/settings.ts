@@ -7,8 +7,8 @@
  */
 
 import { authApi, ddnsApi, notifyApi } from "../api";
-import type { DdnsState } from "../api";
-import { button, checkbox, el, emptyNote, field, panel, textInput } from "../ui";
+import type { DdnsState, ProviderConfig } from "../api";
+import { button, checkbox, el, emptyNote, field, panel, select, textInput } from "../ui";
 
 export interface PageHandle {
   root: HTMLElement;
@@ -64,7 +64,7 @@ function passwordCard(): HTMLElement {
       submit.disabled = true;
       try {
         await authApi.changePassword(current, next);
-        status.textContent = "password changed; other sessions were signed out";
+        status.textContent = "password changed; other sessions signed out, current session kept";
         status.className = "text-[11px] text-emerald-400";
         currentInput.value = "";
         nextInput.value = "";
@@ -81,7 +81,7 @@ function passwordCard(): HTMLElement {
   cardBody.append(
     el("div", {
       class: "text-[11px] text-neutral-500",
-      text: "Changing the password signs out every other session, including other tabs.",
+      text: "Changing the password signs out every other session, including other tabs. Your current session remains active.",
     }),
     field("current password", currentInput),
     field("new password", nextInput),
@@ -156,8 +156,8 @@ function ddnsCard(): HTMLElement {
     const intervalInput = textInput(String(draft.interval_min), (value) => {
       draft.interval_min = Number.parseInt(value, 10) || 15;
     });
-    const enabledToggle = checkbox(draft.enabled, (value) => (draft.enabled = value), "enabled");
-    const proxiedToggle = checkbox(draft.proxied, (value) => (draft.proxied = value), "proxied (orange cloud)");
+    const enabledToggle = checkbox(draft.enabled, (value) => (draft.enabled = value));
+    const proxiedToggle = checkbox(draft.proxied, (value) => (draft.proxied = value), "orange cloud");
 
     const tokenInput = textInput("", () => {}, { type: "password", placeholder: "paste to replace" });
 
@@ -226,9 +226,15 @@ function notificationsCard(): HTMLElement {
   cardBody.className = "flex flex-col gap-2 px-3 py-2 text-[11px]";
 
   const status = el("div", { class: "text-neutral-500" });
+  let providersList: ProviderConfig[] = [];
+
   const load = async (): Promise<void> => {
     try {
-      const feed = await notifyApi.feed();
+      const [feed, prov] = await Promise.all([
+        notifyApi.feed(),
+        notifyApi.providers(),
+      ]);
+      providersList = prov.providers;
       render(feed.config);
     } catch (err) {
       status.textContent = errorText(err);
@@ -237,22 +243,44 @@ function notificationsCard(): HTMLElement {
 
   const render = (config: Awaited<ReturnType<typeof notifyApi.feed>>["config"]): void => {
     cardBody
-      .querySelectorAll("[data-body]")
+        .querySelectorAll("[data-body]")
       .forEach((node) => node.remove());
     const body = el("div", { class: "flex flex-col gap-2", "data-body": "" });
     cardBody.append(body);
 
-    const webhookInput = textInput(config.webhook_url ?? "", (value) => {
-      config.webhook_url = value.trim() === "" ? null : value.trim();
-    });
+    const providerSection = providersList.length === 0
+      ? el("div", { class: "text-[11px] text-neutral-400 py-1" }, [
+          el("span", { text: "no providers configured — add one on the " }),
+          el("a", {
+            class: "text-emerald-400 underline hover:text-emerald-300",
+            href: "#/alerts",
+            text: "Alerts page",
+          }),
+        ])
+      : field(
+          "default provider",
+          select(
+            config.default_provider ?? "",
+            [
+              ["", "none (disabled)"],
+              ...providersList.map((p): [string, string] => [
+                p.id,
+                `${p.name || p.id} (${p.kind})`,
+              ]),
+            ],
+            (value) => {
+              config.default_provider = value || null;
+            },
+          ),
+        );
 
     body.append(
       el("div", {
         class: "text-neutral-500",
-        text: "Discord, Slack and email providers are configured, and can be tested, on the Alerts page.",
+        text: "Notification providers (Discord, Slack, Webhook, Email) are configured on the Alerts page.",
       }),
       el("div", { class: "flex flex-wrap gap-3" }, [
-        checkbox(config.enabled, (value) => (config.enabled = value), "deliver to webhook"),
+        checkbox(config.enabled, (value) => (config.enabled = value), "deliver notifications"),
         checkbox(config.backup_failed, (value) => (config.backup_failed = value), "backup failed"),
         checkbox(config.cert_expiring, (value) => (config.cert_expiring = value), "cert expiring"),
         checkbox(config.firewall_rollback, (value) => (config.firewall_rollback = value), "firewall rollback"),
@@ -267,7 +295,7 @@ function notificationsCard(): HTMLElement {
           config.cert_expiring_days = Number.parseInt(value, 10) || 30;
         })),
       ]),
-      field("webhook url", webhookInput),
+      providerSection,
       el("div", { class: "flex gap-2" }, [
         button("save", "text-emerald-400 hover:border-emerald-500", async () => {
           try {
@@ -278,9 +306,12 @@ function notificationsCard(): HTMLElement {
             status.textContent = errorText(err);
           }
         }),
-        button("test webhook", "", async () => {
+        button("test notification", "", async () => {
+          status.textContent = "testing…";
           try {
-            const result = await notifyApi.test();
+            const result = config.default_provider
+              ? await notifyApi.testProvider(config.default_provider)
+              : await notifyApi.test();
             status.textContent = result.detail;
           } catch (err) {
             status.textContent = errorText(err);

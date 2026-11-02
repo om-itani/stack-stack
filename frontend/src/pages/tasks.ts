@@ -90,11 +90,16 @@ export function createTasksPage(): PageHandle {
         command: command.trim(),
       });
       feedback.className = "tabular text-[11px] text-emerald-400";
-      feedback.textContent = "saved";
+      feedback.textContent = "saved, create another";
       name = "";
       command = "";
+      cron = "";
       nameInput.value = "";
       commandArea.value = "";
+      cronInput.value = "";
+      schedule = PRESETS[0][0];
+      scheduleSelect.value = schedule;
+      cronField.hidden = true;
       render(state);
     } catch (err) {
       feedback.className = "tabular text-[11px] text-rose-400";

@@ -43,8 +43,8 @@ fn curl_prepared(url: &str, payload: &serde_json::Value) -> Result<Prepared, Str
     let json =
         serde_json::to_string(payload).map_err(|err| format!("cannot serialise payload: {err}"))?;
     let args: Vec<String> = [
-        "-s",
-        "--fail",
+        "-sS",
+        "--fail-with-body",
         "--max-time",
         &DELIVERY_TIMEOUT_S.to_string(),
         "-X",
@@ -208,12 +208,15 @@ pub fn deliver(
         ));
     }
     if !output.success() {
-        let detail = output.stderr.trim();
-        return Err(if detail.is_empty() {
-            format!("{} exited with {:?}", prepared.program, output.code)
-        } else {
-            detail.chars().take(300).collect()
-        });
+        let err = output.stderr.trim();
+        let body = output.stdout.trim();
+        let detail = match (!err.is_empty(), !body.is_empty()) {
+            (true, true) => format!("{err}: {body}"),
+            (true, false) => err.to_string(),
+            (false, true) => body.to_string(),
+            (false, false) => format!("{} exited with {:?}", prepared.program, output.code),
+        };
+        return Err(detail.chars().take(400).collect());
     }
     Ok(())
 }

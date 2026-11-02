@@ -116,14 +116,20 @@ pub fn spawn_evaluator(state: AppState) {
         ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         // Rule id -> the instant (ms) the condition first became true.
         let mut active: HashMap<String, u64> = HashMap::new();
+        // Dedup: rule id -> (fired_timestamp_s, metric_value)
+        let mut fired_recently: HashMap<String, (u64, f64)> = HashMap::new();
         loop {
             ticker.tick().await;
-            evaluate_once(&state, &mut active).await;
+            evaluate_once(&state, &mut active, &mut fired_recently).await;
         }
     });
 }
 
-async fn evaluate_once(state: &AppState, active: &mut HashMap<String, u64>) {
+async fn evaluate_once(
+    state: &AppState,
+    active: &mut HashMap<String, u64>,
+    fired_recently: &mut HashMap<String, (u64, f64)>,
+) {
     let (doc, _) = state.alerts.load();
     if !doc.rules.iter().any(|rule| rule.enabled) {
         active.clear();
@@ -170,6 +176,16 @@ async fn evaluate_once(state: &AppState, active: &mut HashMap<String, u64>) {
             continue;
         }
 
+        if let Some((last_s, last_val)) = fired_recently.get(&rule.id) {
+            if now_s.saturating_sub(*last_s) < rule.cooldown_s {
+                continue;
+            }
+            if now_s.saturating_sub(*last_s) < 60 && (last_val - value).abs() < f64::EPSILON {
+                continue;
+            }
+        }
+
+        fired_recently.insert(rule.id.clone(), (now_s, value));
         fire(state, &doc, rule, value);
         // Re-arm: the condition must hold for another full duration before a
         // second firing, on top of the cooldown.

@@ -6,6 +6,7 @@
 //! and there is exactly one place that spawns a process with a wall-clock
 //! deadline.
 
+use std::path::Path;
 use std::time::Duration;
 
 use crate::proc::{self, Output};
@@ -57,6 +58,19 @@ pub trait Runner: Send + Sync {
     ) -> Result<Output, String> {
         let _ = env;
         self.run_timeout(program, args, timeout)
+    }
+
+    /// Run with extra environment variables and an explicit working directory.
+    fn run_env_cwd(
+        &self,
+        program: &str,
+        args: &[String],
+        cwd: Option<&Path>,
+        env: &[(String, String)],
+        timeout: Duration,
+    ) -> Result<Output, String> {
+        let _ = cwd;
+        self.run_env(program, args, env, timeout)
     }
 
     /// True when the program exists and ran; used for capability probing.
@@ -121,6 +135,18 @@ impl Runner for SystemRunner {
         timeout: Duration,
     ) -> Result<Output, String> {
         proc::run_env(program, args, env, timeout)
+            .map_err(|err| format!("cannot run {program}: {err}"))
+    }
+
+    fn run_env_cwd(
+        &self,
+        program: &str,
+        args: &[String],
+        cwd: Option<&Path>,
+        env: &[(String, String)],
+        timeout: Duration,
+    ) -> Result<Output, String> {
+        proc::run_env_cwd(program, args, cwd, env, timeout)
             .map_err(|err| format!("cannot run {program}: {err}"))
     }
 }

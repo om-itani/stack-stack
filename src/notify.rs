@@ -137,7 +137,11 @@ pub struct NotifyConfig {
     /// Warn when a filesystem passes this usage percentage.
     pub disk_used_pct: u32,
     pub service_down: bool,
-    /// Optional webhook; `http`/`https` only. POSTed with `curl`.
+    /// Optional default provider id from alerts.json.
+    #[serde(default)]
+    pub default_provider: Option<String>,
+    /// Optional webhook; `http`/`https` only. POSTed with `curl`. Deprecated in favor of `default_provider`.
+    #[serde(default)]
     pub webhook_url: Option<String>,
 }
 
@@ -152,6 +156,7 @@ impl Default for NotifyConfig {
             smart_prefail: true,
             disk_used_pct: 90,
             service_down: true,
+            default_provider: None,
             webhook_url: None,
         }
     }
@@ -226,6 +231,7 @@ struct Inner {
 #[derive(Clone)]
 pub struct NotificationCenter {
     config_path: PathBuf,
+    alerts: Arc<RwLock<Option<crate::alerts::AlertContext>>>,
     runner: Arc<dyn Runner>,
     inner: Arc<RwLock<Inner>>,
     config: Arc<RwLock<NotifyConfig>>,
@@ -238,10 +244,18 @@ impl NotificationCenter {
         let (live, _) = broadcast::channel(LIVE_BACKLOG);
         Self {
             config_path,
+            alerts: Arc::new(RwLock::new(None)),
             runner,
             inner: Arc::new(RwLock::new(Inner::default())),
             config: Arc::new(RwLock::new(config)),
             live,
+        }
+    }
+
+    /// Link the alert context so default_provider can be resolved.
+    pub fn set_alerts(&self, alerts: crate::alerts::AlertContext) {
+        if let Ok(mut lock) = self.alerts.write() {
+            *lock = Some(alerts);
         }
     }
 
@@ -305,10 +319,39 @@ impl NotificationCenter {
         // A send failure only means nobody is listening right now.
         let _ = self.live.send(notification);
 
-        if config.enabled
-            && let Some(url) = config.webhook()
-        {
-            self.deliver_webhook(url, &request);
+        if config.enabled && request.event != crate::alerts::ALERT_EVENT {
+            if let Some(provider_id) = config
+                .default_provider
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+            {
+                let alert_ctx = self.alerts.read().ok().and_then(|g| g.clone());
+                if let Some(ctx) = alert_ctx {
+                    let (doc, _) = ctx.load();
+                    if let Some(provider) = doc.provider(provider_id).cloned() {
+                        let message = crate::alerts::AlertMessage {
+                            title: request.title.clone(),
+                            body: request.message.clone(),
+                        };
+                        let runner = Arc::clone(&self.runner);
+                        if let Ok(handle) = tokio::runtime::Handle::try_current() {
+                            handle.spawn(async move {
+                                let _ = tokio::task::spawn_blocking(move || {
+                                    crate::notifications::deliver(
+                                        runner.as_ref(),
+                                        &provider,
+                                        &message,
+                                    )
+                                })
+                                .await;
+                            });
+                        }
+                    }
+                }
+            } else if let Some(url) = config.webhook() {
+                self.deliver_webhook(url, &request);
+            }
         }
     }
 
@@ -341,12 +384,42 @@ impl NotificationCenter {
         });
     }
 
-    /// Deliver a synthetic event to the configured webhook, for the "Test"
+    /// Deliver a synthetic event to the configured webhook or default provider, for the "Test"
     /// button. Bypasses the toggles so the operator can verify connectivity.
     pub fn test_webhook(&self) -> Result<String, ApiError> {
         let config = self.config();
+        if let Some(provider_id) = config
+            .default_provider
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+        {
+            let alert_ctx = self
+                .alerts
+                .read()
+                .ok()
+                .and_then(|g| g.clone())
+                .ok_or_else(|| ApiError::internal("alerts system not initialized"))?;
+            let (doc, _) = alert_ctx.load();
+            let provider = doc.provider(provider_id).ok_or_else(|| {
+                ApiError::bad_request(format!("default provider '{provider_id}' not found"))
+            })?;
+            let message = crate::alerts::AlertMessage {
+                title: "stack-stack notification test".to_string(),
+                body: "If you can read this, stack-stack can reach your provider.".to_string(),
+            };
+            crate::notifications::deliver(self.runner.as_ref(), provider, &message)
+                .map_err(|err| ApiError::internal(format!("delivery failed: {err}")))?;
+            return Ok(format!(
+                "delivered via {}",
+                crate::notifications::describe(provider)
+            ));
+        }
+
         let Some(url) = config.webhook() else {
-            return Err(ApiError::bad_request("no webhook URL is configured"));
+            return Err(ApiError::bad_request(
+                "no default provider or webhook URL is configured",
+            ));
         };
         let request = NotificationRequest::info(
             "webhook_test",
@@ -536,8 +609,8 @@ fn escape_curl_config(value: &str) -> String {
 /// so neither the URL nor the body can land in the process argument list.
 fn post_webhook(runner: &dyn Runner, url: &str, payload: &str) -> Result<(), String> {
     let args: Vec<String> = [
-        "-s",
-        "--fail",
+        "-sS",
+        "--fail-with-body",
         "--max-time",
         &WEBHOOK_TIMEOUT_S.to_string(),
         "-X",
@@ -566,12 +639,15 @@ fn post_webhook(runner: &dyn Runner, url: &str, payload: &str) -> Result<(), Str
         return Err(format!("curl timed out after {WEBHOOK_TIMEOUT_S}s"));
     }
     if !output.success() {
-        let detail = output.stderr.trim();
-        return Err(if detail.is_empty() {
-            format!("curl exited with {:?}", output.code)
-        } else {
-            detail.chars().take(300).collect()
-        });
+        let err = output.stderr.trim();
+        let body = output.stdout.trim();
+        let detail = match (!err.is_empty(), !body.is_empty()) {
+            (true, true) => format!("{err}: {body}"),
+            (true, false) => err.to_string(),
+            (false, true) => body.to_string(),
+            (false, false) => format!("curl exited with {:?}", output.code),
+        };
+        return Err(detail.chars().take(400).collect());
     }
     Ok(())
 }

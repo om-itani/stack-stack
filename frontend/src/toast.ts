@@ -64,11 +64,22 @@ export function showToast(options: ToastOptions): void {
   }
 
   const node = document.createElement("div");
-  node.className = `pointer-events-auto w-80 cursor-pointer rounded-[10px] border px-3 py-2 text-[11px] shadow-float ${TONES[tone]}`;
+  node.className = `pointer-events-auto relative w-80 cursor-pointer rounded-[10px] border px-3 py-2 text-[11px] shadow-float ${TONES[tone]}`;
+  const header = document.createElement("div");
+  header.className = "flex items-start justify-between gap-2";
   const title = document.createElement("div");
   title.className = "font-semibold";
   title.textContent = options.title;
-  node.append(title);
+  const close = document.createElement("button");
+  close.className = "text-neutral-400 hover:text-white text-xs px-1 leading-none";
+  close.textContent = "×";
+  close.setAttribute("aria-label", "Dismiss");
+  close.addEventListener("click", (e) => {
+    e.stopPropagation();
+    node.remove();
+  });
+  header.append(title, close);
+  node.append(header);
 
   if (options.message) {
     const body = document.createElement("div");

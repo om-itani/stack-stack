@@ -206,21 +206,25 @@ export function createAlertsPage(): PageHandle {
     wrap.append(field(targetLabel, targetInput));
 
     const actions = el("div", { class: "flex items-center gap-2" });
+    const testBtn = button("test", "", async () => {
+      // The test endpoint reads the persisted document, so persist the draft
+      // first; otherwise an unsaved provider 404s and an edited one tests the
+      // old target.
+      testBtn.disabled = true;
+      setStatus("saving and testing…");
+      try {
+        draft = await alertsApi.save({ providers: draft.providers, rules: draft.rules });
+        const result = await alertsApi.test(provider.id);
+        setStatus(result.detail, "ok");
+        render();
+      } catch (err) {
+        setStatus(errorText(err), "error");
+      } finally {
+        testBtn.disabled = false;
+      }
+    });
     actions.append(
-      button("test", "", async () => {
-        // The test endpoint reads the persisted document, so persist the draft
-        // first; otherwise an unsaved provider 404s and an edited one tests the
-        // old target.
-        setStatus("saving…");
-        try {
-          draft = await alertsApi.save({ providers: draft.providers, rules: draft.rules });
-          const result = await alertsApi.test(provider.id);
-          setStatus(result.detail, "ok");
-          render();
-        } catch (err) {
-          setStatus(errorText(err), "error");
-        }
-      }),
+      testBtn,
       button("remove", "text-rose-400 hover:border-rose-500", () => {
         draft.providers = draft.providers.filter((p) => p !== provider);
         render();

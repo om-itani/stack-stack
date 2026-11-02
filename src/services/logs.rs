@@ -90,6 +90,7 @@ pub fn list_units(runner: &dyn Runner) -> Result<Vec<UnitInfo>, String> {
                 "list-units".to_string(),
                 "--type=service".to_string(),
                 "--all".to_string(),
+                "--plain".to_string(),
                 "--no-legend".to_string(),
                 "--no-pager".to_string(),
             ],
@@ -114,16 +115,20 @@ pub fn parse_unit_lines(text: &str) -> Vec<UnitInfo> {
                 return None;
             }
             let mut fields = line.split_whitespace();
-            let unit = fields.next()?.to_string();
-            let load = fields.next().unwrap_or("");
+            let mut first = fields.next()?;
+            if (first == "●" || first == "*" || first == "○" || first == "x")
+                && let Some(next) = fields.next()
+            {
+                first = next;
+            }
+            let unit = first.to_string();
+            if !unit.contains('.') {
+                return None;
+            }
+            let _load = fields.next().unwrap_or("");
             let active = fields.next().unwrap_or("");
             let sub = fields.next().unwrap_or("");
-            let _ = load;
-            let description = line
-                .split_whitespace()
-                .skip(4)
-                .collect::<Vec<_>>()
-                .join(" ");
+            let description = fields.collect::<Vec<_>>().join(" ");
             Some(UnitInfo {
                 unit,
                 active: active.to_string(),

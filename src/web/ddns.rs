@@ -194,7 +194,9 @@ mod tests {
         let snapshot = collect(&state).await;
         assert!(!snapshot.config.enabled);
         assert!(!snapshot.has_token);
-        assert_eq!(snapshot.wan_ip, None);
+        if let Some(ip) = &snapshot.wan_ip {
+            assert!(ip.parse::<std::net::Ipv4Addr>().is_ok());
+        }
     }
 
     #[tokio::test]

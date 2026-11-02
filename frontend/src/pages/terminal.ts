@@ -25,7 +25,7 @@ export function createTerminalPage(hostname: () => string): PageHandle {
   cardBody.append(
     el("div", {
       class: "text-neutral-400",
-      text: "A root login shell on this host, behind the same login gate as everything else. Output is capped like the container console.",
+      text: "A root login shell on this host, behind the same login gate as everything else. Running as root; sudo is a no-op passthrough. Output is capped like the container console.",
     }),
   );
 

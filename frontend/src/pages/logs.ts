@@ -13,7 +13,17 @@ import { button, el, emptyNote, field, select, textInput } from "../ui";
 export interface PageHandle {
   root: HTMLElement;
   onShow?: () => void;
+  onHide?: () => void;
 }
+
+const DEFAULT_PRIORITIES: [string, string][] = [
+  ["", "any severity"],
+  ["3", "error"],
+  ["4", "warning"],
+  ["5", "notice"],
+  ["6", "info"],
+  ["7", "debug"],
+];
 
 const LEVEL_CLASS: Record<number, string> = {
   0: "text-rose-500",
@@ -62,14 +72,13 @@ export function createLogsPage(): PageHandle {
 
   const prioritySelect = select(
     priority,
-    [["", "any severity"], ...([] as [string, string][])],
+    DEFAULT_PRIORITIES,
     (value) => {
       priority = value;
       if (follow) restartFollow();
       else void tail();
     },
   );
-  prioritySelect.disabled = true; // filled once the state arrives
 
   const linesSelect = select(
     String(lines),
@@ -152,26 +161,28 @@ export function createLogsPage(): PageHandle {
   }
 
   function syncSelectors(): void {
-    if (!state || state.units.length === 0) return;
-    const wanted = unit;
-    unitSelect.replaceChildren(el("option", { value: "", text: "all units" }));
-    for (const info of state.units) {
-      const label = info.description
-        ? `${info.unit} — ${info.description}`
-        : info.unit;
-      unitSelect.append(el("option", { value: info.unit, text: label }));
+    if (state && state.units.length > 0) {
+      const wanted = unit;
+      unitSelect.replaceChildren(el("option", { value: "", text: "all units" }));
+      for (const info of state.units) {
+        const label = info.description
+          ? `${info.unit} — ${info.description}`
+          : info.unit;
+        unitSelect.append(el("option", { value: info.unit, text: label }));
+      }
+      unitSelect.value = wanted;
+      if (unitSelect.selectedIndex === -1) {
+        unit = "";
+        unitSelect.value = "";
+      }
     }
-    unitSelect.value = wanted;
-    if (unitSelect.selectedIndex === -1) {
-      unit = "";
-      unitSelect.value = "";
-    }
-    if (prioritySelect.options.length <= 1 && state.priorities.length > 0) {
-      prioritySelect.disabled = false;
+    if (state && state.priorities.length > 0) {
+      const current = priority;
+      prioritySelect.replaceChildren(el("option", { value: "", text: "any severity" }));
       for (const [value, label] of state.priorities) {
         prioritySelect.append(el("option", { value, text: label }));
       }
-      prioritySelect.value = priority;
+      prioritySelect.value = current;
     }
   }
 
@@ -247,6 +258,23 @@ export function createLogsPage(): PageHandle {
     renderChrome();
   }
 
+  function pauseFollow(): void {
+    if (follow) {
+      follow = false;
+      socket?.close();
+      socket = null;
+      status = "follow paused — click to resume";
+      renderChrome();
+    }
+  }
+
+  const onVisibilityChange = (): void => {
+    if (document.hidden && follow) {
+      pauseFollow();
+    }
+  };
+  document.addEventListener("visibilitychange", onVisibilityChange);
+
   function appendFollowLine(line: string): void {
     try {
       const value = JSON.parse(line) as Record<string, unknown>;
@@ -266,5 +294,10 @@ export function createLogsPage(): PageHandle {
   // Severity options arrive from the server state; seed the common set so the
   // control is usable before the first fetch completes.
   void tail();
-  return { root };
+  return {
+    root,
+    onHide: () => {
+      pauseFollow();
+    },
+  };
 }

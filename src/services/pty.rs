@@ -32,6 +32,34 @@ pub struct HostShell {
 impl HostShell {
     /// Fork a login shell (`/bin/bash -l`) on `slave`.
     pub fn spawn(rows: u16, cols: u16) -> std::io::Result<Self> {
+        let mut env_map: std::collections::HashMap<String, String> = std::env::vars().collect();
+        env_map.insert("TERM".to_string(), "xterm-256color".to_string());
+        env_map.insert("LANG".to_string(), "C.UTF-8".to_string());
+        if !env_map.contains_key("HOME") || env_map["HOME"].is_empty() {
+            env_map.insert("HOME".to_string(), "/root".to_string());
+        }
+        env_map.insert(
+            "PATH".to_string(),
+            "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin".to_string(),
+        );
+
+        let env_cstrings: Vec<std::ffi::CString> = env_map
+            .into_iter()
+            .filter_map(|(k, v)| std::ffi::CString::new(format!("{k}={v}")).ok())
+            .collect();
+        let mut envp: Vec<*const libc::c_char> = env_cstrings.iter().map(|s| s.as_ptr()).collect();
+        envp.push(std::ptr::null());
+
+        let shell_path = std::env::var("SHELL").unwrap_or_else(|_| "/bin/bash".to_string());
+        let shell_name = shell_path
+            .rsplit('/')
+            .next()
+            .unwrap_or(&shell_path)
+            .to_string();
+        let program = std::ffi::CString::new(shell_path).unwrap();
+        let argv0 = std::ffi::CString::new(shell_name).unwrap();
+        let argv: [*const libc::c_char; 3] = [argv0.as_ptr(), c"-l".as_ptr(), std::ptr::null()];
+
         unsafe {
             let mut master: libc::c_int = -1;
             let mut slave: libc::c_int = -1;
@@ -55,7 +83,7 @@ impl HostShell {
             }
 
             if pid == 0 {
-                // Child. Everything from here to execvp is async-signal-safe.
+                // Child. Everything from here to execve is async-signal-safe.
                 if libc::setsid() == -1 {
                     libc::_exit(126);
                 }
@@ -81,17 +109,11 @@ impl HostShell {
                 };
                 let _ = libc::ioctl(0, libc::TIOCSWINSZ, &mut size);
 
-                let shell_path = std::env::var("SHELL").unwrap_or_else(|_| "/bin/bash".to_string());
-                let shell_name = shell_path
-                    .rsplit('/')
-                    .next()
-                    .unwrap_or(&shell_path)
-                    .to_string();
-                let program = std::ffi::CString::new(shell_path.clone()).unwrap();
-                let argv0 = std::ffi::CString::new(shell_name).unwrap();
-                let argv: [*const libc::c_char; 3] =
-                    [argv0.as_ptr(), c"-l".as_ptr(), std::ptr::null()];
-                libc::execvp(program.as_ptr(), argv.as_ptr());
+                libc::execve(program.as_ptr(), argv.as_ptr(), envp.as_ptr());
+                let fallback = c"/bin/sh";
+                let fallback_argv: [*const libc::c_char; 3] =
+                    [fallback.as_ptr(), c"-l".as_ptr(), std::ptr::null()];
+                libc::execve(fallback.as_ptr(), fallback_argv.as_ptr(), envp.as_ptr());
                 libc::_exit(127);
             }
 

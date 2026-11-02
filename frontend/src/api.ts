@@ -1267,7 +1267,8 @@ export interface NotifyConfig {
   smart_prefail: boolean;
   disk_used_pct: number;
   service_down: boolean;
-  webhook_url: string | null;
+  default_provider?: string | null;
+  webhook_url?: string | null;
 }
 
 export interface NotifyState {
@@ -1284,7 +1285,13 @@ export const notifyApi = {
   clear: () => post<{ ok: boolean }>("/api/notifications/clear"),
   saveConfig: (config: NotifyConfig) =>
     jsonRequest<NotifyState>("/api/notifications/config", "PUT", config),
+  providers: () =>
+    request<{ providers: ProviderConfig[]; default_provider: string | null }>(
+      "/api/notifications/providers",
+    ),
   test: () => post<TestResult>("/api/notifications/test"),
+  testProvider: (id: string) =>
+    post<TestResult>(`/api/notifications/providers/${encodeURIComponent(id)}/test`),
 };
 
 export interface HostIp {

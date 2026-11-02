@@ -347,6 +347,19 @@ create_directories() {
   # Samba config and state directories
   install -d -m 0755 /etc/samba /var/lib/samba
   install -d -m 0700 /var/lib/samba/private
+  # DNS and networking configuration directories
+  install -d -m 0755 /etc/unbound/unbound.conf.d /etc/dnsmasq.d /etc/cloudflared
+  # Sudo shim for root terminal shells
+  cat <<'SHIM' > /etc/profile.d/00-stack-stack-shell.sh
+if [ "$(id -u)" = "0" ]; then
+  sudo() { "$@"; }
+  export -f sudo
+fi
+SHIM
+  chmod 0644 /etc/profile.d/00-stack-stack-shell.sh
+  if [[ -f /root/.bashrc ]] && ! grep -q "sudo() {" /root/.bashrc; then
+    printf '\nif [ "$(id -u)" = "0" ]; then sudo() { "$@"; }; export -f sudo; fi\n' >> /root/.bashrc
+  fi
   # Initialize Samba passdb.tdb if missing so pdbedit / smbpasswd don't fail
   if command -v smbpasswd >/dev/null 2>&1 && [[ ! -f /var/lib/samba/private/passdb.tdb ]]; then
     (printf "stackdummy\nstackdummy\n" | smbpasswd -a -s root >/dev/null 2>&1 && smbpasswd -x root >/dev/null 2>&1) || true
@@ -396,9 +409,9 @@ TimeoutStopSec=30
 LimitNOFILE=65536
 # Security hardening
 NoNewPrivileges=false
-PrivateTmp=true
+PrivateTmp=false
 ProtectSystem=strict
-ReadWritePaths=/etc/stack-stack /var/lib/stack-stack /run/docker.sock -/run/libvirt -/run/lxc -/run/qemu -/var/cache/lxc -/var/log/stack-stack /mnt /srv /media -/etc/exports -/etc/exports.d /etc/samba /var/lib/samba
+ReadWritePaths=/etc/stack-stack /var/lib/stack-stack /run/docker.sock -/run/libvirt -/run/lxc -/run/qemu -/var/cache/lxc -/var/log/stack-stack /mnt /srv /media -/etc/exports -/etc/exports.d /etc/samba /var/lib/samba -/etc/unbound/unbound.conf.d -/etc/dnsmasq.d -/etc/nftables.conf -/etc/cloudflared
 CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_RAW CAP_SYS_ADMIN CAP_DAC_OVERRIDE CAP_CHOWN CAP_FOWNER CAP_SYS_RESOURCE
 
 [Install]

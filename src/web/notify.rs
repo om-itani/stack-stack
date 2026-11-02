@@ -68,6 +68,21 @@ pub async fn clear(State(state): State<AppState>) -> Json<OkResult> {
     Json(OkResult { ok: true })
 }
 
+#[derive(Serialize)]
+pub struct NotificationProvidersResponse {
+    pub providers: Vec<crate::alerts::ProviderConfig>,
+    pub default_provider: Option<String>,
+}
+
+pub async fn list_providers(State(state): State<AppState>) -> Json<NotificationProvidersResponse> {
+    let (alerts_doc, _) = state.alerts.load();
+    let config = state.notify.config();
+    Json(NotificationProvidersResponse {
+        providers: alerts_doc.providers,
+        default_provider: config.default_provider,
+    })
+}
+
 pub async fn update_config(
     State(state): State<AppState>,
     Json(config): Json<NotifyConfig>,

@@ -162,23 +162,46 @@ impl TaskContext {
             entry.last_output = Some(output.clone());
         }
         self.save(&doc)?;
-        Ok((doc, format!("{status}: {output}")))
+        let detail = if output.trim().is_empty() {
+            status
+        } else {
+            format!("{status}: {}", output.trim())
+        };
+        Ok((doc, detail))
     }
 }
 
 /// Run a command with `sh -c`, capturing combined output.
 pub fn execute(runner: &dyn Runner, command: &str) -> (String, String) {
     let args = vec!["-c".to_string(), command.to_string()];
-    match runner.run_timeout("sh", &args, Duration::from_secs(TASK_TIMEOUT_S)) {
+    let env = [
+        (
+            "PATH".to_string(),
+            "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin".to_string(),
+        ),
+        ("HOME".to_string(), "/root".to_string()),
+        ("TERM".to_string(), "xterm-256color".to_string()),
+        ("LANG".to_string(), "C.UTF-8".to_string()),
+    ];
+    let cwd = std::path::Path::new("/");
+    match runner.run_env_cwd(
+        "sh",
+        &args,
+        Some(cwd),
+        &env,
+        Duration::from_secs(TASK_TIMEOUT_S),
+    ) {
         Ok(output) => {
             let status = if output.success() {
-                "ok"
+                "ok".to_string()
             } else if output.timed_out {
-                "failed (timed out)"
+                "failed (timed out)".to_string()
+            } else if let Some(code) = output.code {
+                format!("failed (exit {code})")
             } else {
-                "failed"
+                "failed".to_string()
             };
-            (status.to_string(), tail(&output.combined()))
+            (status, tail(&output.combined()))
         }
         Err(err) => ("failed".to_string(), format!("could not start sh: {err}")),
     }

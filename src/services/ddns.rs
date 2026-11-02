@@ -197,7 +197,27 @@ impl DdnsContext {
     }
 
     pub fn wan_ip(&self) -> Option<String> {
-        wan_ip(&self.network())
+        if let Some(ip) = wan_ip(&self.network()) {
+            return Some(ip);
+        }
+        let args = [
+            "-s".to_string(),
+            "-4".to_string(),
+            "--max-time".to_string(),
+            "3".to_string(),
+            "https://ifconfig.me".to_string(),
+        ];
+        if let Ok(output) = self
+            .runner
+            .run_timeout("curl", &args, Duration::from_secs(4))
+            && output.success()
+        {
+            let ip = output.stdout.trim().to_string();
+            if ip.parse::<std::net::Ipv4Addr>().is_ok() {
+                return Some(ip);
+            }
+        }
+        None
     }
 
     /// True when a token is stored.

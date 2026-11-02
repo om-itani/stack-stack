@@ -122,6 +122,8 @@ impl AppState {
             std::path::PathBuf::from(&config.alerts_path),
             Arc::new(SystemRunner::new(Duration::from_secs(20))),
         );
+        notify.set_alerts(alerts.clone());
+        migrate_notification_webhook(&notify, &alerts);
         let health = HealthContext::new(
             std::path::PathBuf::from(&config.health_path),
             Arc::new(SystemRunner::new(Duration::from_secs(20))),
@@ -258,5 +260,37 @@ impl AppState {
         drop(tokio::task::spawn_blocking(move || {
             crate::audit::record(&path, "admin", &action, &target, &detail);
         }));
+    }
+}
+
+fn migrate_notification_webhook(
+    notify: &crate::notify::NotificationCenter,
+    alerts: &crate::alerts::AlertContext,
+) {
+    let mut config = notify.config();
+    if let Some(url) = config.webhook_url.clone().filter(|u| !u.trim().is_empty()) {
+        let (mut doc, _) = alerts.load();
+        if !doc.providers.iter().any(|p| p.id == "default") {
+            let kind = if url.contains("discord.com") {
+                crate::alerts::ProviderKind::Discord
+            } else if url.contains("slack.com") {
+                crate::alerts::ProviderKind::Slack
+            } else {
+                crate::alerts::ProviderKind::Webhook
+            };
+            doc.providers.push(crate::alerts::ProviderConfig {
+                id: "default".to_string(),
+                name: "Default Webhook".to_string(),
+                kind,
+                url: Some(url),
+                to: None,
+                enabled: true,
+            });
+            let _ = alerts.save(&doc);
+        }
+        config.default_provider = Some("default".to_string());
+        config.webhook_url = None;
+        let _ = notify.set_config(config);
+        tracing::info!("Migrated notification webhook_url to alerts provider 'default'");
     }
 }
