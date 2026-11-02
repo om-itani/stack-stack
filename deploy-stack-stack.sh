@@ -888,7 +888,7 @@ verify_deployment() {
     local code
     code="$(curl -s -o /dev/null -w "%{http_code}" --max-time 2 "http://127.0.0.1:8553${ep}" 2>/dev/null || echo "000")"
     if [[ "$code" =~ ^(200|204|301|302|401|403)$ ]]; then
-      ((passed++))
+      passed=$(( passed + 1 ))
       log_file "  ✓ endpoint responsive (HTTP $code): ${ep}"
     else
       log_file "  - endpoint unresponsive (HTTP $code): ${ep}"

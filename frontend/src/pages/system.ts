@@ -389,26 +389,34 @@ export function createSystemPage(telemetry: Telemetry): { root: HTMLElement } {
 
       for (const disk of disks) {
         const row = document.createElement("div");
-        row.className = "border-b border-white/5 px-3 py-2 last:border-b-0";
+        row.className = "border-b border-white/5 px-3 py-2.5 last:border-b-0 hover:bg-white/[0.02] transition-colors";
 
         const head = document.createElement("div");
-        head.className = "flex items-baseline justify-between gap-3";
+        head.className = "flex items-center justify-between gap-3";
+
+        const mountWrap = document.createElement("div");
+        mountWrap.className = "flex items-center gap-2 min-w-0";
+        mountWrap.innerHTML = `<span class="flex size-5 shrink-0 items-center justify-center rounded bg-teal-500/10 text-teal-400 border border-teal-500/20 text-[10px]">
+          <svg class="size-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="22" x2="2" y1="12" y2="12"/><path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/></svg>
+        </span>`;
         const mount = document.createElement("span");
-        mount.className = "truncate text-neutral-300";
+        mount.className = "truncate font-medium text-white text-[12px]";
         mount.textContent = disk.mount;
+        mountWrap.append(mount);
+
         const usage = document.createElement("span");
-        usage.className = "tabular shrink-0 text-[11px] text-neutral-500";
-        head.append(mount, usage);
+        usage.className = "tabular shrink-0 text-[11px] font-medium text-neutral-300";
+        head.append(mountWrap, usage);
 
         const track = document.createElement("div");
-        track.className = "mt-1.5 h-1.5 bg-white/10";
+        track.className = "mt-2 h-1.5 w-full overflow-hidden rounded-full bg-white/10";
         const bar = document.createElement("div");
-        bar.className = "h-full bg-emerald-500";
+        bar.className = "h-full rounded-full transition-all duration-300 bg-emerald-500";
         bar.style.width = "0%";
         track.append(bar);
 
         const meta = document.createElement("div");
-        meta.className = "tabular mt-1 text-[10px] text-neutral-600";
+        meta.className = "tabular mt-1.5 flex items-center justify-between text-[10px] text-neutral-400";
         meta.textContent = `${disk.device} · ${disk.fs}`;
 
         row.append(head, track, meta);

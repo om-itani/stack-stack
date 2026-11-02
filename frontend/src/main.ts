@@ -46,8 +46,10 @@ interface PageDef {
   id: string;
   label: string;
   group: string;
-  /** Short monospace mark shown when the sidebar is collapsed to icons. */
-  glyph: string;
+  icon: string;
+  color: string;
+  badgeBg: string;
+  badgeBorder: string;
   create: () => PageHandle;
 }
 
@@ -197,14 +199,34 @@ function renderGateMessage(title: string, detail: string): void {
 }
 
 // ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
 // Shell
 // ---------------------------------------------------------------------------
 
-/** Top-nav item styling. The active state is a soft press, not a glowing pill. */
+const ICONS: Record<string, string> = {
+  system: `<svg class="size-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="20" height="14" x="2" y="3" rx="2"/><line x1="8" x2="16" y1="21" y2="21"/><line x1="12" x2="12" y1="17" y2="21"/></svg>`,
+  containers: `<svg class="size-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z"/><path d="m3.3 7 8.7 5 8.7-5"/><path d="M12 22V12"/></svg>`,
+  apps: `<svg class="size-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="7" height="7" x="3" y="3" rx="1"/><rect width="7" height="7" x="14" y="3" rx="1"/><rect width="7" height="7" x="14" y="14" rx="1"/><rect width="7" height="7" x="3" y="14" rx="1"/></svg>`,
+  virtualization: `<svg class="size-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="16" height="16" x="4" y="4" rx="2"/><rect width="6" height="6" x="9" y="9" rx="1"/><path d="M15 2v2"/><path d="M15 20v2"/><path d="M2 15h2"/><path d="M2 9h2"/><path d="M20 15h2"/><path d="M20 9h2"/><path d="M9 2v2"/><path d="M9 20v2"/></svg>`,
+  files: `<svg class="size-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 8 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/></svg>`,
+  storage: `<svg class="size-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="22" x2="2" y1="12" y2="12"/><path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/><line x1="6" x2="6.01" y1="16" y2="16"/><line x1="10" x2="10.01" y1="16" y2="16"/></svg>`,
+  shares: `<svg class="size-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" x2="15.42" y1="13.51" y2="17.49"/><line x1="15.41" x2="8.59" y1="6.51" y2="10.49"/></svg>`,
+  backups: `<svg class="size-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M12 7v5l4 2"/></svg>`,
+  network: `<svg class="size-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20"/><path d="M2 12h20"/></svg>`,
+  vpn: `<svg class="size-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10"/><path d="m9 12 2 2 4-4"/></svg>`,
+  logs: `<svg class="size-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" x2="8" y1="13" y2="13"/><line x1="16" x2="8" y1="17" y2="17"/></svg>`,
+  terminal: `<svg class="size-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 17 10 11 4 5"/><line x1="12" x2="20" y1="19" y2="19"/></svg>`,
+  tasks: `<svg class="size-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 11 3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>`,
+  alerts: `<svg class="size-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg>`,
+  developer: `<svg class="size-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>`,
+  settings: `<svg class="size-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>`,
+};
+
+/** Modern nav item styling with glass highlight and active accent border. */
 const NAV_IDLE =
-  "flex items-center gap-2 rounded-md px-2 py-1.5 text-left text-[12px] text-neutral-400 transition-colors duration-200 hover:bg-white/5 hover:text-neutral-100";
+  "group relative flex items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-left text-[12px] text-neutral-400 transition-all duration-150 hover:bg-white/[0.06] hover:text-white";
 const NAV_ACTIVE =
-  "flex items-center gap-2 rounded-md bg-white/10 px-2 py-1.5 text-left text-[12px] font-medium text-white";
+  "group relative flex items-center gap-2.5 rounded-lg bg-white/[0.08] px-2.5 py-1.5 text-left text-[12px] font-semibold text-white shadow-sm ring-1 ring-white/10 before:absolute before:left-0 before:top-2 before:bottom-2 before:w-1 before:rounded-r-full before:bg-emerald-400";
 
 function startShell(): void {
   if (shellStarted) {
@@ -213,29 +235,32 @@ function startShell(): void {
   shellStarted = true;
 
   app.innerHTML = `
-<div class="flex h-screen">
-  <aside data-ref="sidebar" class="flex w-56 shrink-0 flex-col border-r border-white/10 bg-[#0d0d0d] transition-[width] duration-200 ease-out">
-    <div class="flex items-center gap-2 border-b border-white/10 px-3 py-2.5">
-      <span data-ref="brand" class="min-w-0 truncate text-sm font-semibold tracking-[0.18em] text-white">STACK-STACK</span>
-      <button data-ref="collapse" type="button" class="ml-auto rounded-md border border-white/10 px-1.5 py-0.5 text-[11px] text-neutral-400 transition-colors duration-200 hover:border-white/20 hover:text-neutral-100" title="Collapse sidebar">&laquo;</button>
+<div class="flex h-screen bg-[#0b0d13]">
+  <aside data-ref="sidebar" class="flex w-56 shrink-0 flex-col border-r border-white/10 bg-[#0f1219]/95 backdrop-blur-md transition-[width] duration-200 ease-out">
+    <div class="flex items-center gap-2 border-b border-white/10 bg-white/[0.02] px-3.5 py-3">
+      <div class="flex min-w-0 items-center gap-2">
+        <span class="inline-block size-2 shrink-0 rounded-full bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.7)] animate-pulse"></span>
+        <span data-ref="brand" class="min-w-0 truncate text-xs font-bold tracking-[0.2em] bg-gradient-to-r from-emerald-400 via-teal-300 to-cyan-400 bg-clip-text text-transparent">STACK-STACK</span>
+      </div>
+      <button data-ref="collapse" type="button" class="ml-auto shrink-0 rounded-lg border border-white/10 bg-white/5 px-2 py-0.5 text-[11px] text-neutral-400 transition-all duration-150 hover:border-white/20 hover:bg-white/10 hover:text-white" title="Collapse sidebar">&laquo;</button>
     </div>
-    <nav data-ref="nav" class="flex min-h-0 flex-1 flex-col gap-5 overflow-y-auto px-2 py-3"></nav>
+    <nav data-ref="nav" class="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto px-2 py-3"></nav>
   </aside>
   <div class="flex min-w-0 flex-1 flex-col">
-    <header class="z-20 flex items-center gap-x-3 border-b border-white/10 bg-[#0d0d0d] px-4 py-2">
-      <span data-ref="host" class="font-medium text-neutral-100">—</span>
-      <span data-ref="uptime" class="tabular text-neutral-500">up —</span>
-      <span data-ref="load" class="tabular text-neutral-500">load —</span>
+    <header class="z-20 flex items-center gap-x-3 border-b border-white/10 bg-[#0f1219]/95 backdrop-blur-md px-4 py-2.5 shadow-sm">
+      <span data-ref="host" class="font-semibold text-white tracking-wide">—</span>
+      <span data-ref="uptime" class="tabular text-xs text-neutral-400">up —</span>
+      <span data-ref="load" class="tabular text-xs text-neutral-400">load —</span>
       <span data-ref="actions" class="ml-auto flex shrink-0 items-center gap-3">
-        <span data-ref="clock" class="tabular text-[11px] text-neutral-500"></span>
-        <span data-ref="frame" class="tabular text-neutral-600"></span>
-        <span data-ref="version" class="text-neutral-600"></span>
+        <span data-ref="clock" class="tabular text-[11px] font-mono text-neutral-400"></span>
+        <span data-ref="frame" class="tabular text-xs text-neutral-500"></span>
+        <span data-ref="version" class="text-xs text-neutral-500"></span>
         <span data-ref="dot" class="inline-block size-2 rounded-full bg-neutral-600"></span>
-        <span data-ref="link" class="text-neutral-400">connecting</span>
-        <button data-ref="logout" type="button" class="rounded-lg border border-white/10 bg-white/5 px-2 py-0.5 text-neutral-400 transition-all duration-200 hover:border-rose-500/50 hover:text-rose-400">sign out</button>
+        <span data-ref="link" class="text-xs font-medium text-neutral-400">connecting</span>
+        <button data-ref="logout" type="button" class="rounded-lg border border-white/10 bg-white/5 px-2.5 py-1 text-xs font-medium text-neutral-300 transition-all duration-150 hover:border-rose-500/50 hover:bg-rose-500/10 hover:text-rose-400 shadow-xs">sign out</button>
       </span>
     </header>
-    <main data-ref="view" class="min-h-0 flex-1 overflow-auto"></main>
+    <main data-ref="view" class="min-h-0 flex-1 overflow-auto bg-[#0b0d13]"></main>
   </div>
 </div>
 `;
@@ -288,34 +313,34 @@ function startShell(): void {
   });
 
   const pages: PageDef[] = [
-    { id: "system", label: "System", group: "Overview", glyph: "SY", create: () => createSystemPage(tl) },
-    { id: "containers", label: "Containers", group: "Compute", glyph: "CT", create: () => createContainersPage() },
-    { id: "apps", label: "App Store", group: "Compute", glyph: "AP", create: () => createAppsPage() },
-    { id: "virtualization", label: "Virtualization", group: "Compute", glyph: "VM", create: () => createVirtualizationPage() },
-    { id: "files", label: "Files", group: "Storage", glyph: "FL", create: () => createFilesPage() },
-    { id: "storage", label: "Storage", group: "Storage", glyph: "ST", create: () => createStoragePage() },
-    { id: "shares", label: "Shares", group: "Storage", glyph: "SH", create: () => createSharesPage() },
-    { id: "backups", label: "Backups", group: "Storage", glyph: "BK", create: () => createBackupsPage() },
-    { id: "network", label: "Network", group: "Network", glyph: "NW", create: () => createNetworkPage() },
-    { id: "vpn", label: "VPN", group: "Network", glyph: "VP", create: () => createVpnPage() },
-    { id: "logs", label: "Logs", group: "System", glyph: "LG", create: () => createLogsPage() },
-    { id: "terminal", label: "Terminal", group: "System", glyph: "TM", create: () => createTerminalPage(() => hostEl.textContent ?? "") },
-    { id: "tasks", label: "Tasks", group: "System", glyph: "TK", create: () => createTasksPage() },
-    { id: "alerts", label: "Alerts", group: "System", glyph: "AL", create: () => createAlertsPage() },
-    { id: "developer", label: "Developer", group: "System", glyph: "DV", create: () => createDeveloperPage() },
-    { id: "settings", label: "Settings", group: "System", glyph: "SE", create: () => createSettingsPage() },
+    { id: "system", label: "System", group: "Overview", icon: ICONS.system, color: "text-cyan-400", badgeBg: "bg-cyan-500/10", badgeBorder: "border-cyan-500/25", create: () => createSystemPage(tl) },
+    { id: "containers", label: "Containers", group: "Compute", icon: ICONS.containers, color: "text-blue-400", badgeBg: "bg-blue-500/10", badgeBorder: "border-blue-500/25", create: () => createContainersPage() },
+    { id: "apps", label: "App Store", group: "Compute", icon: ICONS.apps, color: "text-amber-400", badgeBg: "bg-amber-500/10", badgeBorder: "border-amber-500/25", create: () => createAppsPage() },
+    { id: "virtualization", label: "Virtualization", group: "Compute", icon: ICONS.virtualization, color: "text-purple-400", badgeBg: "bg-purple-500/10", badgeBorder: "border-purple-500/25", create: () => createVirtualizationPage() },
+    { id: "files", label: "Files", group: "Storage", icon: ICONS.files, color: "text-yellow-400", badgeBg: "bg-yellow-500/10", badgeBorder: "border-yellow-500/25", create: () => createFilesPage() },
+    { id: "storage", label: "Storage", group: "Storage", icon: ICONS.storage, color: "text-teal-400", badgeBg: "bg-teal-500/10", badgeBorder: "border-teal-500/25", create: () => createStoragePage() },
+    { id: "shares", label: "Shares", group: "Storage", icon: ICONS.shares, color: "text-indigo-400", badgeBg: "bg-indigo-500/10", badgeBorder: "border-indigo-500/25", create: () => createSharesPage() },
+    { id: "backups", label: "Backups", group: "Storage", icon: ICONS.backups, color: "text-emerald-400", badgeBg: "bg-emerald-500/10", badgeBorder: "border-emerald-500/25", create: () => createBackupsPage() },
+    { id: "network", label: "Network", group: "Network", icon: ICONS.network, color: "text-sky-400", badgeBg: "bg-sky-500/10", badgeBorder: "border-sky-500/25", create: () => createNetworkPage() },
+    { id: "vpn", label: "VPN", group: "Network", icon: ICONS.vpn, color: "text-rose-400", badgeBg: "bg-rose-500/10", badgeBorder: "border-rose-500/25", create: () => createVpnPage() },
+    { id: "logs", label: "Logs", group: "System", icon: ICONS.logs, color: "text-slate-400", badgeBg: "bg-slate-500/10", badgeBorder: "border-slate-500/25", create: () => createLogsPage() },
+    { id: "terminal", label: "Terminal", group: "System", icon: ICONS.terminal, color: "text-emerald-400", badgeBg: "bg-emerald-500/10", badgeBorder: "border-emerald-500/25", create: () => createTerminalPage(() => hostEl.textContent ?? "") },
+    { id: "tasks", label: "Tasks", group: "System", icon: ICONS.tasks, color: "text-violet-400", badgeBg: "bg-violet-500/10", badgeBorder: "border-violet-500/25", create: () => createTasksPage() },
+    { id: "alerts", label: "Alerts", group: "System", icon: ICONS.alerts, color: "text-amber-400", badgeBg: "bg-amber-500/10", badgeBorder: "border-amber-500/25", create: () => createAlertsPage() },
+    { id: "developer", label: "Developer", group: "System", icon: ICONS.developer, color: "text-pink-400", badgeBg: "bg-pink-500/10", badgeBorder: "border-pink-500/25", create: () => createDeveloperPage() },
+    { id: "settings", label: "Settings", group: "System", icon: ICONS.settings, color: "text-zinc-400", badgeBg: "bg-zinc-500/10", badgeBorder: "border-zinc-500/25", create: () => createSettingsPage() },
   ];
 
   const built = new Map<string, PageHandle>();
   const navButtons = new Map<string, HTMLButtonElement>();
   let activeId = "";
 
-  // Grouped sidebar: a hairline-separated section per group, each item a glyph
+  // Grouped sidebar: a hairline-separated section per group, each item an icon
   // plus label. Group names are hidden when the sidebar is collapsed to icons.
   for (const group of [...new Set(pages.map((page) => page.group))]) {
     const section = el("div", { class: "flex flex-col gap-0.5" });
     const header = el("span", {
-      class: "px-2 pb-1 text-[10px] uppercase tracking-[0.12em] text-neutral-600",
+      class: "px-2.5 pb-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-neutral-500",
       text: group,
     });
     header.setAttribute("data-group-header", "");
@@ -326,13 +351,13 @@ function startShell(): void {
       navButton.type = "button";
       navButton.title = def.label;
       navButton.className = NAV_IDLE;
-      const glyph = el("span", {
-        class: "w-6 shrink-0 text-center text-[10px] tracking-wider text-neutral-500",
-        text: def.glyph,
-      });
-      const label = el("span", { class: "truncate", text: def.label });
+      const iconWrap = document.createElement("span");
+      iconWrap.className = `flex size-6 shrink-0 items-center justify-center rounded-md border ${def.badgeBorder} ${def.badgeBg} ${def.color} shadow-xs transition-transform duration-150 group-hover:scale-110`;
+      iconWrap.innerHTML = def.icon;
+
+      const label = el("span", { class: "truncate font-medium", text: def.label });
       label.setAttribute("data-nav-label", "");
-      navButton.append(glyph, label);
+      navButton.append(iconWrap, label);
       navButton.addEventListener("click", () => show(def.id));
       section.append(navButton);
       navButtons.set(def.id, navButton);

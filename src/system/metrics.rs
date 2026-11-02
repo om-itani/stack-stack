@@ -485,6 +485,14 @@ fn sample_disks(cfg: &Config) -> Vec<Disk> {
             continue;
         }
 
+        // Avoid listing duplicate bind-mounts of the same block device (e.g. systemd sandbox mounts)
+        if let Some(existing) = disks.iter_mut().find(|d| d.device == device) {
+            if mount.len() < existing.mount.len() {
+                existing.mount = mount;
+            }
+            continue;
+        }
+
         let Some((total, used, available)) = statvfs(&mount) else {
             continue;
         };

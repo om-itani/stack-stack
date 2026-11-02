@@ -10,25 +10,25 @@
 :root {
   color-scheme: dark;
 
-  --bg: #0a0a0a; /* near-black canvas */
-  --surface: #141414; /* cards */
-  --surface-hover: #1c1c1c; /* hover wash */
-  --line: rgb(255 255 255 / 0.1); /* hairline */
-  --line-strong: rgb(255 255 255 / 0.18);
+  --bg: #0b0d13; /* deep obsidian slate */
+  --surface: #131722; /* rich layered card surface */
+  --surface-hover: #1b2130; /* hover wash */
+  --line: rgba(255, 255, 255, 0.08); /* crisp border */
+  --line-strong: rgba(255, 255, 255, 0.18);
 
-  --text: #fafafa;
-  --text-dim: #888888;
+  --text: #f8fafc;
+  --text-dim: #94a3b8;
 
   --accent: #10b981;
 
-  --radius-card: 10px;
+  --radius-card: 12px;
   --radius-control: 8px;
-  /* Depth from a soft, layered shadow rather than a glowing border. */
-  --shadow-card: 0 1px 2px rgb(0 0 0 / 0.4), 0 8px 24px -16px rgb(0 0 0 / 0.7);
-  --shadow-float: 0 8px 16px rgb(0 0 0 / 0.45), 0 24px 48px -16px rgb(0 0 0 / 0.7);
+  /* Multi-layered shadow giving natural 3D depth and slight ambient rim */
+  --shadow-card: 0 4px 20px -2px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(255, 255, 255, 0.06);
+  --shadow-float: 0 16px 40px -4px rgba(0, 0, 0, 0.7), 0 0 0 1px rgba(255, 255, 255, 0.12);
 
-  /* Snappy ease-out, shared by every transition so motion feels consistent. */
-  --ease: cubic-bezier(0.25, 1, 0.5, 1);
+  /* Smooth ease-out for all transitions */
+  --ease: cubic-bezier(0.16, 1, 0.3, 1);
 
   --ui-font: Inter, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
   --mono-font: "JetBrains Mono", "Fira Code", ui-monospace, SFMono-Regular, Menlo, Consolas,
@@ -73,14 +73,17 @@ body {
   border: 1px solid var(--line);
   border-radius: var(--radius-card);
   box-shadow: var(--shadow-card);
+  backdrop-filter: blur(12px);
   transition:
     border-color 200ms var(--ease),
-    background-color 200ms var(--ease);
+    background-color 200ms var(--ease),
+    box-shadow 200ms var(--ease);
 }
 
-/* No lift: only the border brightens, the way a real app behaves. */
+/* Subtle lift and border brightening */
 .panel:hover {
   border-color: var(--line-strong);
+  box-shadow: 0 6px 28px -2px rgba(0, 0, 0, 0.65), 0 0 0 1px rgba(255, 255, 255, 0.1);
 }
 
 /* Floating elements (modals, dropdowns, drawers) get the deeper shadow. */
@@ -89,7 +92,9 @@ body {
 }
 
 .panel-title {
-  color: var(--text-dim);
+  color: #cbd5e1;
+  font-size: 11px;
+  font-weight: 600;
   letter-spacing: 0.08em;
   text-transform: uppercase;
 }
@@ -104,9 +109,10 @@ select,
 textarea {
   border-radius: var(--radius-control);
   transition:
-    background-color 200ms var(--ease),
-    border-color 200ms var(--ease),
-    color 200ms var(--ease),
+    background-color 150ms var(--ease),
+    border-color 150ms var(--ease),
+    color 150ms var(--ease),
+    box-shadow 150ms var(--ease),
     transform 120ms var(--ease);
 }
 
@@ -114,17 +120,25 @@ button:not(:disabled) {
   cursor: pointer;
 }
 
-/* Soft brighten on hover; a small press on click. */
+/* Tactile brightening on hover; a small press on click. */
 button:not(:disabled):hover {
-  background-color: rgb(255 255 255 / 0.06);
+  filter: brightness(1.1);
 }
 
 button:not(:disabled):active {
-  transform: scale(0.98);
+  transform: scale(0.97);
+}
+
+input,
+select,
+textarea {
+  background-color: rgba(255, 255, 255, 0.03);
+  border: 1px solid var(--line);
+  color: var(--text);
 }
 
 :focus-visible {
-  outline: 2px solid rgb(16 185 129 / 0.5);
+  outline: 2px solid rgb(16 185 129 / 0.6);
   outline-offset: 1px;
 }
 
@@ -135,37 +149,41 @@ button:not(:disabled):active {
 .badge {
   display: inline-flex;
   align-items: center;
-  gap: 0.25rem;
-  padding: 0 0.5rem;
+  gap: 0.35rem;
+  padding: 0.1rem 0.6rem;
   border: 1px solid transparent;
   border-radius: 9999px;
   font-size: 10px;
-  line-height: 1.7;
+  font-weight: 500;
+  line-height: 1.6;
   white-space: nowrap;
 }
 
 .badge-ok {
-  background: rgb(16 185 129 / 0.12);
+  background: rgba(16, 185, 129, 0.14);
   color: #34d399;
-  border-color: rgb(16 185 129 / 0.22);
+  border-color: rgba(16, 185, 129, 0.28);
+  box-shadow: 0 0 12px rgba(16, 185, 129, 0.12);
 }
 
 .badge-warn {
-  background: rgb(245 158 11 / 0.12);
+  background: rgba(245, 158, 11, 0.14);
   color: #fbbf24;
-  border-color: rgb(245 158 11 / 0.22);
+  border-color: rgba(245, 158, 11, 0.28);
+  box-shadow: 0 0 12px rgba(245, 158, 11, 0.12);
 }
 
 .badge-err {
-  background: rgb(239 68 68 / 0.12);
+  background: rgba(239, 68, 68, 0.14);
   color: #f87171;
-  border-color: rgb(239 68 68 / 0.22);
+  border-color: rgba(239, 68, 68, 0.28);
+  box-shadow: 0 0 12px rgba(239, 68, 68, 0.12);
 }
 
 .badge-muted {
-  background: rgb(255 255 255 / 0.06);
+  background: rgba(255, 255, 255, 0.06);
   color: var(--text-dim);
-  border-color: rgb(255 255 255 / 0.08);
+  border-color: rgba(255, 255, 255, 0.1);
 }
 
 /* ------------------------------------------------------------------------- */

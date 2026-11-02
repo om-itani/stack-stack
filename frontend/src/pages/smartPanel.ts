@@ -265,14 +265,29 @@ export function buildSmartPanel(): HTMLElement {
     }
 
     if (state.history.length > 0) {
-      const history = el("div", { class: "flex flex-col gap-0.5 text-neutral-500" });
+      const history = el("div", { class: "flex flex-col gap-1 text-neutral-400" });
       for (const record of state.history.slice(0, 5)) {
-        history.append(
-          el("div", {
-            class: record.accepted ? "" : "text-rose-400",
-            text: `${formatTime(record.started_ms)} · ${record.kind} · ${record.device} · ${record.detail}`,
-          }),
+        const isError = !record.accepted || record.detail.toLowerCase().includes("failed") || record.detail.toLowerCase().includes("can't") || record.detail.toLowerCase().includes("probable ata");
+        // Strip verbose smartctl copyright banners
+        const cleanMsg = record.detail
+          .replace(/^smartctl\s+[\d.]+[^\n]*\s+Copyright\s+\(C\)[^\n]*www\.smartmontools\.org\s*/i, "")
+          .replace(/^smartctl\s+[\d.]+[^\n]*\n+/i, "")
+          .trim();
+
+        const entry = el("div", {
+          class: `flex items-center gap-2 rounded-md border px-2.5 py-1 text-[11px] ${
+            isError
+              ? "border-rose-500/25 bg-rose-500/5 text-rose-300"
+              : "border-emerald-500/25 bg-emerald-500/5 text-emerald-300"
+          }`,
+        });
+        entry.append(
+          el("span", { class: "tabular text-[10px] text-neutral-400", text: formatTime(record.started_ms) }),
+          el("span", { class: "font-semibold uppercase tracking-wider text-[10px]", text: record.kind }),
+          el("span", { class: "font-mono font-medium text-white", text: record.device }),
+          el("span", { class: "truncate text-neutral-300", text: cleanMsg }),
         );
+        history.append(entry);
       }
       body.append(history);
     }
