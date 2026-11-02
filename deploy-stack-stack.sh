@@ -28,6 +28,7 @@ DEPLOY_LOG="/var/log/stack-stack-deploy.log"
 
 TOTAL_STEPS=12
 CURRENT_STEP=0
+ACTIVE_STEP=1
 SCRIPT_START_TIME="$(date +%s)"
 
 # Comprehensive list of build and runtime dependencies
@@ -139,14 +140,15 @@ print_banner() {
 }
 
 render_progress_bar() {
-  local step="$1"
-  local total="$2"
-  local status_text="$3"
-  local width=24
+  local completed="$1"
+  local active="$2"
+  local total="$3"
+  local status_text="$4"
+  local width=28
 
-  local percent=$(( step * 100 / total ))
+  local percent=$(( completed * 100 / total ))
   (( percent > 100 )) && percent=100
-  local filled=$(( step * width / total ))
+  local filled=$(( completed * width / total ))
   (( filled > width )) && filled=width
   local empty=$(( width - filled ))
 
@@ -155,8 +157,8 @@ render_progress_bar() {
   for ((i = 0; i < empty; i++)); do bar="${bar}░"; done
 
   if [[ -t 1 ]]; then
-    printf "\r\033[K  ${C_BLUE}[${C_CYAN}%s${C_BLUE}]${C_RESET} ${C_GREEN}%3d%%${C_RESET} ${C_GRAY}(%d/%d)${C_RESET} %b" \
-      "$bar" "$percent" "$step" "$total" "$status_text"
+    printf "\r\033[K  ${C_BLUE}Progress: [${C_CYAN}%s${C_BLUE}]${C_RESET} ${C_GREEN}%3d%%${C_RESET} ${C_GRAY}(%2d/%2d)${C_RESET} %b" \
+      "$bar" "$percent" "$active" "$total" "$status_text"
   fi
 }
 
@@ -164,11 +166,12 @@ step_start() {
   local step="$1"
   local label="$2"
   CURRENT_STEP="$(( step - 1 ))"
+  ACTIVE_STEP="$step"
   log_file "STEP [${step}/${TOTAL_STEPS}] START: ${label}"
   if [[ -t 1 ]]; then
-    render_progress_bar "$CURRENT_STEP" "$TOTAL_STEPS" "${C_YELLOW}➜${C_RESET} ${C_WHITE}${label}...${C_RESET}"
+    render_progress_bar "$CURRENT_STEP" "$ACTIVE_STEP" "$TOTAL_STEPS" "${C_YELLOW}➜${C_RESET} ${C_WHITE}${label}...${C_RESET}"
   else
-    printf "[%2d/%2d] ➜ %s...\n" "$step" "$TOTAL_STEPS" "$label"
+    printf "  [%2d/%2d] ➜ %s...\n" "$step" "$TOTAL_STEPS" "$label"
   fi
 }
 
@@ -181,9 +184,10 @@ step_done() {
   local dur_str=""
   [[ -n "$duration" ]] && dur_str=" ${C_GRAY}(${duration}s)${C_RESET}"
   if [[ -t 1 ]]; then
-    render_progress_bar "$step" "$TOTAL_STEPS" "${C_GREEN}✓${C_RESET} ${C_WHITE}${label}${C_RESET}${dur_str}\n"
+    printf "\r\033[K  ${C_GREEN}✔${C_RESET} ${C_GRAY}[%2d/%2d]${C_RESET} ${C_WHITE}%s${C_RESET}%b\n" \
+      "$step" "$TOTAL_STEPS" "$label" "$dur_str"
   else
-    printf "[%2d/%2d] ✓ %s (%ss)\n" "$step" "$TOTAL_STEPS" "$label" "$duration"
+    printf "  ✔ [%2d/%2d] %s%b\n" "$step" "$TOTAL_STEPS" "$label" "$dur_str"
   fi
 }
 
@@ -192,9 +196,10 @@ step_fail() {
   local label="$2"
   log_file "STEP [${step}/${TOTAL_STEPS}] FAILED: ${label}"
   if [[ -t 1 ]]; then
-    render_progress_bar "$step" "$TOTAL_STEPS" "${C_RED}✗${C_RESET} ${C_RED}${label} FAILED!${C_RESET}\n\n"
+    printf "\r\033[K  ${C_RED}✗${C_RESET} ${C_GRAY}[%2d/%2d]${C_RESET} ${C_RED}%s FAILED!${C_RESET}\n\n" \
+      "$step" "$TOTAL_STEPS" "$label"
   else
-    printf "[%2d/%2d] ✗ %s FAILED!\n\n" "$step" "$TOTAL_STEPS" "$label"
+    printf "  ✗ [%2d/%2d] %s FAILED!\n\n" "$step" "$TOTAL_STEPS" "$label"
   fi
 }
 
@@ -228,7 +233,8 @@ run_with_spinner() {
     local elapsed=$(( now - start_time ))
     local s="${spin[idx]}"
     idx=$(( (idx + 1) % ${#spin[@]} ))
-    render_progress_bar "${CURRENT_STEP}" "${TOTAL_STEPS}" "${C_YELLOW}${s}${C_RESET} ${C_WHITE}${task_name}${C_RESET} ${C_GRAY}(${elapsed}s)${C_RESET}"
+    render_progress_bar "${CURRENT_STEP}" "${ACTIVE_STEP}" "${TOTAL_STEPS}" \
+      "${C_YELLOW}${s}${C_RESET} ${C_WHITE}${task_name}${C_RESET} ${C_GRAY}(${elapsed}s)${C_RESET}"
     sleep 0.08
   done
 
@@ -455,9 +461,13 @@ setup_rust_toolchain() {
     if [[ -d "${sudo_home}/.cargo/bin" ]]; then
       sudo_cargo_bin="${sudo_home}/.cargo/bin:"
     fi
+    if [[ -f "${sudo_home}/.cargo/env" ]]; then
+      # shellcheck disable=SC1090
+      source "${sudo_home}/.cargo/env" 2>/dev/null || true
+    fi
   fi
 
-  for env_file in "${HOME}/.cargo/env" "/root/.cargo/env" "${SUDO_USER:+$(eval echo ~$SUDO_USER)/.cargo/env}"; do
+  for env_file in "${HOME}/.cargo/env" "/root/.cargo/env"; do
     if [[ -f "$env_file" ]]; then
       # shellcheck disable=SC1090
       source "$env_file" 2>/dev/null || true
@@ -466,23 +476,43 @@ setup_rust_toolchain() {
 
   export PATH="${sudo_cargo_bin}${HOME}/.cargo/bin:/root/.cargo/bin:${PATH}"
 
-  if ! command -v cargo >/dev/null 2>&1; then
-    log_file "Rust toolchain missing; installing via rustup minimal profile"
-    run_with_spinner "Installing Rust via rustup" bash -c \
+  # Verify if cargo and rustc are functional with an active toolchain
+  local rust_works=0
+  if cargo --version >/dev/null 2>&1 && rustc --version >/dev/null 2>&1; then
+    rust_works=1
+  fi
+
+  if [[ $rust_works -eq 0 ]]; then
+    if command -v rustup >/dev/null 2>&1; then
+      log_file "rustup found but default toolchain unconfigured; configuring stable..."
+      run_with_spinner "Configuring Rust stable toolchain" bash -c \
+        "rustup default stable 2>/dev/null || (rustup toolchain install stable --profile minimal --no-self-update && rustup default stable)" || true
+      if cargo --version >/dev/null 2>&1 && rustc --version >/dev/null 2>&1; then
+        rust_works=1
+      fi
+    fi
+  fi
+
+  if [[ $rust_works -eq 0 ]]; then
+    log_file "Rust toolchain missing or unconfigured; installing via rustup minimal profile"
+    run_with_spinner "Installing Rust stable toolchain" bash -c \
       "curl --proto '=https' --tlsv1.2 -fsS https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain stable" || die "rustup installation failed"
     # shellcheck disable=SC1090
     source "${HOME}/.cargo/env" 2>/dev/null || true
+    source "/root/.cargo/env" 2>/dev/null || true
+    rustup default stable >/dev/null 2>&1 || true
   fi
 
-  command -v cargo >/dev/null 2>&1 || die "cargo binary not found in PATH"
+  cargo --version >/dev/null 2>&1 || die "cargo binary not functional (run 'rustup default stable')"
+  rustc --version >/dev/null 2>&1 || die "rustc binary not functional (run 'rustup default stable')"
 
   local rust_ver
-  rust_ver="$(rustc --version 2>/dev/null || echo 'unknown')"
-  log_file "Using ${rust_ver}"
+  rust_ver="$(rustc --version 2>/dev/null | awk '{print $2}' || echo 'stable')"
+  log_file "Using rustc version: ${rust_ver}"
 
   local t1
   t1="$(date +%s)"
-  step_done 6 "Rust toolchain (${rust_ver%% *})" "$(( t1 - t0 ))"
+  step_done 6 "Rust toolchain (v${rust_ver})" "$(( t1 - t0 ))"
 }
 
 # Step 7: Release Compilation
@@ -506,12 +536,21 @@ compile_binary() {
   # Build with native CPU architecture optimizations
   export RUSTFLAGS="-C target-cpu=native"
 
-  if ! run_with_spinner "Compiling stack-stack (jobs: ${jobs})" cargo build --release --locked --jobs "$jobs"; then
-    step_fail 7 "Compiling release binary"
-    die "cargo build failed"
+  local build_cmd=(cargo build --release --locked --jobs "$jobs")
+  if ! run_with_spinner "Compiling stack-stack (jobs: ${jobs})" "${build_cmd[@]}"; then
+    log_file "cargo build with --locked failed; attempting release build without --locked"
+    if ! run_with_spinner "Compiling stack-stack (jobs: ${jobs})" cargo build --release --jobs "$jobs"; then
+      step_fail 7 "Compiling release binary"
+      die "cargo build failed"
+    fi
   fi
 
   [[ -x "target/release/${BINARY_NAME}" ]] || die "build did not produce target/release/${BINARY_NAME}"
+
+  # Restore target permissions to invoking user if invoked with sudo
+  if [[ -n "${SUDO_USER:-}" && -d "target" ]]; then
+    chown -R "${SUDO_USER}:" "target" 2>/dev/null || true
+  fi
 
   local t1
   t1="$(date +%s)"
