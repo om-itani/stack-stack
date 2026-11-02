@@ -108,8 +108,26 @@ if [[ ! -t 1 ]]; then
   C_WHITE=""
 fi
 
+ensure_root() {
+  if [[ "${EUID}" -ne 0 ]]; then
+    if command -v sudo >/dev/null 2>&1; then
+      local script_path
+      script_path="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/$(basename "${BASH_SOURCE[0]}")"
+      printf "  \033[1;36m==>\033[0m Elevating permissions with sudo...\n"
+      exec sudo -E bash "${script_path}" "$@"
+    else
+      printf "\033[1;31merror:\033[0m this script must run as root. Please run: sudo %s\n" "$0" >&2
+      exit 1
+    fi
+  fi
+}
+
 log_file() {
-  echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*" >> "${DEPLOY_LOG}"
+  local log_dir
+  log_dir="$(dirname "${DEPLOY_LOG}")"
+  if [[ -w "${DEPLOY_LOG}" || ( ! -e "${DEPLOY_LOG}" && -w "${log_dir}" ) ]]; then
+    { echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*" >> "${DEPLOY_LOG}"; } 2>/dev/null || true
+  fi
 }
 
 print_banner() {
@@ -254,16 +272,6 @@ write_if_changed() {
 setup_environment() {
   local t0
   t0="$(date +%s)"
-  step_start 1 "Privilege and repository validation"
-
-  if [[ "${EUID}" -ne 0 ]]; then
-    if command -v sudo >/dev/null 2>&1; then
-      printf "\n  ${C_CYAN}==>${C_RESET} Elevating permissions with sudo...\n"
-      exec sudo -E bash "$0" "$@"
-    else
-      die "this script must run as root. Please run: sudo $0"
-    fi
-  fi
 
   local here
   here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -272,8 +280,11 @@ setup_environment() {
   [[ -f "src/main.rs" ]] || die "must be run from repository root (src/main.rs missing)"
   REPO_ROOT="$here"
 
-  mkdir -p "$(dirname "${DEPLOY_LOG}")"
-  echo "=== stack-stack automated deploy ${DEPLOY_VERSION} ===" > "${DEPLOY_LOG}"
+  mkdir -p "$(dirname "${DEPLOY_LOG}")" 2>/dev/null || true
+  { echo "=== stack-stack automated deploy ${DEPLOY_VERSION} ===" >> "${DEPLOY_LOG}"; } 2>/dev/null || true
+
+  step_start 1 "Privilege and repository validation"
+  [[ "${EUID}" -eq 0 ]] || die "this script must run as root."
   log_file "Repository root: ${REPO_ROOT}"
 
   local t1
@@ -437,6 +448,15 @@ setup_rust_toolchain() {
   step_start 6 "Rust toolchain configuration"
 
   # Source potential rustup environments
+  local sudo_cargo_bin=""
+  if [[ -n "${SUDO_USER:-}" ]]; then
+    local sudo_home
+    sudo_home="$(eval echo "~${SUDO_USER}")"
+    if [[ -d "${sudo_home}/.cargo/bin" ]]; then
+      sudo_cargo_bin="${sudo_home}/.cargo/bin:"
+    fi
+  fi
+
   for env_file in "${HOME}/.cargo/env" "/root/.cargo/env" "${SUDO_USER:+$(eval echo ~$SUDO_USER)/.cargo/env}"; do
     if [[ -f "$env_file" ]]; then
       # shellcheck disable=SC1090
@@ -444,7 +464,7 @@ setup_rust_toolchain() {
     fi
   done
 
-  export PATH="${HOME}/.cargo/bin:/root/.cargo/bin:${PATH}"
+  export PATH="${sudo_cargo_bin}${HOME}/.cargo/bin:/root/.cargo/bin:${PATH}"
 
   if ! command -v cargo >/dev/null 2>&1; then
     log_file "Rust toolchain missing; installing via rustup minimal profile"
@@ -872,6 +892,8 @@ show_summary() {
 # Main Entry Point
 # ---------------------------------------------------------------------------
 main() {
+  ensure_root "$@"
+
   print_banner
 
   setup_environment
