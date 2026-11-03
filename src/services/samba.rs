@@ -354,37 +354,67 @@ pub fn ensure_system_user(runner: &dyn Runner, username: &str) -> Result<(), Api
         return Ok(());
     }
 
-    // Account does not exist in /etc/passwd; create a non-login system user for Samba
-    let add = runner.run_timeout(
-        "useradd",
-        &[
-            "-M".to_string(),
-            "-s".to_string(),
-            "/usr/sbin/nologin".to_string(),
-            username.to_string(),
-        ],
-        Duration::from_secs(10),
-    );
-    match add {
-        Ok(res) if res.success() => Ok(()),
-        Ok(_) => {
-            // Fallback for distros where /usr/sbin/nologin is /bin/false
-            let _ = runner.run_timeout(
-                "useradd",
+    let binaries = ["useradd", "/usr/sbin/useradd", "/sbin/useradd"];
+    let shells = ["/usr/sbin/nologin", "/bin/false", "/sbin/nologin"];
+    let mut last_err = String::new();
+
+    for bin in binaries {
+        for shell in shells {
+            // Standard useradd
+            let add = runner.run_timeout(
+                bin,
                 &[
                     "-M".to_string(),
                     "-s".to_string(),
-                    "/bin/false".to_string(),
+                    shell.to_string(),
                     username.to_string(),
                 ],
                 Duration::from_secs(10),
             );
-            Ok(())
+            if let Ok(res) = &add
+                && res.success()
+            {
+                return Ok(());
+            }
+
+            // Debian/Ubuntu useradd with --badname for usernames with underscores or custom characters
+            let add_badname = runner.run_timeout(
+                bin,
+                &[
+                    "--badname".to_string(),
+                    "-M".to_string(),
+                    "-s".to_string(),
+                    shell.to_string(),
+                    username.to_string(),
+                ],
+                Duration::from_secs(10),
+            );
+            if let Ok(res) = &add_badname
+                && res.success()
+            {
+                return Ok(());
+            }
+
+            if let Ok(res) = add {
+                let msg = trimmed(&res.combined()).to_string();
+                if !msg.is_empty() {
+                    last_err = msg;
+                }
+            }
         }
-        Err(err) => Err(ApiError::internal(format!(
-            "cannot create system user for Samba: {err}"
-        ))),
     }
+
+    // Verify if the user now exists anyway
+    let check_after = runner.run_timeout("id", &[username.to_string()], Duration::from_secs(5));
+    if let Ok(res) = check_after
+        && res.success()
+    {
+        return Ok(());
+    }
+
+    Err(ApiError::internal(format!(
+        "could not create system user for '{username}': {last_err}"
+    )))
 }
 
 /// Set (or create) a Samba password. The password is written twice on stdin,
@@ -401,7 +431,7 @@ pub fn set_password(runner: &dyn Runner, username: &str, password: &str) -> Resu
     }
 
     // Ensure Unix system user exists so Samba can assign a UID
-    let _ = ensure_system_user(runner, username);
+    ensure_system_user(runner, username)?;
 
     let input = format!("{password}\n{password}\n");
     let mut output = runner

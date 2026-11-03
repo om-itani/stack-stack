@@ -10,6 +10,7 @@ use std::time::Duration;
 use axum::Json;
 use axum::extract::State;
 use axum::response::{IntoResponse, Response};
+use futures_util::StreamExt;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
@@ -78,7 +79,7 @@ pub async fn mcp_info() -> Json<Value> {
         "protocol": "2024-11-05",
         "transport": "HTTP JSON-RPC 2.0 (POST /api/mcp)",
         "description": "Model Context Protocol interface for stack-stack homeserver management",
-        "tools_count": 25,
+        "tools_count": 26,
         "capabilities": {
             "tools": { "listChanged": false }
         }
@@ -269,6 +270,18 @@ fn list_tools() -> Vec<Value> {
                     "action": { "type": "string", "enum": ["start", "stop", "restart"] }
                 },
                 "required": ["id", "action"]
+            }
+        }),
+        json!({
+            "name": "get_container_logs",
+            "description": "Fetch the latest stdout/stderr log output from a Docker container.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "id": { "type": "string", "description": "Container ID or name (e.g. 'jellyfin')" },
+                    "tail": { "type": "string", "description": "Number of lines to tail (default '50')" }
+                },
+                "required": ["id"]
             }
         }),
         json!({
@@ -693,6 +706,31 @@ async fn execute_tool(state: &AppState, name: &str, args: Value) -> Result<Strin
                 .await
                 .map(|_| format!("Container '{id}' {action} successful."))
                 .map_err(|e| e.to_string())
+        }
+
+        "get_container_logs" => {
+            let id = args
+                .get("id")
+                .and_then(|v| v.as_str())
+                .ok_or("id is required")?;
+            let tail = args.get("tail").and_then(|v| v.as_str()).unwrap_or("50");
+            match state.docker.logs(id, tail).await {
+                Ok(mut stream) => {
+                    let mut lines = Vec::new();
+                    while let Some(Ok(item)) = stream.next().await {
+                        lines.push(crate::containers::docker::log_text(item));
+                        if lines.len() >= 100 {
+                            break;
+                        }
+                    }
+                    let res = json!({
+                        "id": id,
+                        "logs": lines.join("")
+                    });
+                    serde_json::to_string_pretty(&res).map_err(|e| e.to_string())
+                }
+                Err(e) => Err(format!("Could not get logs for {id}: {e}")),
+            }
         }
 
         "list_virtual_machines" => {
