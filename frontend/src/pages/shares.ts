@@ -251,33 +251,10 @@ export function createSharesPage(): PageHandle {
     if (!draft) return card;
     if (!draft.interfaces) draft.interfaces = [];
 
-    const fwBtn = button(
-      "🛡️ Ensure Firewall Open (445/139)",
-      "border-indigo-600/50 bg-indigo-500/10 text-indigo-300 hover:bg-indigo-500/20 text-xs px-3 py-1 ml-auto shadow-sm",
-      async () => {
-        fwBtn.disabled = true;
-        fwBtn.textContent = "Opening ports…";
-        try {
-          await sambaApi.ensureFirewall();
-          showToast({
-            tone: "ok",
-            title: "Firewall Updated",
-            message: "Ports 139 & 445 (TCP) and 137 & 138 (UDP) opened in nftables/ufw.",
-          });
-        } catch (err) {
-          showToast({ tone: "error", title: "Firewall Update", message: errorText(err) });
-        } finally {
-          fwBtn.disabled = false;
-          fwBtn.textContent = "🛡️ Ensure Firewall Open (445/139)";
-        }
-      },
-    );
-
     const topRow = el("div", { class: "flex flex-wrap items-end gap-3" }, [
       field("enabled", checkbox(draft.enabled, (value) => (draft!.enabled = value), "run samba")),
       field("workgroup", textInput(draft.workgroup, (value) => (draft!.workgroup = value))),
       field("server string", textInput(draft.server_string, (value) => (draft!.server_string = value))),
-      fwBtn,
     ]);
 
     const hostsInput = textInput(draft.hosts_allow || "", (v) => {

@@ -90,10 +90,20 @@ pub async fn samba_save(
         return Ok(invalid("samba configuration is not valid", problems));
     }
     let path = state.samba.config_path.clone();
+    let runner = state.samba.runner.clone();
+    let enabled = config.enabled;
     let for_write = config.clone();
-    tokio::task::spawn_blocking(move || samba::save(&path, &for_write))
-        .await
-        .map_err(|err| ApiError::internal(format!("samba task failed: {err}")))??;
+    tokio::task::spawn_blocking(move || {
+        samba::save(&path, &for_write)?;
+        if enabled {
+            let _ = samba::open_firewall(runner.as_ref());
+        } else {
+            let _ = samba::close_firewall(runner.as_ref());
+        }
+        Ok::<(), ApiError>(())
+    })
+    .await
+    .map_err(|err| ApiError::internal(format!("samba task failed: {err}")))??;
     Ok(Json(collect_samba(&state)).into_response())
 }
 

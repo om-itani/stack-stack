@@ -152,6 +152,13 @@ impl AppState {
             std::path::PathBuf::from(crate::services::samba::SMB_CONF),
             Arc::new(SystemRunner::new(Duration::from_secs(60))),
         );
+        let (smb_cfg, _) = crate::services::samba::load(std::path::Path::new(&config.samba_path));
+        if smb_cfg.enabled {
+            let runner = samba.runner.clone();
+            std::thread::spawn(move || {
+                let _ = crate::services::samba::open_firewall(runner.as_ref());
+            });
+        }
         let nfs = NfsContext::new(
             std::path::PathBuf::from(&config.nfs_path),
             std::path::PathBuf::from(crate::services::nfs::EXPORTS),

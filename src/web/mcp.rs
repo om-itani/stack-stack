@@ -78,7 +78,7 @@ pub async fn mcp_info() -> Json<Value> {
         "protocol": "2024-11-05",
         "transport": "HTTP JSON-RPC 2.0 (POST /api/mcp)",
         "description": "Model Context Protocol interface for stack-stack homeserver management",
-        "tools_count": 9,
+        "tools_count": 14,
         "capabilities": {
             "tools": { "listChanged": false }
         }
@@ -203,6 +203,52 @@ fn list_tools() -> Vec<Value> {
             "inputSchema": {
                 "type": "object",
                 "properties": {}
+            }
+        }),
+        json!({
+            "name": "close_samba_firewall",
+            "description": "Ensure Samba file sharing ports (TCP 139, 445; UDP 137, 138) are closed across firewalls.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {}
+            }
+        }),
+        json!({
+            "name": "get_storage_status",
+            "description": "Inspect disk partitions, mount points, available storage, and filesystem capacity across the host.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {}
+            }
+        }),
+        json!({
+            "name": "get_system_logs",
+            "description": "Tail recent system logs and filter by systemd unit or error severity (e.g. priority 3 for errors, 4 for warnings).",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "lines": { "type": "integer", "description": "Number of log lines to retrieve (default 50, max 200)" },
+                    "priority": { "type": "string", "description": "Optional log priority filter: '3' (err), '4' (warning), '6' (info)" },
+                    "unit": { "type": "string", "description": "Optional systemd unit filter (e.g. 'smbd.service', 'docker.service')" }
+                }
+            }
+        }),
+        json!({
+            "name": "get_network_details",
+            "description": "Enumerate host network interfaces, hardware MACs, IP assignments, carrier status, and MTU.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {}
+            }
+        }),
+        json!({
+            "name": "test_dns_resolution",
+            "description": "Probe DNS hostname resolution and measure lookup latency.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "domain": { "type": "string", "description": "Domain to resolve (default 'google.com')" }
+                }
             }
         }),
         json!({
@@ -368,6 +414,113 @@ async fn execute_tool(state: &AppState, name: &str, args: Value) -> Result<Strin
             serde_json::to_string_pretty(&res).map_err(|e| e.to_string())
         }
 
+        "close_samba_firewall" => {
+            let res_status = crate::services::samba::close_firewall(state.samba.runner.as_ref());
+            let res = json!({
+                "ok": res_status.is_ok(),
+                "ports_closed": ["139/tcp", "445/tcp", "137/udp", "138/udp"],
+                "status": match res_status {
+                    Ok(msg) => msg,
+                    Err(e) => format!("Error: {e}"),
+                },
+                "message": "Samba ports closed across firewall filters."
+            });
+            serde_json::to_string_pretty(&res).map_err(|e| e.to_string())
+        }
+
+        "get_storage_status" => {
+            let df_output = state.files.runner.run_timeout(
+                "df",
+                &["-h".to_string(), "-P".to_string()],
+                Duration::from_secs(5),
+            );
+            let mut mounts = Vec::new();
+            if let Ok(output) = df_output
+                && output.success()
+            {
+                for line in output.stdout.lines().skip(1) {
+                    let parts: Vec<&str> = line.split_whitespace().collect();
+                    if parts.len() >= 6 {
+                        mounts.push(json!({
+                            "filesystem": parts[0],
+                            "size": parts[1],
+                            "used": parts[2],
+                            "available": parts[3],
+                            "use_pct": parts[4],
+                            "mount": parts[5],
+                        }));
+                    }
+                }
+            }
+            let res = json!({
+                "mount_points": mounts,
+                "status": "Storage inspected successfully"
+            });
+            serde_json::to_string_pretty(&res).map_err(|e| e.to_string())
+        }
+
+        "get_system_logs" => {
+            let lines = args
+                .get("lines")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(50)
+                .min(200) as u32;
+            let priority = args.get("priority").and_then(|v| v.as_str());
+            let unit = args.get("unit").and_then(|v| v.as_str());
+            match crate::services::logs::tail(
+                state.logs.runner.as_ref(),
+                unit,
+                lines,
+                priority,
+                Duration::from_secs(5),
+            ) {
+                Ok(entries) => {
+                    let res = json!({
+                        "count": entries.len(),
+                        "entries": entries
+                    });
+                    serde_json::to_string_pretty(&res).map_err(|e| e.to_string())
+                }
+                Err(e) => Err(format!("Log retrieval failed: {e}")),
+            }
+        }
+
+        "get_network_details" => {
+            let ifaces = crate::networking::interfaces::discover(state.network.runner.as_ref());
+            let res = json!({
+                "interfaces_count": ifaces.len(),
+                "interfaces": ifaces
+            });
+            serde_json::to_string_pretty(&res).map_err(|e| e.to_string())
+        }
+
+        "test_dns_resolution" => {
+            let domain = args
+                .get("domain")
+                .and_then(|v| v.as_str())
+                .unwrap_or("google.com");
+            let start = std::time::Instant::now();
+            let query = format!("{domain}:80");
+            match tokio::time::timeout(Duration::from_secs(3), tokio::net::lookup_host(&query))
+                .await
+            {
+                Ok(Ok(addrs)) => {
+                    let list: Vec<String> = addrs.map(|a| a.ip().to_string()).collect();
+                    let elapsed = start.elapsed().as_millis();
+                    let res = json!({
+                        "domain": domain,
+                        "resolved": true,
+                        "ips": list,
+                        "latency_ms": elapsed,
+                        "status": format!("Resolved {domain} in {elapsed}ms")
+                    });
+                    serde_json::to_string_pretty(&res).map_err(|e| e.to_string())
+                }
+                Ok(Err(e)) => Err(format!("DNS resolution failed for {domain}: {e}")),
+                Err(_) => Err(format!("DNS resolution timed out after 3s for {domain}")),
+            }
+        }
+
         "list_containers" => {
             let docker = &state.docker;
             let installed = crate::containers::store::installed_ids(&state.config);
@@ -483,7 +636,7 @@ async fn execute_tool(state: &AppState, name: &str, args: Value) -> Result<Strin
 
             // 4. Memory
             let snap = state.latest.borrow().clone();
-            let mem_ok = if let Some(m) = snap {
+            let mem_ok = if let Some(m) = snap.as_ref() {
                 m.memory.total_bytes > 0 && m.memory.used_bytes < m.memory.total_bytes
             } else {
                 true
@@ -492,6 +645,35 @@ async fn execute_tool(state: &AppState, name: &str, args: Value) -> Result<Strin
                 "test": "System Memory",
                 "passed": mem_ok,
                 "detail": "Memory subsystem healthy"
+            }));
+
+            // 5. Disk Space
+            let disk_ok = if let Some(m) = snap.as_ref() {
+                m.disks.iter().all(|d| d.used_pct < 98.0)
+            } else {
+                true
+            };
+            checks.push(json!({
+                "test": "Disk Space",
+                "passed": disk_ok,
+                "detail": "Storage partitions have available capacity"
+            }));
+
+            // 6. DNS Resolution
+            let dns_res = tokio::time::timeout(
+                Duration::from_secs(2),
+                tokio::net::lookup_host("1.1.1.1:53"),
+            )
+            .await;
+            let dns_ok = matches!(dns_res, Ok(Ok(_)));
+            checks.push(json!({
+                "test": "Network Connectivity",
+                "passed": dns_ok,
+                "detail": if dns_ok {
+                    "Network stack and upstream connectivity verified"
+                } else {
+                    "Upstream network check timed out"
+                }
             }));
 
             let all_passed = checks

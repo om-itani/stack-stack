@@ -202,6 +202,11 @@ pub fn render(config: &SmbConfig, lan_cidr: Option<&str>) -> String {
     out.push_str("   server role = standalone server\n");
     out.push_str("   log file = /var/log/samba/log.%m\n");
     out.push_str("   map to guest = Bad User\n");
+    out.push_str("   dns proxy = no\n");
+    out.push_str("   load printers = no\n");
+    out.push_str("   printing = bsd\n");
+    out.push_str("   printcap name = /dev/null\n");
+    out.push_str("   disable spoolss = yes\n");
     let ifaces: Vec<&str> = config
         .interfaces
         .iter()
@@ -471,13 +476,20 @@ fn apply_sync(
     }
 
     if !config.enabled {
-        // Best effort: stopping a service that is already stopped is fine.
+        // Best effort: stopping services that are already stopped is fine.
         let _ = context.runner.run_timeout(
             "systemctl",
             &["stop".to_string(), "smbd".to_string()],
             Duration::from_secs(30),
         );
+        let _ = context.runner.run_timeout(
+            "systemctl",
+            &["stop".to_string(), "nmbd".to_string()],
+            Duration::from_secs(30),
+        );
+        let fw = close_firewall(context.runner.as_ref());
         steps.push(step("smbd", Ok("Samba disabled".to_string())));
+        steps.push(step("firewall", fw));
         return steps;
     }
 
@@ -633,6 +645,145 @@ pub fn open_firewall(runner: &dyn Runner) -> Result<String, String> {
         Ok("firewall rules checked".to_string())
     } else {
         Ok(format!("ports 139, 445 opened via {}", opened.join(", ")))
+    }
+}
+
+/// Ensure Samba ports are closed across nftables, ufw, and iptables.
+pub fn close_firewall(runner: &dyn Runner) -> Result<String, String> {
+    let mut closed = Vec::new();
+
+    // 1. nftables: Find rule handles in table inet stackstack input matching ports 139, 445, 137, 138
+    if let Ok(output) = runner.run_timeout(
+        "nft",
+        &[
+            "-a".to_string(),
+            "list".to_string(),
+            "chain".to_string(),
+            "inet".to_string(),
+            "stackstack".to_string(),
+            "input".to_string(),
+        ],
+        Duration::from_secs(5),
+    ) && output.success()
+    {
+        for line in output.stdout.lines() {
+            if (line.contains("139")
+                || line.contains("445")
+                || line.contains("137")
+                || line.contains("138"))
+                && let Some(idx) = line.rfind("handle ")
+            {
+                let handle_str = line[idx + 7..].trim();
+                let handle_digits: String = handle_str
+                    .chars()
+                    .take_while(|c| c.is_ascii_digit())
+                    .collect();
+                if !handle_digits.is_empty() {
+                    let _ = runner.run_timeout(
+                        "nft",
+                        &[
+                            "delete".to_string(),
+                            "rule".to_string(),
+                            "inet".to_string(),
+                            "stackstack".to_string(),
+                            "input".to_string(),
+                            "handle".to_string(),
+                            handle_digits,
+                        ],
+                        Duration::from_secs(5),
+                    );
+                }
+            }
+        }
+        closed.push("nftables");
+    }
+
+    // 2. ufw
+    let ufw_res = runner.run_timeout(
+        "ufw",
+        &[
+            "delete".to_string(),
+            "allow".to_string(),
+            "445/tcp".to_string(),
+        ],
+        Duration::from_secs(5),
+    );
+    if let Ok(res) = &ufw_res
+        && res.success()
+    {
+        let _ = runner.run_timeout(
+            "ufw",
+            &[
+                "delete".to_string(),
+                "allow".to_string(),
+                "139/tcp".to_string(),
+            ],
+            Duration::from_secs(5),
+        );
+        let _ = runner.run_timeout(
+            "ufw",
+            &[
+                "delete".to_string(),
+                "allow".to_string(),
+                "137/udp".to_string(),
+            ],
+            Duration::from_secs(5),
+        );
+        let _ = runner.run_timeout(
+            "ufw",
+            &[
+                "delete".to_string(),
+                "allow".to_string(),
+                "138/udp".to_string(),
+            ],
+            Duration::from_secs(5),
+        );
+        closed.push("ufw");
+    }
+
+    // 3. iptables
+    let ipt = runner.run_timeout(
+        "iptables",
+        &[
+            "-D".to_string(),
+            "INPUT".to_string(),
+            "-p".to_string(),
+            "tcp".to_string(),
+            "-m".to_string(),
+            "multiport".to_string(),
+            "--dports".to_string(),
+            "139,445".to_string(),
+            "-j".to_string(),
+            "ACCEPT".to_string(),
+        ],
+        Duration::from_secs(5),
+    );
+    if let Ok(res) = &ipt
+        && res.success()
+    {
+        let _ = runner.run_timeout(
+            "iptables",
+            &[
+                "-D".to_string(),
+                "INPUT".to_string(),
+                "-p".to_string(),
+                "udp".to_string(),
+                "-m".to_string(),
+                "multiport".to_string(),
+                "--dports".to_string(),
+                "137,138".to_string(),
+                "-j".to_string(),
+                "ACCEPT".to_string(),
+            ],
+            Duration::from_secs(5),
+        );
+        closed.push("iptables");
+    }
+
+    if closed.is_empty() {
+        Ok("firewall rules checked".to_string())
+    } else {
+        Ok(format!("ports 139, 445 closed via {}", closed.join(", ")))
     }
 }
 
