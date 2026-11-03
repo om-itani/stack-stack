@@ -14,6 +14,7 @@ pub mod healthchecks;
 pub mod jobs;
 pub mod layers;
 pub mod logs;
+pub mod mcp;
 pub mod metrics;
 pub mod network;
 pub mod notify;
@@ -195,8 +196,10 @@ pub fn router(state: AppState) -> Router {
         .route("/api/samba", get(shares::samba_state))
         .route("/api/samba/config", put(shares::samba_save))
         .route("/api/samba/apply", post(shares::samba_apply))
+        .route("/api/samba/firewall", post(shares::samba_ensure_firewall))
         .route("/api/samba/users", post(shares::samba_set_user))
         .route("/api/samba/users/{name}", delete(shares::samba_remove_user))
+        .route("/api/mcp", get(mcp::mcp_info).post(mcp::mcp_handler))
         .route("/api/nfs", get(shares::nfs_state))
         .route("/api/nfs/config", put(shares::nfs_save))
         .route("/api/nfs/apply", post(shares::nfs_apply))

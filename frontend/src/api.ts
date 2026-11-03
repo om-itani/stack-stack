@@ -1084,12 +1084,49 @@ export const sambaApi = {
   save: (config: SmbConfig) => jsonRequest<SambaState>("/api/samba/config", "PUT", config),
   apply: (config: SmbConfig) =>
     jsonRequest<SharesReport<SambaState>>("/api/samba/apply", "POST", config),
+  ensureFirewall: () => post<{ ok: boolean }>("/api/samba/firewall"),
   setUser: (username: string, password: string | null, enabled: boolean | null) =>
     jsonRequest<{ ok: boolean }>("/api/samba/users", "POST", { username, password, enabled }),
   removeUser: (username: string) =>
     request<{ ok: boolean }>(`/api/samba/users/${encodeURIComponent(username)}`, {
       method: "DELETE",
     }),
+};
+
+export interface McpTool {
+  name: string;
+  description: string;
+  inputSchema: Record<string, unknown>;
+}
+
+export interface McpInfo {
+  status: string;
+  name: string;
+  version: string;
+  protocol: string;
+  transport: string;
+  tools_count: number;
+}
+
+export const mcpApi = {
+  info: () => request<McpInfo>("/api/mcp"),
+  call: (method: string, params: Record<string, unknown> = {}) =>
+    jsonRequest<{ result?: unknown; error?: { message: string } }>("/api/mcp", "POST", {
+      jsonrpc: "2.0",
+      id: 1,
+      method,
+      params,
+    }),
+  listTools: async (): Promise<McpTool[]> => {
+    const res = await mcpApi.call("tools/list");
+    return ((res.result as { tools?: McpTool[] })?.tools) || [];
+  },
+  callTool: async (name: string, args: Record<string, unknown> = {}): Promise<string> => {
+    const res = await mcpApi.call("tools/call", { name, arguments: args });
+    if (res.error) throw new Error(res.error.message);
+    const content = (res.result as { content?: { text?: string }[] })?.content;
+    return content?.[0]?.text || JSON.stringify(res.result, null, 2);
+  },
 };
 
 export const nfsApi = {

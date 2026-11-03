@@ -195,9 +195,19 @@ pub async fn samba_remove_user(
     Ok(Json(OkResult { ok: true }))
 }
 
-// ---------------------------------------------------------------------------
-// NFS
-// ---------------------------------------------------------------------------
+pub async fn samba_ensure_firewall(
+    State(state): State<AppState>,
+) -> Result<Json<OkResult>, ApiError> {
+    let runner = state.samba.runner.clone();
+    tokio::task::spawn_blocking(move || {
+        let _ = samba::open_firewall(runner.as_ref());
+        Ok::<(), ApiError>(())
+    })
+    .await
+    .map_err(|err| ApiError::internal(format!("firewall task failed: {err}")))??;
+
+    Ok(Json(OkResult { ok: true }))
+}
 
 pub async fn nfs_state(State(state): State<AppState>) -> Json<NfsState> {
     Json(collect_nfs(&state))

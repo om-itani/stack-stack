@@ -41,11 +41,21 @@ pub async fn gate(State(state): State<AppState>, request: Request, next: Next) -
         return next.run(request).await;
     }
 
-    if let Some(token) = cookie_value(request.headers(), COOKIE_NAME)
+    let token = cookie_value(request.headers(), COOKIE_NAME).or_else(|| {
+        request
+            .headers()
+            .get("authorization")
+            .and_then(|v| v.to_str().ok())
+            .and_then(|h| h.strip_prefix("Bearer "))
+            .map(str::trim)
+            .map(str::to_string)
+    });
+
+    if let Some(token) = token
         && state.auth.validate_token(&token)
     {
         if is_upgrade {
-            tracing::debug!(path, "websocket upgrade authenticated via session cookie");
+            tracing::debug!(path, "websocket upgrade authenticated via session");
         }
         return next.run(request).await;
     }

@@ -7,10 +7,10 @@
  * force-error buttons that exercise the toast pipeline.
  */
 
-import { debugApi } from "../api";
+import { debugApi, mcpApi } from "../api";
 import type { ConfigRef, PingReport } from "../api";
 import { showToast } from "../toast";
-import { badge, button, el, panel, select } from "../ui";
+import { badge, button, el, panel, select, textInput } from "../ui";
 
 export interface PageHandle {
   root: HTMLElement;
@@ -36,6 +36,106 @@ export function createDeveloperPage(): PageHandle {
   const pingHost = el("div", { class: "flex flex-col gap-2" });
   const configHost = el("div", { class: "flex flex-col gap-2" });
   const logHost = el("div", { class: "flex flex-col gap-2" });
+  const mcpHost = el("div", { class: "flex flex-col gap-2" });
+
+  async function loadMcp(): Promise<void> {
+    const card = panel("AI Integration & Model Context Protocol (MCP)");
+    card.body.className = "flex flex-col gap-3 p-3";
+
+    const host = window.location.host;
+    const endpointUrl = `${window.location.protocol}//${host}/api/mcp`;
+
+    const statusRow = el("div", { class: "flex flex-wrap items-center justify-between gap-2 border-b border-white/5 pb-2" }, [
+      el("div", { class: "flex items-center gap-2" }, [
+        el("span", { class: "text-xs font-semibold text-neutral-200", text: "MCP Server Endpoint" }),
+        badge("Active (2024-11-05)", "ok"),
+      ]),
+      el("code", { class: "font-mono text-xs text-emerald-400 bg-black/40 px-2 py-0.5 rounded border border-white/5", text: endpointUrl }),
+    ]);
+
+    const infoText = el("p", {
+      class: "text-xs text-neutral-400 leading-relaxed",
+      text: "Connect AI agents (Claude Desktop, Cursor, Antigravity, or custom agents) via Model Context Protocol to inspect, test, and control your homeserver without requiring terminal access.",
+    });
+
+    const claudeConfig = JSON.stringify({
+      mcpServers: {
+        "stack-stack": {
+          url: endpointUrl,
+        },
+      },
+    }, null, 2);
+
+    const configBox = el("details", { class: "flex flex-col gap-1 text-xs text-neutral-300 bg-black/30 p-2 rounded border border-white/5" }, [
+      el("summary", { class: "cursor-pointer font-semibold text-neutral-400 hover:text-white", text: "AI Client Configuration (Claude Desktop / Cursor)" }),
+      el("pre", { class: "font-mono text-[11px] text-emerald-300 p-2 bg-[#090d16] rounded overflow-x-auto mt-2", text: claudeConfig }),
+    ]);
+
+    // Live AI Self-Test Runner
+    const testOutput = el("pre", {
+      class: "font-mono text-[11px] text-neutral-300 p-3 bg-[#090d16] rounded border border-white/5 overflow-x-auto min-h-16 whitespace-pre-wrap",
+      text: "Click 'Run AI Diagnostic Self-Test' to evaluate homeserver health, Samba (port 445), Docker, and system resources via MCP.",
+    });
+
+    const runTestBtn = button(
+      "⚡ Run AI Diagnostic Self-Test",
+      "border-emerald-600 bg-emerald-500/20 text-emerald-300 font-semibold text-xs px-3 py-1.5 hover:bg-emerald-500/30",
+      async () => {
+        runTestBtn.disabled = true;
+        runTestBtn.textContent = "Running Self-Test…";
+        testOutput.textContent = "Executing self-test via MCP…";
+        try {
+          const report = await mcpApi.callTool("run_diagnostic_self_test");
+          testOutput.textContent = report;
+          showToast({ tone: "ok", title: "Diagnostic Complete", message: "Homeserver self-test completed." });
+        } catch (err) {
+          testOutput.textContent = `Error: ${errorText(err)}`;
+          showToast({ tone: "error", title: "Self-Test Error", message: errorText(err) });
+        } finally {
+          runTestBtn.disabled = false;
+          runTestBtn.textContent = "⚡ Run AI Diagnostic Self-Test";
+        }
+      },
+    );
+
+    // Network Port Probe tool
+    let probeHost = "127.0.0.1";
+    let probePort = 445;
+    const probeHostInput = textInput(probeHost, (v) => { probeHost = v; }, { placeholder: "192.168.0.3 or 127.0.0.1" });
+    const probePortInput = textInput(String(probePort), (v) => { probePort = parseInt(v) || 445; }, { placeholder: "445" });
+    const probeResult = el("span", { class: "text-xs font-mono text-neutral-400" });
+
+    const probeBtn = button(
+      "Probe Port",
+      "border-indigo-600 bg-indigo-500/20 text-indigo-300 text-xs px-3 py-1 hover:bg-indigo-500/30",
+      async () => {
+        probeBtn.disabled = true;
+        probeResult.textContent = "Probing…";
+        try {
+          const res = await mcpApi.callTool("test_network_port", { host: probeHost.trim(), port: probePort, timeout_seconds: 3 });
+          const parsed = JSON.parse(res);
+          probeResult.textContent = parsed.status || res;
+          probeResult.className = parsed.reachable ? "text-xs font-mono text-emerald-400" : "text-xs font-mono text-rose-400";
+        } catch (err) {
+          probeResult.textContent = errorText(err);
+          probeResult.className = "text-xs font-mono text-rose-400";
+        } finally {
+          probeBtn.disabled = false;
+        }
+      },
+    );
+
+    const probeRow = el("div", { class: "flex flex-wrap items-center gap-2 p-2.5 bg-white/[0.02] border border-white/5 rounded-lg" }, [
+      el("span", { class: "text-xs font-semibold text-neutral-300", text: "Port Reachability Tester:" }),
+      fieldLike("Host", probeHostInput),
+      fieldLike("Port", probePortInput),
+      probeBtn,
+      probeResult,
+    ]);
+
+    card.body.append(statusRow, infoText, configBox, probeRow, el("div", { class: "flex items-center justify-between" }, [runTestBtn]), testOutput);
+    mcpHost.replaceChildren(card.root);
+  }
 
   let configs: ConfigRef[] = [];
   let selectedConfig = "network";
@@ -237,11 +337,12 @@ export function createDeveloperPage(): PageHandle {
     status,
   );
 
-  root.append(toolbar, pingHost, configHost, logHost);
+  root.append(toolbar, mcpHost, pingHost, configHost, logHost);
 
   return {
     root,
     onShow: () => {
+      void loadMcp();
       void pingAll();
       void loadConfigs();
       void loadSystemLog();

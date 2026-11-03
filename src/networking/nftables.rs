@@ -109,24 +109,17 @@ fn render_input(
                 "    iifname {lan_match} tcp dport {{ {ports} }} accept"
             );
         }
-        let _ = writeln!(out, "    # Samba and network shares on LAN");
-        let _ = writeln!(
-            out,
-            "    iifname {lan_match} tcp dport {{ 139, 445 }} accept"
-        );
-        let _ = writeln!(
-            out,
-            "    iifname {lan_match} udp dport {{ 137, 138 }} accept"
-        );
     } else if let Some(ports) = &management {
         let _ = writeln!(
             out,
             "    # no LAN interface configured; management ports are open to any source"
         );
         let _ = writeln!(out, "    tcp dport {{ {ports} }} accept");
-        let _ = writeln!(out, "    tcp dport {{ 139, 445 }} accept");
-        let _ = writeln!(out, "    udp dport {{ 137, 138 }} accept");
     }
+
+    let _ = writeln!(out, "    # Samba file sharing");
+    let _ = writeln!(out, "    tcp dport {{ 139, 445 }} accept");
+    let _ = writeln!(out, "    udp dport {{ 137, 138 }} accept");
 
     let lan_set = if lan_networks.is_empty() {
         None

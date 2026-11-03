@@ -513,7 +513,127 @@ fn apply_sync(
     };
     steps.push(step("nmbd", nmbd));
 
+    // Open firewall ports (TCP 139, 445; UDP 137, 138) across nftables, ufw, and iptables
+    let fw = open_firewall(context.runner.as_ref());
+    steps.push(step("firewall", fw));
+
     steps
+}
+
+/// Ensure Samba ports are allowed across nftables, ufw, and iptables.
+pub fn open_firewall(runner: &dyn Runner) -> Result<String, String> {
+    let mut opened = Vec::new();
+    let nft_tcp = runner.run_timeout(
+        "nft",
+        &[
+            "insert".to_string(),
+            "rule".to_string(),
+            "inet".to_string(),
+            "stackstack".to_string(),
+            "input".to_string(),
+            "tcp".to_string(),
+            "dport".to_string(),
+            "{".to_string(),
+            "139,".to_string(),
+            "445".to_string(),
+            "}".to_string(),
+            "accept".to_string(),
+        ],
+        Duration::from_secs(5),
+    );
+    if let Ok(res) = &nft_tcp
+        && res.success()
+    {
+        let _ = runner.run_timeout(
+            "nft",
+            &[
+                "insert".to_string(),
+                "rule".to_string(),
+                "inet".to_string(),
+                "stackstack".to_string(),
+                "input".to_string(),
+                "udp".to_string(),
+                "dport".to_string(),
+                "{".to_string(),
+                "137,".to_string(),
+                "138".to_string(),
+                "}".to_string(),
+                "accept".to_string(),
+            ],
+            Duration::from_secs(5),
+        );
+        opened.push("nftables");
+    }
+
+    let ufw_res = runner.run_timeout(
+        "ufw",
+        &["allow".to_string(), "445/tcp".to_string()],
+        Duration::from_secs(5),
+    );
+    if let Ok(res) = &ufw_res
+        && res.success()
+    {
+        let _ = runner.run_timeout(
+            "ufw",
+            &["allow".to_string(), "139/tcp".to_string()],
+            Duration::from_secs(5),
+        );
+        let _ = runner.run_timeout(
+            "ufw",
+            &["allow".to_string(), "137/udp".to_string()],
+            Duration::from_secs(5),
+        );
+        let _ = runner.run_timeout(
+            "ufw",
+            &["allow".to_string(), "138/udp".to_string()],
+            Duration::from_secs(5),
+        );
+        opened.push("ufw");
+    }
+
+    let ipt = runner.run_timeout(
+        "iptables",
+        &[
+            "-I".to_string(),
+            "INPUT".to_string(),
+            "-p".to_string(),
+            "tcp".to_string(),
+            "-m".to_string(),
+            "multiport".to_string(),
+            "--dports".to_string(),
+            "139,445".to_string(),
+            "-j".to_string(),
+            "ACCEPT".to_string(),
+        ],
+        Duration::from_secs(5),
+    );
+    if let Ok(res) = &ipt
+        && res.success()
+    {
+        let _ = runner.run_timeout(
+            "iptables",
+            &[
+                "-I".to_string(),
+                "INPUT".to_string(),
+                "-p".to_string(),
+                "udp".to_string(),
+                "-m".to_string(),
+                "multiport".to_string(),
+                "--dports".to_string(),
+                "137,138".to_string(),
+                "-j".to_string(),
+                "ACCEPT".to_string(),
+            ],
+            Duration::from_secs(5),
+        );
+        opened.push("iptables");
+    }
+
+    if opened.is_empty() {
+        Ok("firewall rules checked".to_string())
+    } else {
+        Ok(format!("ports 139, 445 opened via {}", opened.join(", ")))
+    }
 }
 
 pub fn load(path: &std::path::Path) -> (SmbConfig, Option<String>) {
