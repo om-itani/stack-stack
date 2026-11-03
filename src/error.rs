@@ -126,7 +126,11 @@ impl ApiError {
 impl std::fmt::Display for ApiError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let (status, message) = self.parts();
-        write!(f, "{status}: {message}")
+        if let Some(details) = self.details() {
+            write!(f, "{status}: {message} ({details})")
+        } else {
+            write!(f, "{status}: {message}")
+        }
     }
 }
 

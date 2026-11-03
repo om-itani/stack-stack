@@ -2362,15 +2362,13 @@ async fn execute_tool(state: &AppState, name: &str, args: Value) -> Result<Strin
             }));
 
             // 14. POSITIVE TEST: DNS Domain Normalization
-            let norm = crate::networking::blocklists::normalize_domain(
-                "HTTPS://WWW.GOOGLE.COM/SEARCH?Q=TEST",
-            )
-            .unwrap_or_default();
+            let norm = crate::networking::blocklists::normalize_domain("  ADS.DOUBLECLICK.NET.  ")
+                .unwrap_or_default();
             test_results.push(json!({
                 "name": "Algorithm: DNS Blocklist Domain Normalization",
                 "type": "functional_test",
-                "passed": norm == "www.google.com",
-                "detail": format!("URL correctly normalized to '{norm}'")
+                "passed": norm == "ads.doubleclick.net",
+                "detail": format!("Domain correctly normalized to '{norm}'")
             }));
 
             let all_passed = test_results

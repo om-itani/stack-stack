@@ -316,19 +316,34 @@ pub async fn validate_compose(yaml: &str, timeout_s: u64) -> Result<(), ApiError
 }
 
 fn validate_compose_blocking(yaml: &str, timeout_s: u64) -> Result<(), ApiError> {
+    let normalized = yaml.replace("\r\n", "\n");
     let cli = compose_cli();
+    let tmp_path = std::env::temp_dir().join(format!(
+        "stack-check-{}-{}.yml",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0)
+    ));
+    if let Err(e) = std::fs::write(&tmp_path, normalized.as_bytes()) {
+        return Err(ApiError::internal(format!(
+            "cannot write temp compose file: {e}"
+        )));
+    }
     let mut args = cli.prefix.clone();
     args.extend([
         "-f".to_string(),
-        "-".to_string(),
+        tmp_path.to_string_lossy().to_string(),
         "config".to_string(),
         "-q".to_string(),
     ]);
     let timeout = Duration::from_secs(timeout_s.clamp(5, 60));
 
-    let Ok(output) =
-        crate::proc::run_with_input(&cli.program, &args, None, timeout, yaml.as_bytes())
-    else {
+    let res = crate::proc::run(&cli.program, &args, None, timeout);
+    let _ = std::fs::remove_file(&tmp_path);
+
+    let Ok(output) = res else {
         // Compose is unavailable; let the deploy report that.
         return Ok(());
     };
