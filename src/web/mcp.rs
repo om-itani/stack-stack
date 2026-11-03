@@ -78,7 +78,7 @@ pub async fn mcp_info() -> Json<Value> {
         "protocol": "2024-11-05",
         "transport": "HTTP JSON-RPC 2.0 (POST /api/mcp)",
         "description": "Model Context Protocol interface for stack-stack homeserver management",
-        "tools_count": 14,
+        "tools_count": 25,
         "capabilities": {
             "tools": { "listChanged": false }
         }
@@ -293,6 +293,133 @@ fn list_tools() -> Vec<Value> {
             "inputSchema": {
                 "type": "object",
                 "properties": {}
+            }
+        }),
+        json!({
+            "name": "list_app_store_catalog",
+            "description": "List all apps available in the App Store catalog with ID, name, category, and installed status.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {}
+            }
+        }),
+        json!({
+            "name": "install_app",
+            "description": "Install and start an application from the App Store catalog (e.g. 'jellyfin', 'vaultwarden', 'nextcloud') via docker compose.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "app_id": { "type": "string", "description": "Catalog App ID to install (e.g. 'jellyfin')" }
+                },
+                "required": ["app_id"]
+            }
+        }),
+        json!({
+            "name": "remove_app",
+            "description": "Stop and uninstall an App Store application, removing its containers and compose definitions.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "app_id": { "type": "string", "description": "Catalog App ID to remove" }
+                },
+                "required": ["app_id"]
+            }
+        }),
+        json!({
+            "name": "deploy_stack",
+            "description": "Deploy a custom Docker Compose stack by name and YAML definition directly to the homeserver.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "name": { "type": "string", "description": "Stack name (lowercase, alphanumeric, dashes)" },
+                    "yaml": { "type": "string", "description": "Full Docker Compose YAML content" }
+                },
+                "required": ["name", "yaml"]
+            }
+        }),
+        json!({
+            "name": "remove_stack",
+            "description": "Stop and remove a custom Docker Compose stack by name.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "name": { "type": "string", "description": "Stack name to remove" },
+                    "force": { "type": "boolean", "description": "Force remove even if down errors" }
+                },
+                "required": ["name"]
+            }
+        }),
+        json!({
+            "name": "create_samba_share",
+            "description": "Create a new SMB/CIFS network share with host path, permissions, and allowed users.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "name": { "type": "string", "description": "Share name (e.g. 'media', 'backups')" },
+                    "path": { "type": "string", "description": "Host folder path to share (e.g. '/srv/media', '/home')" },
+                    "read_only": { "type": "boolean", "description": "Read only flag (default false)" },
+                    "guest_ok": { "type": "boolean", "description": "Allow guest access without auth (default false)" },
+                    "valid_users": {
+                        "type": "array",
+                        "items": { "type": "string" },
+                        "description": "List of allowed Samba usernames"
+                    },
+                    "comment": { "type": "string", "description": "Optional description for Windows Explorer" }
+                },
+                "required": ["name", "path"]
+            }
+        }),
+        json!({
+            "name": "remove_samba_share",
+            "description": "Remove an existing SMB network share by name.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "name": { "type": "string", "description": "Share name to delete" }
+                },
+                "required": ["name"]
+            }
+        }),
+        json!({
+            "name": "create_samba_user",
+            "description": "Create a new Samba file sharing user account with a secure password.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "username": { "type": "string", "description": "Username for network share authentication" },
+                    "password": { "type": "string", "description": "Password (minimum 8 characters)" }
+                },
+                "required": ["username", "password"]
+            }
+        }),
+        json!({
+            "name": "remove_samba_user",
+            "description": "Remove a Samba user account from the homeserver.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "username": { "type": "string", "description": "Username to remove" }
+                },
+                "required": ["username"]
+            }
+        }),
+        json!({
+            "name": "get_dns_blocklist_status",
+            "description": "Inspect local DNS ad-blocking status, subscription sources, and total blocked domains.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {}
+            }
+        }),
+        json!({
+            "name": "lookup_dns_blocklist",
+            "description": "Test if a specific domain is blocked or allowed by the local DNS sinkhole (e.g. 'doubleclick.net').",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "domain": { "type": "string", "description": "Domain name to check (e.g. 'ads.google.com')" }
+                },
+                "required": ["domain"]
             }
         }),
     ]
@@ -690,6 +817,275 @@ async fn execute_tool(state: &AppState, name: &str, args: Value) -> Result<Strin
                 "timestamp_unix": now_secs
             });
             serde_json::to_string_pretty(&summary).map_err(|e| e.to_string())
+        }
+
+        "list_app_store_catalog" => {
+            let apps = crate::containers::store::catalog_with_state(&state.config);
+            let res = json!({
+                "count": apps.len(),
+                "apps": apps
+            });
+            serde_json::to_string_pretty(&res).map_err(|e| e.to_string())
+        }
+
+        "install_app" => {
+            let app_id = args
+                .get("app_id")
+                .and_then(|v| v.as_str())
+                .ok_or("app_id is required")?;
+
+            let output = crate::containers::store::install(&state.config, app_id)
+                .await
+                .map_err(|e| e.to_string())?;
+            let res = json!({
+                "ok": true,
+                "app_id": app_id,
+                "output": output,
+                "message": format!("Application '{app_id}' installed and started successfully.")
+            });
+            serde_json::to_string_pretty(&res).map_err(|e| e.to_string())
+        }
+
+        "remove_app" => {
+            let app_id = args
+                .get("app_id")
+                .and_then(|v| v.as_str())
+                .ok_or("app_id is required")?;
+
+            let output = crate::containers::store::remove(&state.config, app_id)
+                .await
+                .map_err(|e| e.to_string())?;
+            let res = json!({
+                "ok": true,
+                "app_id": app_id,
+                "output": output,
+                "message": format!("Application '{app_id}' removed successfully.")
+            });
+            serde_json::to_string_pretty(&res).map_err(|e| e.to_string())
+        }
+
+        "deploy_stack" => {
+            let name = args
+                .get("name")
+                .and_then(|v| v.as_str())
+                .ok_or("name is required")?;
+            let yaml = args
+                .get("yaml")
+                .and_then(|v| v.as_str())
+                .ok_or("yaml is required")?;
+
+            let output = crate::containers::store::deploy_stack(&state.config, name, yaml)
+                .await
+                .map_err(|e| e.to_string())?;
+            let res = json!({
+                "ok": true,
+                "name": name,
+                "output": output,
+                "message": format!("Compose stack '{name}' deployed successfully.")
+            });
+            serde_json::to_string_pretty(&res).map_err(|e| e.to_string())
+        }
+
+        "remove_stack" => {
+            let name = args
+                .get("name")
+                .and_then(|v| v.as_str())
+                .ok_or("name is required")?;
+            let force = args.get("force").and_then(|v| v.as_bool()).unwrap_or(false);
+
+            let output = crate::containers::store::remove_stack(&state.config, name, force)
+                .await
+                .map_err(|e| e.to_string())?;
+            let res = json!({
+                "ok": true,
+                "name": name,
+                "output": output,
+                "message": format!("Compose stack '{name}' removed successfully.")
+            });
+            serde_json::to_string_pretty(&res).map_err(|e| e.to_string())
+        }
+
+        "create_samba_share" => {
+            let name = args
+                .get("name")
+                .and_then(|v| v.as_str())
+                .ok_or("name is required")?;
+            let path_str = args
+                .get("path")
+                .and_then(|v| v.as_str())
+                .ok_or("path is required")?;
+            let read_only = args
+                .get("read_only")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+            let guest_ok = args
+                .get("guest_ok")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+            let valid_users: Vec<String> = args
+                .get("valid_users")
+                .and_then(|v| v.as_array())
+                .map(|arr| {
+                    arr.iter()
+                        .filter_map(|u| u.as_str().map(str::to_string))
+                        .collect()
+                })
+                .unwrap_or_default();
+            let comment = args
+                .get("comment")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+
+            let conf_path = std::path::Path::new(&state.samba.config_path);
+            let (mut config, _) = crate::services::samba::load(conf_path);
+
+            if config.shares.iter().any(|s| s.name == name) {
+                return Err(format!("Share '{name}' already exists"));
+            }
+
+            let new_share = crate::services::samba::SmbShare {
+                name: name.to_string(),
+                path: path_str.to_string(),
+                read_only,
+                guest_ok,
+                valid_users,
+                comment,
+                ..Default::default()
+            };
+            config.shares.push(new_share);
+
+            crate::services::samba::save(conf_path, &config).map_err(|e| e.to_string())?;
+            let lan_cidr = Some("192.168.0.0/16 10.0.0.0/8 172.16.0.0/12 127.0.0.1".to_string());
+            let steps = crate::services::samba::apply(&state.samba, &config, lan_cidr).await;
+            let res = json!({
+                "ok": true,
+                "share": name,
+                "path": path_str,
+                "apply_steps": steps
+            });
+            serde_json::to_string_pretty(&res).map_err(|e| e.to_string())
+        }
+
+        "remove_samba_share" => {
+            let name = args
+                .get("name")
+                .and_then(|v| v.as_str())
+                .ok_or("name is required")?;
+
+            let conf_path = std::path::Path::new(&state.samba.config_path);
+            let (mut config, _) = crate::services::samba::load(conf_path);
+
+            let initial_len = config.shares.len();
+            config.shares.retain(|s| s.name != name);
+            if config.shares.len() == initial_len {
+                return Err(format!("Share '{name}' not found"));
+            }
+
+            crate::services::samba::save(conf_path, &config).map_err(|e| e.to_string())?;
+            let lan_cidr = Some("192.168.0.0/16 10.0.0.0/8 172.16.0.0/12 127.0.0.1".to_string());
+            let steps = crate::services::samba::apply(&state.samba, &config, lan_cidr).await;
+            let res = json!({
+                "ok": true,
+                "removed_share": name,
+                "apply_steps": steps
+            });
+            serde_json::to_string_pretty(&res).map_err(|e| e.to_string())
+        }
+
+        "create_samba_user" => {
+            let username = args
+                .get("username")
+                .and_then(|v| v.as_str())
+                .ok_or("username is required")?;
+            let password = args
+                .get("password")
+                .and_then(|v| v.as_str())
+                .ok_or("password is required")?;
+
+            crate::services::samba::set_password(state.samba.runner.as_ref(), username, password)
+                .map_err(|e| e.to_string())?;
+
+            let conf_path = std::path::Path::new(&state.samba.config_path);
+            let (mut config, _) = crate::services::samba::load(conf_path);
+            if !config.users.iter().any(|u| u.username == username) {
+                config.users.push(crate::services::samba::SmbUser {
+                    username: username.to_string(),
+                    enabled: true,
+                });
+                let _ = crate::services::samba::save(conf_path, &config);
+            }
+
+            let res = json!({
+                "ok": true,
+                "username": username,
+                "message": format!("Samba account '{username}' created successfully.")
+            });
+            serde_json::to_string_pretty(&res).map_err(|e| e.to_string())
+        }
+
+        "remove_samba_user" => {
+            let username = args
+                .get("username")
+                .and_then(|v| v.as_str())
+                .ok_or("username is required")?;
+
+            crate::services::samba::delete_user(state.samba.runner.as_ref(), username)
+                .map_err(|e| e.to_string())?;
+
+            let conf_path = std::path::Path::new(&state.samba.config_path);
+            let (mut config, _) = crate::services::samba::load(conf_path);
+            config.users.retain(|u| u.username != username);
+            let _ = crate::services::samba::save(conf_path, &config);
+
+            let res = json!({
+                "ok": true,
+                "username": username,
+                "message": format!("Samba account '{username}' deleted successfully.")
+            });
+            serde_json::to_string_pretty(&res).map_err(|e| e.to_string())
+        }
+
+        "get_dns_blocklist_status" => {
+            let config_path = std::path::Path::new(&state.config.network_path);
+            let stats = crate::networking::blocklists::BlocklistStats::load(config_path);
+            let (config, _) = crate::networking::store::load(config_path);
+            let res = json!({
+                "total_domains_blocked": stats.total,
+                "updated_at": stats.updated_at,
+                "subscriptions_count": config.dns.blocklists.len(),
+                "subscriptions": config.dns.blocklists,
+                "allowlist": config.dns.allowlist
+            });
+            serde_json::to_string_pretty(&res).map_err(|e| e.to_string())
+        }
+
+        "lookup_dns_blocklist" => {
+            let domain = args
+                .get("domain")
+                .and_then(|v| v.as_str())
+                .ok_or("domain is required")?;
+            let config_path = std::path::Path::new(&state.config.network_path);
+            let (config, _) = crate::networking::store::load(config_path);
+            let normalized =
+                crate::networking::blocklists::normalize_domain(domain).unwrap_or_default();
+            let is_allowed = !normalized.is_empty()
+                && crate::networking::blocklists::is_allowed(&normalized, &config.dns.allowlist);
+            let is_blocked = !normalized.is_empty()
+                && !is_allowed
+                && crate::networking::blocklists::is_blocked(
+                    config_path,
+                    &config.dns.allowlist,
+                    domain,
+                );
+            let res = json!({
+                "domain": domain,
+                "normalized": normalized,
+                "is_blocked": is_blocked,
+                "is_allowed": is_allowed,
+                "status": if is_blocked { "BLOCKED (Sinkholed by ad-blocker)" } else { "ALLOWED (Resolves normally)" }
+            });
+            serde_json::to_string_pretty(&res).map_err(|e| e.to_string())
         }
 
         unknown => Err(format!("Unknown tool '{unknown}'")),
