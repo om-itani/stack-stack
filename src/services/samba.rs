@@ -36,6 +36,9 @@ pub struct SmbShare {
     pub create_mask: String,
     pub dir_mask: String,
     pub comment: String,
+    /// Optional allowed client IPs/subnets for this share (e.g. "192.168.0.0/24 10.0.0.5").
+    #[serde(default)]
+    pub hosts_allow: Option<String>,
 }
 
 impl Default for SmbShare {
@@ -51,6 +54,7 @@ impl Default for SmbShare {
             create_mask: "0664".to_string(),
             dir_mask: "0775".to_string(),
             comment: String::new(),
+            hosts_allow: None,
         }
     }
 }
@@ -68,6 +72,12 @@ pub struct SmbConfig {
     pub enabled: bool,
     pub workgroup: String,
     pub server_string: String,
+    /// Custom allowed hosts/subnets for global smb.conf (e.g. "192.168.0.0/16 10.0.0.0/8").
+    #[serde(default)]
+    pub hosts_allow: Option<String>,
+    /// Network interfaces / adapters to bind to (e.g. ["eth0", "enp3s0"]).
+    #[serde(default)]
+    pub interfaces: Vec<String>,
     pub shares: Vec<SmbShare>,
     /// Samba accounts this app manages. A username here must also exist as a
     /// Unix account; the UI surfaces the `useradd` hint when it does not.
@@ -80,6 +90,8 @@ impl Default for SmbConfig {
             enabled: false,
             workgroup: "WORKGROUP".to_string(),
             server_string: "stack-stack".to_string(),
+            hosts_allow: None,
+            interfaces: Vec::new(),
             shares: Vec::new(),
             users: Vec::new(),
         }
@@ -190,7 +202,25 @@ pub fn render(config: &SmbConfig, lan_cidr: Option<&str>) -> String {
     out.push_str("   server role = standalone server\n");
     out.push_str("   log file = /var/log/samba/log.%m\n");
     out.push_str("   map to guest = Bad User\n");
-    if let Some(cidr) = lan_cidr.map(str::trim).filter(|cidr| !cidr.is_empty()) {
+    let ifaces: Vec<&str> = config
+        .interfaces
+        .iter()
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+        .collect();
+    if !ifaces.is_empty() {
+        let joined = ifaces.join(" ");
+        let _ = writeln!(out, "   interfaces = 127.0.0.1/8 {joined}");
+        out.push_str("   bind interfaces only = yes\n");
+    }
+
+    let global_hosts = config
+        .hosts_allow
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .or(lan_cidr.map(str::trim).filter(|cidr| !cidr.is_empty()));
+    if let Some(cidr) = global_hosts {
         let _ = writeln!(out, "   hosts allow = {cidr}");
     }
 
@@ -214,6 +244,14 @@ pub fn render(config: &SmbConfig, lan_cidr: Option<&str>) -> String {
             .filter(|f| !f.is_empty())
         {
             let _ = writeln!(out, "   force user = {force}");
+        }
+        if let Some(hosts) = share
+            .hosts_allow
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+        {
+            let _ = writeln!(out, "   hosts allow = {hosts}");
         }
         let create = parse_octal(&share.create_mask).unwrap_or(0o664);
         let dir = parse_octal(&share.dir_mask).unwrap_or(0o775);

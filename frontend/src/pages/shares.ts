@@ -32,6 +32,7 @@ function freshShare(): SmbShare {
     create_mask: "0664",
     dir_mask: "0775",
     comment: "",
+    hosts_allow: null,
   };
 }
 
@@ -245,16 +246,54 @@ export function createSharesPage(): PageHandle {
 
   function sambaSettings(): HTMLElement {
     const { root: card, body: cardBody } = panel("samba");
-    cardBody.className = "flex flex-wrap items-end gap-3 px-3 py-2";
-    cardBody.append(
-      field("enabled", checkbox(draft!.enabled, (value) => (draft!.enabled = value), "run samba")),
-      field("workgroup", textInput(draft!.workgroup, (value) => (draft!.workgroup = value))),
-      field("server string", textInput(draft!.server_string, (value) => (draft!.server_string = value))),
-      el("span", {
-        class: "text-[11px] text-neutral-600",
-        text: samba!.lan_cidr ? `hosts allow = ${samba!.lan_cidr}` : "no LAN network detected",
-      }),
+    cardBody.className = "flex flex-col gap-3 p-3";
+
+    if (!draft) return card;
+    if (!draft.interfaces) draft.interfaces = [];
+
+    const topRow = el("div", { class: "flex flex-wrap items-end gap-3" }, [
+      field("enabled", checkbox(draft.enabled, (value) => (draft!.enabled = value), "run samba")),
+      field("workgroup", textInput(draft.workgroup, (value) => (draft!.workgroup = value))),
+      field("server string", textInput(draft.server_string, (value) => (draft!.server_string = value))),
+    ]);
+
+    const hostsInput = textInput(draft.hosts_allow || "", (v) => {
+      draft!.hosts_allow = v.trim() ? v.trim() : null;
+    }, { placeholder: "e.g. 192.168.0.0/16 10.0.0.0/8 (Leave empty for all home LAN subnets)" });
+
+    const hostsSection = field(
+      "Allowed Client Networks (hosts allow)",
+      hostsInput,
+      samba?.lan_cidr
+        ? `Active auto-detected networks: ${samba.lan_cidr}`
+        : "Restricts SMB access to specific client subnets or IPs. Leave empty to allow all private LAN/VPN clients.",
     );
+
+    const ifaceSection = el("div", { class: "flex flex-col gap-1.5 p-3 bg-white/[0.02] border border-white/5 rounded-lg" });
+    ifaceSection.append(
+      el("span", { class: "text-xs font-semibold text-neutral-300", text: "Network Adapters (Interfaces)" }),
+      el("span", { class: "text-[11px] text-neutral-400", text: "Select which network adapters Samba binds to. If none selected, Samba listens on all adapters." }),
+    );
+
+    const ifacePills = el("div", { class: "flex flex-wrap gap-2 pt-1" });
+    if (samba?.available_interfaces && samba.available_interfaces.length > 0) {
+      for (const iface of samba.available_interfaces) {
+        const isChecked = draft.interfaces.includes(iface);
+        const pill = checkbox(isChecked, (checked) => {
+          if (checked) {
+            if (!draft!.interfaces!.includes(iface)) draft!.interfaces!.push(iface);
+          } else {
+            draft!.interfaces = draft!.interfaces!.filter((i) => i !== iface);
+          }
+        }, iface);
+        ifacePills.append(pill);
+      }
+    } else {
+      ifacePills.append(el("span", { class: "text-xs text-neutral-500 italic", text: "All network interfaces (default)" }));
+    }
+    ifaceSection.append(ifacePills);
+
+    cardBody.append(topRow, hostsSection, ifaceSection);
     return card;
   }
 
@@ -480,12 +519,17 @@ export function createSharesPage(): PageHandle {
     }
     usersBox.append(userPills);
 
+    const hostsInput = textInput(s.hosts_allow || "", (v) => {
+      s.hosts_allow = v.trim() ? v.trim() : null;
+    }, { placeholder: "e.g. 192.168.0.0/24 or 192.168.0.50 (Leave blank for all)" });
+
     modal.body.append(
       field("Share Name", nameInput, "Name of the network share as shown on Windows / macOS."),
       field("Host Path", pathRow, "Directory on the physical host filesystem to share."),
       field("Comment / Description", commentInput),
       permissionsSection,
       usersBox,
+      field("Allowed Client IPs / Subnets", hostsInput, "Optional: Restrict access to this share by client IP or subnet (space-separated). Leave empty for default."),
       errorEl,
     );
 
@@ -649,6 +693,14 @@ export function createSharesPage(): PageHandle {
         el("span", { class: `px-1.5 py-0.5 rounded border ${share.read_only ? "border-amber-500/30 bg-amber-500/10 text-amber-300" : "border-emerald-500/30 bg-emerald-500/10 text-emerald-300"}`, text: share.read_only ? "Read-Only" : "Read/Write" }),
         el("span", { class: `px-1.5 py-0.5 rounded border ${share.guest_ok ? "border-sky-500/30 bg-sky-500/10 text-sky-300" : "border-neutral-700 text-neutral-400"}`, text: share.guest_ok ? "Guest Allowed" : "Auth Required" }),
       );
+      if (share.hosts_allow) {
+        badges.append(
+          el("span", {
+            class: "px-1.5 py-0.5 rounded border border-purple-500/30 bg-purple-500/10 text-purple-300 font-mono text-[9px]",
+            text: `IP: ${share.hosts_allow}`,
+          }),
+        );
+      }
       accessTd.append(badges);
 
       const usersTd = el("td", { class: "py-2 px-3 font-sans text-[11px] text-neutral-300" });

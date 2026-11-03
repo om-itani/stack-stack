@@ -30,6 +30,7 @@ pub struct SambaState {
     /// Exactly what `smb.conf` will contain.
     pub preview: String,
     pub lan_cidr: Option<String>,
+    pub available_interfaces: Vec<String>,
     pub users: Vec<SmbUserStatus>,
     /// Set when `pdbedit` could not be run (Samba not installed).
     pub users_error: Option<String>,
@@ -291,12 +292,24 @@ fn collect_samba(state: &AppState) -> SambaState {
         Ok(users) => (users, None),
         Err(err) => (Vec::new(), Some(err)),
     };
+    let ifaces = crate::networking::interfaces::discover(state.samba.runner.as_ref());
+    let available_interfaces = ifaces
+        .into_iter()
+        .filter(|i| {
+            i.kind != crate::networking::interfaces::InterfaceKind::Loopback
+                && !i.name.starts_with("veth")
+                && !i.name.starts_with("virbr")
+        })
+        .map(|i| i.name)
+        .collect();
+
     SambaState {
         config,
         problems,
         config_error,
         preview,
         lan_cidr: lan,
+        available_interfaces,
         users,
         users_error,
     }

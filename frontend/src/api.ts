@@ -1010,6 +1010,7 @@ export interface SmbShare {
   create_mask: string;
   dir_mask: string;
   comment: string;
+  hosts_allow?: string | null;
 }
 
 export interface SmbUser {
@@ -1021,6 +1022,8 @@ export interface SmbConfig {
   enabled: boolean;
   workgroup: string;
   server_string: string;
+  hosts_allow?: string | null;
+  interfaces?: string[];
   shares: SmbShare[];
   users: SmbUser[];
 }
@@ -1037,6 +1040,7 @@ export interface SambaState {
   config_error: string | null;
   preview: string;
   lan_cidr: string | null;
+  available_interfaces: string[];
   users: SmbUserStatus[];
   users_error: string | null;
 }
