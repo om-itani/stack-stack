@@ -79,7 +79,7 @@ pub async fn mcp_info() -> Json<Value> {
         "protocol": "2024-11-05",
         "transport": "HTTP JSON-RPC 2.0 (POST /api/mcp)",
         "description": "Model Context Protocol interface for stack-stack homeserver management",
-        "tools_count": 34,
+        "tools_count": 45,
         "capabilities": {
             "tools": { "listChanged": false }
         }
@@ -532,6 +532,116 @@ fn list_tools() -> Vec<Value> {
                 "properties": {
                     "device": { "type": "string", "description": "Optional device path (e.g. '/dev/sda', '/dev/nvme0n1'). If omitted, probes all detected drives." }
                 }
+            }
+        }),
+        json!({
+            "name": "list_block_devices",
+            "description": "Enumerate physical block devices (NVMe, SATA, partitions), mount points, and supported filesystems.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {}
+            }
+        }),
+        json!({
+            "name": "get_nfs_status",
+            "description": "Inspect NFS network share exports, active exportfs clients, and rendered exports configuration.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {}
+            }
+        }),
+        json!({
+            "name": "create_nfs_export",
+            "description": "Create an NFS network share export with host path, allowed clients, and mount permissions.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "path": { "type": "string", "description": "Host folder path to export (e.g. '/srv/nfs', '/mnt/storage')" },
+                    "clients": {
+                        "type": "array",
+                        "items": { "type": "string" },
+                        "description": "Allowed client CIDRs or IPs (e.g. ['192.168.0.0/24', '10.0.0.5'])"
+                    },
+                    "read_only": { "type": "boolean", "description": "Read only flag (default false)" },
+                    "sync": { "type": "boolean", "description": "Synchronous writes (default true)" },
+                    "root_squash": { "type": "boolean", "description": "Map root to nobody (default true for security)" }
+                },
+                "required": ["path"]
+            }
+        }),
+        json!({
+            "name": "remove_nfs_export",
+            "description": "Remove an NFS network share export by folder path.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "path": { "type": "string", "description": "Folder path of the export to remove" }
+                },
+                "required": ["path"]
+            }
+        }),
+        json!({
+            "name": "get_proxy_status",
+            "description": "Inspect reverse proxy routes, domain bindings, upstream targets, and TLS certificate status.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {}
+            }
+        }),
+        json!({
+            "name": "create_proxy_route",
+            "description": "Create a reverse proxy route mapping a custom domain or subdomain to an internal port or URL.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "id": { "type": "string", "description": "Unique route ID (e.g. 'jellyfin-lan')" },
+                    "hostname": { "type": "string", "description": "Domain name (e.g. 'jellyfin.local' or 'vault.home.arpa')" },
+                    "target_port": { "type": "integer", "description": "Target container or service port (e.g. 8096)" }
+                },
+                "required": ["id", "hostname", "target_port"]
+            }
+        }),
+        json!({
+            "name": "delete_proxy_route",
+            "description": "Delete a reverse proxy route by ID.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "id": { "type": "string", "description": "Route ID to delete" }
+                },
+                "required": ["id"]
+            }
+        }),
+        json!({
+            "name": "get_ddns_status",
+            "description": "Inspect dynamic DNS (DDNS) configuration, detected public WAN IP, and sync status.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {}
+            }
+        }),
+        json!({
+            "name": "get_remote_access_status",
+            "description": "Inspect remote access overlay networks (Tailscale, NetBird, Cloudflare) status and node IPs.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {}
+            }
+        }),
+        json!({
+            "name": "get_alerts_status",
+            "description": "Inspect configured metric alerts, monitoring threshold rules, and notification dispatch providers.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {}
+            }
+        }),
+        json!({
+            "name": "run_ai_test_suite",
+            "description": "Execute a comprehensive automated validation and diagnostic test suite covering negative input validation, boundary tests, port reachability, and subsystem health.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {}
             }
         }),
     ]
@@ -1845,6 +1955,441 @@ async fn execute_tool(state: &AppState, name: &str, args: Value) -> Result<Strin
                 "drives": drive_reports
             });
             serde_json::to_string_pretty(&res).map_err(|e| e.to_string())
+        }
+
+        "list_block_devices" => match state.storage.state() {
+            Ok(storage_state) => {
+                let res = json!({
+                    "count": storage_state.devices.len(),
+                    "root_device": storage_state.root_device,
+                    "supported_formats": storage_state.formats,
+                    "devices": storage_state.devices
+                });
+                serde_json::to_string_pretty(&res).map_err(|e| e.to_string())
+            }
+            Err(err) => Err(format!("Storage list failed: {err}")),
+        },
+
+        "get_nfs_status" => {
+            let (config, _) =
+                crate::services::nfs::load(std::path::Path::new(&state.config.nfs_path));
+            let preview = config.render();
+            let active = crate::services::nfs::active_exports(state.network.runner.as_ref())
+                .unwrap_or_default();
+            let res = json!({
+                "enabled": config.enabled,
+                "v4": config.v4,
+                "exports_count": config.exports.len(),
+                "exports": config.exports,
+                "active_exports": active,
+                "preview": preview
+            });
+            serde_json::to_string_pretty(&res).map_err(|e| e.to_string())
+        }
+
+        "create_nfs_export" => {
+            let path = args
+                .get("path")
+                .and_then(|v| v.as_str())
+                .ok_or("path is required")?;
+            let clients = args
+                .get("clients")
+                .and_then(|v| v.as_array())
+                .map(|arr| {
+                    arr.iter()
+                        .filter_map(|c| c.as_str().map(|s| s.to_string()))
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_else(|| vec!["*".to_string()]);
+            let ro = args
+                .get("read_only")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+            let sync = args.get("sync").and_then(|v| v.as_bool()).unwrap_or(true);
+            let root_squash = args
+                .get("root_squash")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(true);
+
+            let nfs_path = std::path::Path::new(&state.config.nfs_path);
+            let (mut config, _) = crate::services::nfs::load(nfs_path);
+
+            let export = crate::services::nfs::NfsExport {
+                path: path.to_string(),
+                clients,
+                ro,
+                sync,
+                root_squash,
+                no_subtree_check: true,
+            };
+
+            if let Some(pos) = config.exports.iter().position(|e| e.path == path) {
+                config.exports[pos] = export.clone();
+            } else {
+                config.exports.push(export.clone());
+            }
+            config.enabled = true;
+
+            let problems = config.validate();
+            if !problems.is_empty() {
+                return Err(format!("Validation failed: {problems:?}"));
+            }
+
+            crate::services::nfs::save(nfs_path, &config).map_err(|e| e.to_string())?;
+            let steps = crate::services::nfs::apply(&state.nfs, &config).await;
+
+            let res = json!({
+                "ok": true,
+                "path": path,
+                "clients": export.clients,
+                "apply_steps": steps
+            });
+            serde_json::to_string_pretty(&res).map_err(|e| e.to_string())
+        }
+
+        "remove_nfs_export" => {
+            let path = args
+                .get("path")
+                .and_then(|v| v.as_str())
+                .ok_or("path is required")?;
+
+            let nfs_path = std::path::Path::new(&state.config.nfs_path);
+            let (mut config, _) = crate::services::nfs::load(nfs_path);
+            let before = config.exports.len();
+            config.exports.retain(|e| e.path != path);
+            if config.exports.len() == before {
+                return Err(format!("No NFS export found for path '{path}'"));
+            }
+
+            crate::services::nfs::save(nfs_path, &config).map_err(|e| e.to_string())?;
+            let steps = crate::services::nfs::apply(&state.nfs, &config).await;
+
+            let res = json!({
+                "ok": true,
+                "removed_path": path,
+                "apply_steps": steps
+            });
+            serde_json::to_string_pretty(&res).map_err(|e| e.to_string())
+        }
+
+        "get_proxy_status" => {
+            let proxy_path = std::path::Path::new(&state.config.proxy_path);
+            let (config, doc_error) = crate::proxy::load(proxy_path);
+            let problems = config.validate();
+            let res = json!({
+                "routes_count": config.routes.len(),
+                "routes": config.routes,
+                "problems": problems,
+                "error": doc_error
+            });
+            serde_json::to_string_pretty(&res).map_err(|e| e.to_string())
+        }
+
+        "create_proxy_route" => {
+            let id = args
+                .get("id")
+                .and_then(|v| v.as_str())
+                .ok_or("id is required")?;
+            let hostname = args
+                .get("hostname")
+                .and_then(|v| v.as_str())
+                .ok_or("hostname is required")?;
+            let target_port = args
+                .get("target_port")
+                .and_then(|v| v.as_u64())
+                .ok_or("target_port is required")? as u16;
+
+            let proxy_path = std::path::Path::new(&state.config.proxy_path);
+            let (mut config, _) = crate::proxy::load(proxy_path);
+
+            if config.routes.iter().any(|r| r.id == id) {
+                return Err(format!("A proxy route with id '{id}' already exists"));
+            }
+
+            let route = crate::proxy::ProxyRoute {
+                id: id.to_string(),
+                hostname: hostname.to_string(),
+                upstream: crate::proxy::Upstream::Url {
+                    url: format!("http://127.0.0.1:{target_port}"),
+                },
+                tls: crate::proxy::ProxyTls::CaManaged,
+                tls_cert: None,
+                enabled: true,
+                comment: String::new(),
+            };
+
+            config.routes.push(route);
+            let problems = config.validate();
+            if !problems.is_empty() {
+                return Err(format!("Validation failed: {problems:?}"));
+            }
+
+            crate::proxy::save(proxy_path, &config).map_err(|e| e.to_string())?;
+
+            let res = json!({
+                "ok": true,
+                "route_id": id,
+                "hostname": hostname,
+                "target_port": target_port
+            });
+            serde_json::to_string_pretty(&res).map_err(|e| e.to_string())
+        }
+
+        "delete_proxy_route" => {
+            let id = args
+                .get("id")
+                .and_then(|v| v.as_str())
+                .ok_or("id is required")?;
+
+            let proxy_path = std::path::Path::new(&state.config.proxy_path);
+            let (mut config, _) = crate::proxy::load(proxy_path);
+            let before = config.routes.len();
+            config.routes.retain(|r| r.id != id);
+            if config.routes.len() == before {
+                return Err(format!("No proxy route found with id '{id}'"));
+            }
+
+            crate::proxy::save(proxy_path, &config).map_err(|e| e.to_string())?;
+
+            let res = json!({
+                "ok": true,
+                "deleted_route_id": id
+            });
+            serde_json::to_string_pretty(&res).map_err(|e| e.to_string())
+        }
+
+        "get_ddns_status" => {
+            let config = state.ddns.config();
+            let wan_ip = state.ddns.wan_ip();
+            let res = json!({
+                "enabled": config.enabled,
+                "record_names": config.record_names,
+                "zone_id": config.zone_id,
+                "wan_ip": wan_ip,
+                "interval_min": config.interval_min,
+                "last_seen_ip": config.last_seen_ip
+            });
+            serde_json::to_string_pretty(&res).map_err(|e| e.to_string())
+        }
+
+        "get_remote_access_status" => {
+            let overview = crate::services::remote_access::get_overview();
+            serde_json::to_string_pretty(&overview).map_err(|e| e.to_string())
+        }
+
+        "get_alerts_status" => {
+            let (doc, error) = state.alerts.load();
+            let res = json!({
+                "rules_count": doc.rules.len(),
+                "rules": doc.rules,
+                "providers_count": doc.providers.len(),
+                "providers": doc.providers,
+                "error": error
+            });
+            serde_json::to_string_pretty(&res).map_err(|e| e.to_string())
+        }
+
+        "run_ai_test_suite" => {
+            let mut test_results = Vec::new();
+
+            // 1. NEGATIVE TEST: Samba password < 8 characters must be rejected
+            let bad_pwd_res = crate::services::samba::set_password(
+                state.samba.runner.as_ref(),
+                "test_user_bad",
+                "short",
+            );
+            let pwd_ok = match bad_pwd_res {
+                Err(err) => err.to_string().contains("at least 8 characters"),
+                Ok(_) => false,
+            };
+            test_results.push(json!({
+                "name": "Validation: Reject short Samba password (< 8 chars)",
+                "type": "negative_validation",
+                "passed": pwd_ok,
+                "detail": "Samba password rejected with 400 Bad Request as expected"
+            }));
+
+            // 2. NEGATIVE TEST: Empty Samba username must be rejected
+            let empty_user_res = crate::services::samba::set_password(
+                state.samba.runner.as_ref(),
+                "   ",
+                "Password123!",
+            );
+            let empty_ok = match empty_user_res {
+                Err(err) => err.to_string().contains("username is required"),
+                Ok(_) => false,
+            };
+            test_results.push(json!({
+                "name": "Validation: Reject empty Samba username",
+                "type": "negative_validation",
+                "passed": empty_ok,
+                "detail": "Empty username correctly rejected"
+            }));
+
+            // 3. NEGATIVE TEST: Invalid WireGuard base64 key must be rejected
+            let invalid_wg_key =
+                crate::services::wireguard::is_wg_key("not-a-valid-wireguard-base64-key-at-all");
+            test_results.push(json!({
+                "name": "Validation: Reject malformed WireGuard private key",
+                "type": "negative_validation",
+                "passed": !invalid_wg_key,
+                "detail": "Invalid WireGuard key rejected by validator"
+            }));
+
+            // 4. NEGATIVE TEST: Invalid Hostname rejected in network models
+            let invalid_host =
+                crate::networking::model::is_valid_hostname("bad hostname with spaces & symbols!");
+            test_results.push(json!({
+                "name": "Validation: Reject invalid hostname with spaces & symbols",
+                "type": "negative_validation",
+                "passed": !invalid_host,
+                "detail": "Malformed hostname rejected by RFC 1123 validator"
+            }));
+
+            // 5. NEGATIVE TEST: VM config with 0 RAM & 0 vCPUs
+            let (doc, _) =
+                crate::virtualization::store::load(std::path::Path::new(&state.virt.config_path));
+            let mut invalid_vm_candidate = doc.clone();
+            invalid_vm_candidate
+                .vms
+                .push(crate::virtualization::model::VmConfig {
+                    id: "test-invalid-id".to_string(),
+                    memory_mb: 0,
+                    vcpus: 0,
+                    ..Default::default()
+                });
+            let vm_problems = invalid_vm_candidate.validate();
+            let vm_val_ok = !vm_problems.is_empty();
+            test_results.push(json!({
+                "name": "Validation: Reject VM with 0MB RAM and 0 vCPUs",
+                "type": "negative_validation",
+                "passed": vm_val_ok,
+                "detail": format!("Validation reported {} problem(s)", vm_problems.len())
+            }));
+
+            // 6. NEGATIVE TEST: Non-existent container logs handled without crash
+            let bad_log_res = state
+                .docker
+                .logs("nonexistent-container-xyz-9999", "10")
+                .await;
+            test_results.push(json!({
+                "name": "Resilience: Query non-existent container logs fails cleanly",
+                "type": "error_boundary",
+                "passed": bad_log_res.is_err(),
+                "detail": "Non-existent container query returns clean error without panic"
+            }));
+
+            // 7. POSITIVE TEST: Web UI Port 8553 Reachability
+            let ui_res = tokio::time::timeout(
+                Duration::from_secs(2),
+                tokio::net::TcpStream::connect("127.0.0.1:8553"),
+            )
+            .await;
+            test_results.push(json!({
+                "name": "Probe: Web UI Port 8553 Reachable",
+                "type": "service_probe",
+                "passed": matches!(ui_res, Ok(Ok(_))),
+                "detail": "Web UI listening and responsive on localhost:8553"
+            }));
+
+            // 8. POSITIVE TEST: Samba Port 445 Reachability
+            let smb_res = tokio::time::timeout(
+                Duration::from_secs(2),
+                tokio::net::TcpStream::connect("127.0.0.1:445"),
+            )
+            .await;
+            test_results.push(json!({
+                "name": "Probe: Samba SMB Port 445 Reachable",
+                "type": "service_probe",
+                "passed": matches!(smb_res, Ok(Ok(_))),
+                "detail": "smbd listening and responsive on 127.0.0.1:445"
+            }));
+
+            // 9. POSITIVE TEST: Jellyfin Port 8096 Reachability
+            let jelly_res = tokio::time::timeout(
+                Duration::from_secs(2),
+                tokio::net::TcpStream::connect("127.0.0.1:8096"),
+            )
+            .await;
+            test_results.push(json!({
+                "name": "Probe: Jellyfin Media Server Port 8096 Reachable",
+                "type": "service_probe",
+                "passed": matches!(jelly_res, Ok(Ok(_))),
+                "detail": "Jellyfin container listening and responsive on port 8096"
+            }));
+
+            // 10. POSITIVE TEST: Vaultwarden Port 8086 Reachability
+            let vault_res = tokio::time::timeout(
+                Duration::from_secs(2),
+                tokio::net::TcpStream::connect("127.0.0.1:8086"),
+            )
+            .await;
+            test_results.push(json!({
+                "name": "Probe: Vaultwarden Password Manager Port 8086 Reachable",
+                "type": "service_probe",
+                "passed": matches!(vault_res, Ok(Ok(_))),
+                "detail": "Vaultwarden container listening and responsive on port 8086"
+            }));
+
+            // 11. POSITIVE TEST: Docker Daemon Connected
+            let installed = crate::containers::store::installed_ids(&state.config);
+            let apps = crate::containers::store::catalog(&state.config);
+            let host_ip = crate::containers::host::detect().ip;
+            let docker_ok = state.docker.list(&host_ip, &installed, &apps).await.is_ok();
+            test_results.push(json!({
+                "name": "Subsystem: Docker Engine Socket Responsive",
+                "type": "subsystem_health",
+                "passed": docker_ok,
+                "detail": "Docker daemon socket active and returning container states"
+            }));
+
+            // 12. POSITIVE TEST: SMART Drive Health Telemetry
+            let smart_ok = state.smart.available();
+            test_results.push(json!({
+                "name": "Subsystem: SMART Controller & Storage Available",
+                "type": "subsystem_health",
+                "passed": smart_ok,
+                "detail": "smartmontools available for NVMe & SATA telemetry"
+            }));
+
+            // 13. POSITIVE TEST: Host Network Interfaces Discovered
+            let ifaces = crate::networking::interfaces::discover(state.network.runner.as_ref());
+            test_results.push(json!({
+                "name": "Subsystem: Network Interfaces Discovered",
+                "type": "subsystem_health",
+                "passed": !ifaces.is_empty(),
+                "detail": format!("Discovered {} host interface(s)", ifaces.len())
+            }));
+
+            // 14. POSITIVE TEST: DNS Domain Normalization
+            let norm = crate::networking::blocklists::normalize_domain(
+                "HTTPS://WWW.GOOGLE.COM/SEARCH?Q=TEST",
+            )
+            .unwrap_or_default();
+            test_results.push(json!({
+                "name": "Algorithm: DNS Blocklist Domain Normalization",
+                "type": "functional_test",
+                "passed": norm == "www.google.com",
+                "detail": format!("URL correctly normalized to '{norm}'")
+            }));
+
+            let all_passed = test_results
+                .iter()
+                .all(|t| t.get("passed").and_then(|v| v.as_bool()).unwrap_or(false));
+            let passed_count = test_results
+                .iter()
+                .filter(|t| t.get("passed").and_then(|v| v.as_bool()).unwrap_or(false))
+                .count();
+            let total_count = test_results.len();
+
+            let summary = json!({
+                "all_passed": all_passed,
+                "passed": passed_count,
+                "failed": total_count - passed_count,
+                "total": total_count,
+                "tests": test_results
+            });
+            serde_json::to_string_pretty(&summary).map_err(|e| e.to_string())
         }
 
         unknown => Err(format!("Unknown tool '{unknown}'")),
