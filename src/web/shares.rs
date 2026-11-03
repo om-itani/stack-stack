@@ -81,8 +81,9 @@ pub async fn samba_state(State(state): State<AppState>) -> Json<SambaState> {
 
 pub async fn samba_save(
     State(state): State<AppState>,
-    Json(config): Json<SmbConfig>,
+    Json(mut config): Json<SmbConfig>,
 ) -> Result<Response, ApiError> {
+    sync_samba_users(&state, &mut config);
     let problems = config.validate();
     if !problems.is_empty() {
         return Ok(invalid("samba configuration is not valid", problems));
@@ -97,8 +98,9 @@ pub async fn samba_save(
 
 pub async fn samba_apply(
     State(state): State<AppState>,
-    Json(config): Json<SmbConfig>,
+    Json(mut config): Json<SmbConfig>,
 ) -> Result<Response, ApiError> {
+    sync_samba_users(&state, &mut config);
     let problems = config.validate();
     if !problems.is_empty() {
         return Ok(invalid("samba configuration is not valid", problems));
@@ -142,6 +144,21 @@ pub async fn samba_set_user(
     .await
     .map_err(|err| ApiError::internal(format!("samba task failed: {err}")))??;
 
+    let path = state.samba.config_path.clone();
+    let uname = request.username.trim().to_string();
+    tokio::task::spawn_blocking(move || {
+        let (mut config, _) = samba::load(Path::new(&path));
+        if !config.users.iter().any(|u| u.username == uname) {
+            config.users.push(samba::SmbUser {
+                username: uname,
+                enabled: true,
+            });
+            let _ = samba::save(&path, &config);
+        }
+    })
+    .await
+    .ok();
+
     Ok(Json(OkResult { ok: true }))
 }
 
@@ -150,9 +167,30 @@ pub async fn samba_remove_user(
     AxumPath(username): AxumPath<String>,
 ) -> Result<Json<OkResult>, ApiError> {
     let runner = state.samba.runner.clone();
-    tokio::task::spawn_blocking(move || samba::delete_user(runner.as_ref(), &username))
+    let uname_for_delete = username.clone();
+    tokio::task::spawn_blocking(move || samba::delete_user(runner.as_ref(), &uname_for_delete))
         .await
         .map_err(|err| ApiError::internal(format!("samba task failed: {err}")))??;
+
+    let path = state.samba.config_path.clone();
+    let uname = username.clone();
+    tokio::task::spawn_blocking(move || {
+        let (mut config, _) = samba::load(Path::new(&path));
+        let had_user = config.users.iter().any(|u| u.username == uname);
+        if had_user {
+            config.users.retain(|u| u.username != uname);
+            for share in &mut config.shares {
+                share.valid_users.retain(|u| u != &uname);
+                if share.force_user.as_deref() == Some(&uname) {
+                    share.force_user = None;
+                }
+            }
+            let _ = samba::save(&path, &config);
+        }
+    })
+    .await
+    .ok();
+
     Ok(Json(OkResult { ok: true }))
 }
 
@@ -206,9 +244,41 @@ pub async fn nfs_apply(
 // Helpers
 // ---------------------------------------------------------------------------
 
+fn sync_samba_users(state: &AppState, config: &mut SmbConfig) {
+    if let Ok(users) = samba::list_users(state.samba.runner.as_ref()) {
+        for u in users {
+            if !config.users.iter().any(|existing| existing.username == u.username) {
+                config.users.push(samba::SmbUser {
+                    username: u.username,
+                    enabled: true,
+                });
+            }
+        }
+    }
+    for share in &config.shares {
+        for vu in &share.valid_users {
+            if !config.users.iter().any(|existing| &existing.username == vu) {
+                config.users.push(samba::SmbUser {
+                    username: vu.clone(),
+                    enabled: true,
+                });
+            }
+        }
+        if let Some(fu) = &share.force_user {
+            if !fu.trim().is_empty() && !config.users.iter().any(|existing| &existing.username == fu) {
+                config.users.push(samba::SmbUser {
+                    username: fu.clone(),
+                    enabled: true,
+                });
+            }
+        }
+    }
+}
+
 fn collect_samba(state: &AppState) -> SambaState {
     let path = Path::new(&state.samba.config_path);
-    let (config, config_error) = samba::load(path);
+    let (mut config, config_error) = samba::load(path);
+    sync_samba_users(state, &mut config);
     let problems = config.validate();
     let lan = lan_cidr(state);
     let preview = samba::render(&config, lan.as_deref());

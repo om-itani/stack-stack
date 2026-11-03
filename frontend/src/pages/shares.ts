@@ -67,6 +67,32 @@ export function createSharesPage(): PageHandle {
 
   root.append(header, tabBar, body);
 
+  function syncDraftUsers(): void {
+    if (!draft) return;
+    if (!draft.users) draft.users = [];
+    const known = new Set(draft.users.map((u) => u.username));
+    if (samba?.users) {
+      for (const u of samba.users) {
+        if (!known.has(u.username)) {
+          draft.users.push({ username: u.username, enabled: true });
+          known.add(u.username);
+        }
+      }
+    }
+    for (const s of draft.shares) {
+      for (const vu of s.valid_users) {
+        if (!known.has(vu)) {
+          draft.users.push({ username: vu, enabled: true });
+          known.add(vu);
+        }
+      }
+      if (s.force_user && !known.has(s.force_user)) {
+        draft.users.push({ username: s.force_user, enabled: true });
+        known.add(s.force_user);
+      }
+    }
+  }
+
   async function load(): Promise<void> {
     if (busy) return;
     busy = true;
@@ -76,6 +102,7 @@ export function createSharesPage(): PageHandle {
       samba = await sambaApi.state();
       nfs = await nfsApi.state();
       draft = structuredClone(samba.config);
+      syncDraftUsers();
       status = "";
     } catch (err) {
       status = errorText(err);
@@ -88,12 +115,14 @@ export function createSharesPage(): PageHandle {
 
   async function saveDraft(): Promise<void> {
     if (!draft || busy) return;
+    syncDraftUsers();
     busy = true;
     status = "saving…";
     render();
     try {
       samba = await sambaApi.save(draft);
       draft = structuredClone(samba.config);
+      syncDraftUsers();
       status = "saved";
     } catch (err) {
       status = errorText(err);
@@ -105,6 +134,7 @@ export function createSharesPage(): PageHandle {
 
   async function applyDraft(): Promise<void> {
     if (!draft || busy) return;
+    syncDraftUsers();
     busy = true;
     status = "applying…";
     render();
@@ -112,6 +142,7 @@ export function createSharesPage(): PageHandle {
       const report = await sambaApi.apply(draft);
       samba = report.state;
       draft = structuredClone(samba.config);
+      syncDraftUsers();
       steps = report.steps;
       status = report.steps.every((step) => step.ok) ? "applied" : "applied with problems";
     } catch (err) {
@@ -330,6 +361,9 @@ export function createSharesPage(): PageHandle {
       submitBtn.textContent = "Creating Account…";
       try {
         await sambaApi.setUser(username.trim(), password, true);
+        if (draft && !draft.users.some((u) => u.username === username.trim())) {
+          draft.users.push({ username: username.trim(), enabled: true });
+        }
         showToast({ tone: "ok", title: "Samba Account Created", message: `Account '${username.trim()}' is active.` });
         modal.close();
         await load();
@@ -474,6 +508,7 @@ export function createSharesPage(): PageHandle {
       } else if (draft) {
         draft.shares.push(s);
       }
+      syncDraftUsers();
       modal.close();
       render();
     });
@@ -689,6 +724,13 @@ export function createSharesPage(): PageHandle {
           button("Delete", "text-xs text-rose-400 hover:text-rose-300 px-2 py-0.5", async () => {
             if (window.confirm(`Delete Samba user '${user.username}'?`)) {
               await withBusy(() => sambaApi.removeUser(user.username));
+              if (draft) {
+                draft.users = draft.users.filter((u) => u.username !== user.username);
+                for (const s of draft.shares) {
+                  s.valid_users = s.valid_users.filter((u) => u !== user.username);
+                  if (s.force_user === user.username) s.force_user = null;
+                }
+              }
               showToast({ tone: "ok", title: "User Removed", message: `Samba user '${user.username}' deleted.` });
               await load();
             }

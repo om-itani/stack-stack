@@ -157,7 +157,7 @@ impl SmbConfig {
                 });
             }
             for user in &share.valid_users {
-                if !usernames.contains(&user.as_str()) {
+                if !usernames.is_empty() && !usernames.contains(&user.as_str()) {
                     problems.push(Problem {
                         field: format!("{field}.valid_users"),
                         message: format!("{user:?} is not one of the configured Samba users"),
@@ -166,6 +166,7 @@ impl SmbConfig {
             }
             if let Some(force) = share.force_user.as_deref()
                 && !force.trim().is_empty()
+                && !usernames.is_empty()
                 && !usernames.contains(&force)
             {
                 problems.push(Problem {
@@ -560,6 +561,21 @@ mod tests {
         let problems = config.validate();
         assert_eq!(problems.len(), 1);
         assert!(problems[0].message.contains("bob"));
+    }
+
+    #[test]
+    fn valid_users_allowed_when_empty_user_list() {
+        let config = SmbConfig {
+            enabled: true,
+            users: vec![],
+            shares: vec![SmbShare {
+                valid_users: vec!["alice".to_string()],
+                ..share("media")
+            }],
+            ..SmbConfig::default()
+        };
+        let problems = config.validate();
+        assert!(problems.is_empty());
     }
 
     #[test]
