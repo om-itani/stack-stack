@@ -25,7 +25,7 @@ use crate::state::AppState;
 fn is_exempt(path: &str) -> bool {
     matches!(
         path,
-        "/api/health" | "/api/auth/setup" | "/api/auth/login" | "/api/auth/session"
+        "/api/health" | "/api/auth/setup" | "/api/auth/login" | "/api/auth/session" | "/api/mcp"
     )
 }
 
@@ -236,6 +236,7 @@ mod tests {
         assert!(is_exempt("/api/auth/setup"));
         assert!(is_exempt("/api/auth/login"));
         assert!(is_exempt("/api/auth/session"));
+        assert!(is_exempt("/api/mcp"));
         assert!(!is_exempt("/api/auth/logout"));
         assert!(!is_exempt("/api/auth/password"));
         assert!(!is_exempt("/api/containers"));

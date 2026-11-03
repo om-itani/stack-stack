@@ -344,6 +344,49 @@ pub fn list_users(runner: &dyn Runner) -> Result<Vec<SmbUserStatus>, String> {
     Ok(parse_pdbedit(&output.stdout))
 }
 
+/// Ensure a matching Unix system account exists so Samba (pdbedit / smbpasswd)
+/// can associate a UID. If the account does not exist, create a non-login user.
+pub fn ensure_system_user(runner: &dyn Runner, username: &str) -> Result<(), ApiError> {
+    let check = runner.run_timeout("id", &[username.to_string()], Duration::from_secs(5));
+    if let Ok(res) = check
+        && res.success()
+    {
+        return Ok(());
+    }
+
+    // Account does not exist in /etc/passwd; create a non-login system user for Samba
+    let add = runner.run_timeout(
+        "useradd",
+        &[
+            "-M".to_string(),
+            "-s".to_string(),
+            "/usr/sbin/nologin".to_string(),
+            username.to_string(),
+        ],
+        Duration::from_secs(10),
+    );
+    match add {
+        Ok(res) if res.success() => Ok(()),
+        Ok(_) => {
+            // Fallback for distros where /usr/sbin/nologin is /bin/false
+            let _ = runner.run_timeout(
+                "useradd",
+                &[
+                    "-M".to_string(),
+                    "-s".to_string(),
+                    "/bin/false".to_string(),
+                    username.to_string(),
+                ],
+                Duration::from_secs(10),
+            );
+            Ok(())
+        }
+        Err(err) => Err(ApiError::internal(format!(
+            "cannot create system user for Samba: {err}"
+        ))),
+    }
+}
+
 /// Set (or create) a Samba password. The password is written twice on stdin,
 /// exactly as `smbpasswd -s` expects, and never appears on the command line.
 pub fn set_password(runner: &dyn Runner, username: &str, password: &str) -> Result<(), ApiError> {
@@ -356,8 +399,12 @@ pub fn set_password(runner: &dyn Runner, username: &str, password: &str) -> Resu
             "a Samba password must be at least 8 characters",
         ));
     }
+
+    // Ensure Unix system user exists so Samba can assign a UID
+    let _ = ensure_system_user(runner, username);
+
     let input = format!("{password}\n{password}\n");
-    let output = runner
+    let mut output = runner
         .run_with_input(
             "smbpasswd",
             &["-a".to_string(), "-s".to_string(), username.to_string()],
@@ -365,6 +412,20 @@ pub fn set_password(runner: &dyn Runner, username: &str, password: &str) -> Resu
             input.as_bytes(),
         )
         .map_err(|err| ApiError::unavailable(format!("smbpasswd is not available: {err}")))?;
+
+    if !output.success() {
+        // If -a failed (e.g. user already existed in passdb), retry without -a to update password
+        if let Ok(retry) = runner.run_with_input(
+            "smbpasswd",
+            &["-s".to_string(), username.to_string()],
+            Duration::from_secs(20),
+            input.as_bytes(),
+        ) && retry.success()
+        {
+            output = retry;
+        }
+    }
+
     if output.timed_out || !output.success() {
         return Err(ApiError::internal(format!(
             "could not set the Samba password for {username}: {}",
