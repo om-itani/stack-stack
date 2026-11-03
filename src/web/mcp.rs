@@ -2267,16 +2267,19 @@ async fn execute_tool(state: &AppState, name: &str, args: Value) -> Result<Strin
                 "detail": format!("Validation reported {} problem(s)", vm_problems.len())
             }));
 
-            // 6. NEGATIVE TEST: Non-existent container logs handled without crash
-            let bad_log_res = state
+            // 6. NEGATIVE TEST: Non-existent container action handled without crash
+            let bad_action_res = state
                 .docker
-                .logs("nonexistent-container-xyz-9999", "10")
+                .action(
+                    "nonexistent-container-xyz-9999",
+                    crate::containers::docker::ContainerAction::Start,
+                )
                 .await;
             test_results.push(json!({
-                "name": "Resilience: Query non-existent container logs fails cleanly",
+                "name": "Resilience: Start non-existent container fails cleanly",
                 "type": "error_boundary",
-                "passed": bad_log_res.is_err(),
-                "detail": "Non-existent container query returns clean error without panic"
+                "passed": bad_action_res.is_err(),
+                "detail": "Non-existent container action returns clean error without panic"
             }));
 
             // 7. POSITIVE TEST: Web UI Port 8553 Reachability
