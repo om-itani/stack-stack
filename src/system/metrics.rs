@@ -361,8 +361,12 @@ pub(crate) fn cpu_temperature_c() -> Option<f32> {
             ]
             .iter()
             .any(|needle| name.contains(needle));
-            if is_cpu && let Some(temp) = read_millidegrees(&chip.join("temp1_input")) {
-                return Some(temp);
+            if is_cpu {
+                for input in ["temp1_input", "temp2_input", "temp3_input"] {
+                    if let Some(temp) = read_millidegrees(&chip.join(input)) {
+                        return Some(temp);
+                    }
+                }
             }
         }
     }

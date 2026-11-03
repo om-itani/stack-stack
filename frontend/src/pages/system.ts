@@ -11,7 +11,7 @@
  */
 
 import { containersApi, metricsApi, systemPowerApi } from "../api";
-import type { Container, HistoryRange, HistoryPoint } from "../api";
+import type { Container, HistoryRange, HistoryPoint, PowerProfileStatus } from "../api";
 import { Sparkline } from "../spark";
 import type { Telemetry } from "../telemetry";
 import type { Disk, Network, Smart, Snapshot } from "../telemetry";
@@ -237,9 +237,20 @@ export function createSystemPage(telemetry: Telemetry): PageHandle {
   ];
 
   let currentPowerProfile: PowerProfile = "balanced";
+  let lastPowerStatus: PowerProfileStatus | undefined;
 
-  function powerProfileControl(host: HTMLElement): void {
+  function powerProfileControl(host: HTMLElement, status?: PowerProfileStatus): void {
+    if (status) {
+      lastPowerStatus = status;
+    }
     host.replaceChildren();
+    if (lastPowerStatus?.vendor) {
+      const tag = document.createElement("span");
+      tag.className = "text-[9px] text-neutral-400 font-mono pr-1";
+      tag.textContent = lastPowerStatus.vendor;
+      tag.title = `Driver: ${lastPowerStatus.driver} | Governor: ${lastPowerStatus.governor}${lastPowerStatus.energy_preference ? ` | EPP: ${lastPowerStatus.energy_preference}` : ""}`;
+      host.append(tag);
+    }
     for (const p of POWER_PROFILES) {
       const active = p.id === currentPowerProfile;
       const btn = document.createElement("button");
@@ -652,7 +663,7 @@ export function createSystemPage(telemetry: Telemetry): PageHandle {
     .getProfile()
     .then((status) => {
       currentPowerProfile = status.current_profile;
-      powerProfileControl(cpuPowerEl);
+      powerProfileControl(cpuPowerEl, status);
     })
     .catch(() => {});
 

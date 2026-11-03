@@ -1855,9 +1855,12 @@ export const storageApi = {
 
 export interface PowerProfileStatus {
   current_profile: "quiet" | "balanced" | "performance";
+  vendor?: string;
+  driver?: string;
   governor: string;
   energy_preference?: string | null;
   available_governors: string[];
+  available_preferences?: string[];
   cpu_temp_c?: number | null;
   freq_mhz?: number | null;
 }
