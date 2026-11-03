@@ -8,7 +8,7 @@
 
 import { logsApi } from "../api";
 import type { LogEntry, LogsState } from "../api";
-import { button, el, emptyNote, field, select, textInput } from "../ui";
+import { button, debounce, el, emptyNote, field, select, textInput } from "../ui";
 
 export interface PageHandle {
   root: HTMLElement;
@@ -89,9 +89,10 @@ export function createLogsPage(): PageHandle {
     },
   );
 
+  const debouncedRenderTable = debounce(renderTable, 150);
   const search = textInput("", (value) => {
     filter = value.toLowerCase();
-    renderTable();
+    debouncedRenderTable();
   }, { class: "w-48", placeholder: "filter…" });
 
   const followButton = button("follow", "", () => {
@@ -186,10 +187,21 @@ export function createLogsPage(): PageHandle {
     }
   }
 
+  function renderLogRow(entry: LogEntry): HTMLElement {
+    return el("tr", { class: "border-b border-white/5" }, [
+      el("td", { class: "tabular px-2 py-0.5 whitespace-nowrap text-neutral-600", text: formatTime(entry.ts_ms) }),
+      el("td", { class: "px-2 py-0.5 whitespace-nowrap text-neutral-500", text: entry.unit }),
+      el("td", {
+        class: `px-2 py-0.5 break-all ${LEVEL_CLASS[entry.priority] ?? "text-neutral-400"}`,
+        text: entry.message,
+      }),
+    ]);
+  }
+
   function renderTable(): void {
     tableBody.replaceChildren();
     if (!loaded) {
-      tableBody.append(el("tr", {}, [el("td", { class: "px-2 py-2 text-neutral-600", text: "loading…" })]));
+      tableBody.append(el("tr", { "data-empty": "true" }, [el("td", { class: "px-2 py-2 text-neutral-600", text: "loading…" })]));
       return;
     }
     const visible = entries.filter((entry) =>
@@ -200,21 +212,14 @@ export function createLogsPage(): PageHandle {
     );
     if (visible.length === 0) {
       tableBody.append(
-        el("tr", {}, [el("td", { colspan: "3", class: "px-2 py-2", text: "" }), emptyNote(filter ? "no matching lines" : "no entries")]),
+        el("tr", { "data-empty": "true" }, [
+          el("td", { colspan: "3", class: "px-2 py-2" }, [emptyNote(filter ? "no matching lines" : "no entries")]),
+        ]),
       );
       return;
     }
     for (const entry of visible) {
-      tableBody.append(
-        el("tr", { class: "border-b border-white/5" }, [
-          el("td", { class: "tabular px-2 py-0.5 whitespace-nowrap text-neutral-600", text: formatTime(entry.ts_ms) }),
-          el("td", { class: "px-2 py-0.5 whitespace-nowrap text-neutral-500", text: entry.unit }),
-          el("td", {
-            class: `px-2 py-0.5 break-all ${LEVEL_CLASS[entry.priority] ?? "text-neutral-400"}`,
-            text: entry.message,
-          }),
-        ]),
-      );
+      tableBody.append(renderLogRow(entry));
     }
   }
 
@@ -284,8 +289,28 @@ export function createLogsPage(): PageHandle {
         unit: String(value._SYSTEMD_UNIT ?? value.SYSLOG_IDENTIFIER ?? value._COMM ?? "kernel"),
         message: String(value.MESSAGE ?? ""),
       };
-      entries = [entry, ...entries].slice(0, 2000);
-      renderTable();
+      entries.unshift(entry);
+      if (entries.length > 2000) {
+        entries.pop();
+      }
+
+      if (!loaded) return;
+
+      const matchesFilter =
+        filter === "" ||
+        entry.message.toLowerCase().includes(filter) ||
+        entry.unit.toLowerCase().includes(filter);
+
+      if (matchesFilter) {
+        const first = tableBody.firstElementChild;
+        if (first && first.getAttribute("data-empty") === "true") {
+          tableBody.replaceChildren();
+        }
+        tableBody.prepend(renderLogRow(entry));
+        while (tableBody.children.length > 2000) {
+          tableBody.lastElementChild?.remove();
+        }
+      }
     } catch {
       // journalctl only emits JSON here; ignore anything else.
     }

@@ -180,18 +180,63 @@ export function createContainersPage(): PageHandle {
     await load();
   }
 
+  interface ContainerCardHandle {
+    root: HTMLElement;
+    update: (container: Container) => void;
+  }
+
+  const cardMap = new Map<string, ContainerCardHandle>();
+
   function render(containers: Container[]): void {
-    grid.replaceChildren();
     if (containers.length === 0) {
-      grid.append(
+      cardMap.clear();
+      grid.replaceChildren(
         emptyNote(
           "no containers. Docker may not be running, or no containers are deployed yet.",
         ),
       );
       return;
     }
+
+    if (cardMap.size === 0 && grid.children.length > 0) {
+      grid.replaceChildren();
+    }
+
+    const seen = new Set<string>();
     for (const container of containers) {
-      grid.append(card(container));
+      seen.add(container.id);
+      const existing = cardMap.get(container.id);
+      if (existing) {
+        existing.update(container);
+      } else {
+        const handle = createCard(container);
+        cardMap.set(container.id, handle);
+        grid.append(handle.root);
+      }
+    }
+
+    for (const [id, handle] of cardMap.entries()) {
+      if (!seen.has(id)) {
+        handle.root.remove();
+        cardMap.delete(id);
+      }
+    }
+
+    let previousNode: HTMLElement | null = null;
+    for (const container of containers) {
+      const handle = cardMap.get(container.id);
+      if (!handle) continue;
+      const node = handle.root;
+      if (previousNode === null) {
+        if (grid.firstElementChild !== node) {
+          grid.prepend(node);
+        }
+      } else {
+        if (previousNode.nextElementSibling !== node) {
+          previousNode.after(node);
+        }
+      }
+      previousNode = node;
     }
   }
 
@@ -423,7 +468,8 @@ export function createContainersPage(): PageHandle {
     watcher.observe(document.body, { childList: true });
   }
 
-  function card(container: Container): HTMLElement {
+  function createCard(initial: Container): ContainerCardHandle {
+    let current = initial;
     const el = document.createElement("section");
     el.className = "panel flex flex-col";
 
@@ -431,22 +477,23 @@ export function createContainersPage(): PageHandle {
     head.className = "flex items-baseline justify-between gap-3 border-b border-white/5 px-3 py-1.5";
     const name = document.createElement("span");
     name.className = "truncate font-semibold text-neutral-200";
-    name.textContent = container.name || container.id.slice(0, 12);
-    head.append(name, badge(container.state, STATE_TONES[container.state] ?? "muted"));
+    name.textContent = current.name || current.id.slice(0, 12);
+    const stateBadge = badge(current.state, STATE_TONES[current.state] ?? "muted");
+    head.append(name, stateBadge);
 
     const meta = document.createElement("div");
     meta.className = "tabular flex flex-wrap items-baseline gap-x-3 px-3 py-1 text-[10px] text-neutral-600";
     const image = document.createElement("span");
     image.className = "truncate";
-    image.textContent = container.image || "—";
+    image.textContent = current.image || "—";
     const source = document.createElement("span");
-    source.className = container.source === "app-store" ? "text-emerald-600" : "text-neutral-600";
-    source.textContent = container.source === "app-store" ? `app:${container.app_id ?? "?"}` : "manual";
+    source.className = current.source === "app-store" ? "text-emerald-600" : "text-neutral-600";
+    source.textContent = current.source === "app-store" ? `app:${current.app_id ?? "?"}` : "manual";
     meta.append(image, source);
-    if (container.stack) {
-      const stackTag = document.createElement("span");
-      stackTag.className = "text-sky-600";
-      stackTag.textContent = `stack:${container.stack}`;
+    const stackTag = document.createElement("span");
+    stackTag.className = "text-sky-600";
+    if (current.stack) {
+      stackTag.textContent = `stack:${current.stack}`;
       meta.append(stackTag);
     }
 
@@ -454,90 +501,158 @@ export function createContainersPage(): PageHandle {
     body.className = "flex-1 px-3 py-2 text-[11px] text-neutral-500";
     const statusLine = document.createElement("div");
     statusLine.className = "truncate";
-    statusLine.textContent = container.status || container.id.slice(0, 12);
+    statusLine.textContent = current.status || current.id.slice(0, 12);
     body.append(statusLine);
 
-    if (container.ports.length > 0) {
-      const ports = document.createElement("div");
-      ports.className = "tabular mt-1 flex flex-wrap gap-x-3 text-[10px] text-neutral-600";
-      for (const port of container.ports) {
+    const portsContainer = document.createElement("div");
+    portsContainer.className = "tabular mt-1 flex flex-wrap gap-x-3 text-[10px] text-neutral-600";
+    function renderPorts(ports: Container["ports"]): void {
+      portsContainer.replaceChildren();
+      if (ports.length === 0) return;
+      for (const port of ports) {
         const span = document.createElement("span");
         span.textContent = port.public
           ? `${port.public}→${port.private}/${port.protocol}`
           : `${port.private}/${port.protocol}`;
-        ports.append(span);
+        portsContainer.append(span);
         if (!port.public) {
           const unpublished = document.createElement("span");
           unpublished.className = "text-neutral-700";
           unpublished.textContent = "(not published)";
-          ports.append(unpublished);
+          portsContainer.append(unpublished);
         }
       }
-      body.append(ports);
     }
+    renderPorts(current.ports);
+    body.append(portsContainer);
 
     const links = document.createElement("div");
     links.className = "flex flex-wrap gap-2 px-3 pb-1";
-    for (const url of container.web_urls.slice(0, 4)) {
-      const anchor = document.createElement("a");
-      anchor.href = url;
-      anchor.target = "_blank";
-      anchor.rel = "noreferrer";
-      anchor.textContent = `open :${linkPort(url)}`;
-      anchor.className =
-        "border border-emerald-800 px-2 py-0.5 text-emerald-400 hover:border-emerald-500";
-      links.append(anchor);
+    function renderLinks(urls: string[]): void {
+      links.replaceChildren();
+      for (const url of urls.slice(0, 4)) {
+        const anchor = document.createElement("a");
+        anchor.href = url;
+        anchor.target = "_blank";
+        anchor.rel = "noreferrer";
+        anchor.textContent = `open :${linkPort(url)}`;
+        anchor.className =
+          "border border-emerald-800 px-2 py-0.5 text-emerald-400 hover:border-emerald-500";
+        links.append(anchor);
+      }
     }
+    renderLinks(current.web_urls);
 
     const actions = document.createElement("div");
     actions.className = "flex flex-wrap gap-2 border-t border-white/5 px-3 py-2";
 
-    const running = container.state === "running";
     const startBtn = button("start");
-    startBtn.disabled = running || busy;
     startBtn.addEventListener("click", () =>
-      void run(() => api.start(container.id), `starting ${container.name}…`),
+      void run(() => api.start(current.id), `starting ${current.name}…`),
     );
 
     const stopBtn = button("stop");
-    stopBtn.disabled = !running || busy;
     stopBtn.addEventListener("click", () =>
-      void run(() => api.stop(container.id), `stopping ${container.name}…`),
+      void run(() => api.stop(current.id), `stopping ${current.name}…`),
     );
 
     const restartBtn = button("restart");
-    restartBtn.disabled = busy;
     restartBtn.addEventListener("click", () =>
-      void run(() => api.restart(container.id), `restarting ${container.name}…`),
+      void run(() => api.restart(current.id), `restarting ${current.name}…`),
     );
 
     const statsBtn = button("stats");
-    statsBtn.disabled = !running;
-    statsBtn.addEventListener("click", () => openStats(container));
+    statsBtn.addEventListener("click", () => openStats(current));
 
     const logsBtn = button("logs");
     logsBtn.addEventListener("click", () => {
-      void loadTerminal().then((terminal) => terminal.openLogs(container.id, container.name));
+      void loadTerminal().then((terminal) => terminal.openLogs(current.id, current.name));
     });
 
     const termBtn = button("terminal");
-    termBtn.disabled = !running || busy;
     termBtn.addEventListener("click", () => {
-      void loadTerminal().then((terminal) => terminal.openTerminal(container.id, container.name));
+      void loadTerminal().then((terminal) => terminal.openTerminal(current.id, current.name));
     });
 
     const deleteBtn = button("delete", "text-rose-400 hover:border-rose-500");
-    deleteBtn.disabled = busy;
     deleteBtn.addEventListener("click", () => {
-      if (window.confirm(`Delete container ${container.name}? This cannot be undone.`)) {
-        void run(() => api.remove(container.id), `deleting ${container.name}…`);
+      if (window.confirm(`Delete container ${current.name}? This cannot be undone.`)) {
+        void run(() => api.remove(current.id), `deleting ${current.name}…`);
       }
     });
 
     actions.append(startBtn, stopBtn, restartBtn, statsBtn, logsBtn, termBtn, deleteBtn);
-
     el.append(head, meta, body, links, actions);
-    return el;
+
+    function syncButtons(): void {
+      const running = current.state === "running";
+      startBtn.disabled = running || busy;
+      stopBtn.disabled = !running || busy;
+      restartBtn.disabled = busy;
+      statsBtn.disabled = !running;
+      termBtn.disabled = !running || busy;
+      deleteBtn.disabled = busy;
+    }
+    syncButtons();
+
+    function update(next: Container): void {
+      const prev = current;
+      current = next;
+
+      if (prev.name !== next.name) {
+        name.textContent = next.name || next.id.slice(0, 12);
+      }
+
+      if (prev.state !== next.state) {
+        stateBadge.textContent = next.state;
+        stateBadge.className = `badge badge-${STATE_TONES[next.state] ?? "muted"}`;
+      }
+
+      if (prev.image !== next.image) {
+        image.textContent = next.image || "—";
+      }
+
+      if (prev.source !== next.source || prev.app_id !== next.app_id) {
+        source.className = next.source === "app-store" ? "text-emerald-600" : "text-neutral-600";
+        source.textContent = next.source === "app-store" ? `app:${next.app_id ?? "?"}` : "manual";
+      }
+
+      if (prev.stack !== next.stack) {
+        if (next.stack) {
+          stackTag.textContent = `stack:${next.stack}`;
+          if (!stackTag.parentElement) meta.append(stackTag);
+        } else {
+          stackTag.remove();
+        }
+      }
+
+      if (prev.status !== next.status) {
+        statusLine.textContent = next.status || next.id.slice(0, 12);
+      }
+
+      const portsChanged =
+        prev.ports.length !== next.ports.length ||
+        prev.ports.some(
+          (p, i) =>
+            p.public !== next.ports[i]?.public ||
+            p.private !== next.ports[i]?.private ||
+            p.protocol !== next.ports[i]?.protocol,
+        );
+      if (portsChanged) {
+        renderPorts(next.ports);
+      }
+
+      const urlsChanged =
+        prev.web_urls.length !== next.web_urls.length ||
+        prev.web_urls.some((u, i) => u !== next.web_urls[i]);
+      if (urlsChanged) {
+        renderLinks(next.web_urls);
+      }
+
+      syncButtons();
+    }
+
+    return { root: el, update };
   }
 
   reload.addEventListener("click", () => void load());

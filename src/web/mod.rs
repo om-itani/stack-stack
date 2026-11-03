@@ -349,6 +349,7 @@ pub fn router(state: AppState) -> Router {
         .layer(middleware::from_fn_with_state(state.clone(), auth::gate))
         // Deadline is inside tracing so a timeout is still logged.
         .layer(middleware::from_fn(layers::timeout_requests))
+        .layer(middleware::from_fn(layers::catch_panics))
         .layer(middleware::from_fn(layers::trace_requests))
         .with_state(state)
 }

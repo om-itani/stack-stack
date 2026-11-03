@@ -106,6 +106,22 @@ impl DockerClient {
         *self.list_cache.write().await = None;
     }
 
+    /// Evict cached Docker client and container listing so subsequent requests
+    /// establish a fresh connection to the daemon.
+    pub async fn evict(&self) {
+        *self.cached.write().await = None;
+        *self.list_cache.write().await = None;
+    }
+
+    /// Automatically evicts cached connection if an operation encounters an
+    /// unavailable / disconnected Docker daemon.
+    async fn on_error<T>(&self, res: Result<T, ApiError>) -> Result<T, ApiError> {
+        if let Err(ApiError::Unavailable(_)) = &res {
+            self.evict().await;
+        }
+        res
+    }
+
     /// Cached connection, established on first use. A previously failed attempt
     /// is retried on the next call, so Docker coming up late is picked up.
     pub async fn get(&self) -> Result<Docker, ApiError> {
@@ -155,7 +171,8 @@ impl DockerClient {
             // only proves the file is there.
             Err(err) => match ApiError::from(err) {
                 ApiError::Unavailable(err) => {
-                    tracing::debug!(%err, "docker daemon unreachable, reporting no containers");
+                    self.evict().await;
+                    tracing::debug!(%err, "docker daemon unreachable, evicted cache and reporting no containers");
                     return Ok(Vec::new());
                 }
                 err => return Err(err),
@@ -192,7 +209,7 @@ impl DockerClient {
                 docker.restart_container(id, Some(options)).await
             }
         };
-        result.map_err(ApiError::from)?;
+        self.on_error(result.map_err(ApiError::from)).await?;
         self.invalidate().await;
         Ok(())
     }
@@ -206,10 +223,11 @@ impl DockerClient {
             .force(true)
             .v(false)
             .build();
-        docker
+        let res = docker
             .remove_container(id, Some(options))
             .await
-            .map_err(ApiError::from)?;
+            .map_err(ApiError::from);
+        self.on_error(res).await?;
         self.invalidate().await;
         Ok(())
     }
@@ -224,11 +242,10 @@ impl DockerClient {
             .one_shot(true)
             .build();
         let mut stream = docker.stats(&id, Some(options));
-        let sample = stream
-            .next()
-            .await
-            .transpose()
-            .map_err(ApiError::from)?
+        let next_item = self
+            .on_error(stream.next().await.transpose().map_err(ApiError::from))
+            .await?;
+        let sample = next_item
             .ok_or_else(|| ApiError::unavailable("docker returned no stats for this container"))?;
         Ok(compute_stats(&id, &sample))
     }
@@ -251,7 +268,7 @@ impl DockerClient {
         let id = store::sanitize_container_id(id)?;
         let docker = self.get().await?;
 
-        let created = docker
+        let created_res = docker
             .create_exec(
                 id,
                 CreateExecOptions {
@@ -263,9 +280,11 @@ impl DockerClient {
                     ..Default::default()
                 },
             )
-            .await?;
+            .await
+            .map_err(ApiError::from);
+        let created = self.on_error(created_res).await?;
 
-        let started = docker
+        let started_res = docker
             .start_exec(
                 &created.id,
                 Some(StartExecOptions {
@@ -274,7 +293,9 @@ impl DockerClient {
                     output_capacity: Some(EXEC_OUTPUT_CAPACITY),
                 }),
             )
-            .await?;
+            .await
+            .map_err(ApiError::from);
+        let started = self.on_error(started_res).await?;
 
         match started {
             StartExecResults::Attached { output, input } => Ok(ExecSession {
@@ -292,7 +313,7 @@ impl DockerClient {
     /// is not worth tearing the socket down for.
     pub async fn resize(&self, exec_id: &str, cols: u16, rows: u16) -> Result<(), ApiError> {
         let docker = self.get().await?;
-        docker
+        let res = docker
             .resize_exec(
                 exec_id,
                 ResizeExecOptions {
@@ -301,7 +322,8 @@ impl DockerClient {
                 },
             )
             .await
-            .map_err(ApiError::from)
+            .map_err(ApiError::from);
+        self.on_error(res).await
     }
 }
 

@@ -11,6 +11,7 @@ use axum::extract::Request;
 use axum::http::{StatusCode, header};
 use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
+use futures_util::FutureExt;
 
 use crate::error::ErrorResponse;
 
@@ -63,6 +64,36 @@ pub async fn timeout_requests(request: Request, next: Next) -> Response {
             (
                 StatusCode::GATEWAY_TIMEOUT,
                 Json(ErrorResponse::new("Timeout", "request timed out")),
+            )
+                .into_response()
+        }
+    }
+}
+
+/// Catch unexpected panics inside request handlers and return a graceful 500
+/// response without dropping the client TCP socket.
+pub async fn catch_panics(request: Request, next: Next) -> Response {
+    let path = request.uri().path().to_string();
+    match std::panic::AssertUnwindSafe(next.run(request))
+        .catch_unwind()
+        .await
+    {
+        Ok(response) => response,
+        Err(err) => {
+            let msg = if let Some(s) = err.downcast_ref::<&str>() {
+                *s
+            } else if let Some(s) = err.downcast_ref::<String>() {
+                s.as_str()
+            } else {
+                "internal handler panic"
+            };
+            tracing::error!(%path, panic = %msg, "handler panicked; returning 500 panic boundary");
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse::new(
+                    "Panic",
+                    "internal server error: handler panicked",
+                )),
             )
                 .into_response()
         }

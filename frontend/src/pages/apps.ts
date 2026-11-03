@@ -11,7 +11,7 @@
 import { api, hubApi } from "../api";
 import type { App, HubRepo } from "../api";
 import { stageStackDraft } from "../stackdraft";
-import { badge, button, emptyNote } from "../ui";
+import { badge, button, debounce, emptyNote } from "../ui";
 
 export interface PageHandle {
   root: HTMLElement;
@@ -435,7 +435,8 @@ export function createAppsPage(): PageHandle {
     return el;
   }
 
-  search.addEventListener("input", render);
+  search.addEventListener("input", debounce(render, 150));
+  search.addEventListener("search", render);
   category.addEventListener("change", render);
   installedBox.addEventListener("change", render);
 

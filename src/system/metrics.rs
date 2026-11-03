@@ -9,6 +9,7 @@ use std::collections::HashMap;
 use std::fs;
 #[cfg(target_os = "linux")]
 use std::process::Command;
+use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use serde::Serialize;
@@ -91,6 +92,24 @@ pub struct Snapshot {
     pub disks: Vec<Disk>,
     pub networks: Vec<Network>,
     pub smart: Vec<Smart>,
+    #[serde(skip)]
+    pub serialized: OnceLock<Arc<str>>,
+}
+
+impl Snapshot {
+    /// Return the pre-serialized JSON representation of this snapshot.
+    /// Serializes lazily on first access if not already cached.
+    pub fn serialized_json(&self) -> Arc<str> {
+        self.serialized
+            .get_or_init(|| match serde_json::to_string(self) {
+                Ok(s) => Arc::from(s),
+                Err(err) => {
+                    tracing::warn!(%err, "failed to serialize snapshot");
+                    Arc::from("{}")
+                }
+            })
+            .clone()
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -138,6 +157,7 @@ impl Sampler {
             disks: sample_disks(cfg),
             networks: networks.values().cloned().collect::<Vec<_>>(),
             smart: self.smart.get(cfg.smart_interval_s),
+            serialized: OnceLock::new(),
         }
     }
 }
@@ -272,26 +292,23 @@ fn cpu_percentages(d: CpuTimes) -> CpuPct {
 /// `/proc/stat` cpu lines: `cpuN user nice system idle iowait irq softirq steal ...`
 /// all in USER_HZ jiffies.
 fn parse_cpu_line(line: &str) -> Option<CpuTimes> {
-    let fields: Vec<u64> = line
+    let mut iter = line
         .split_whitespace()
         .skip(1)
-        .filter_map(|f| f.parse::<u64>().ok())
-        .collect();
-    if fields.len() < 5 {
-        return None;
-    }
+        .filter_map(|f| f.parse::<u64>().ok());
 
-    let user = fields[0];
-    let nice = fields[1];
-    let system = fields[2];
-    let idle = fields[3];
-    let iowait = fields[4];
-    let irq = fields.get(5).copied().unwrap_or(0);
-    let softirq = fields.get(6).copied().unwrap_or(0);
-    let steal = fields.get(7).copied().unwrap_or(0);
+    let user = iter.next()?;
+    let nice = iter.next()?;
+    let system = iter.next()?;
+    let idle = iter.next()?;
+    let iowait = iter.next()?;
+    let irq = iter.next().unwrap_or(0);
+    let softirq = iter.next().unwrap_or(0);
+    let steal = iter.next().unwrap_or(0);
 
+    let total = user + nice + system + idle + iowait + irq + softirq + steal;
     Some(CpuTimes {
-        total: fields.iter().take(8).sum(),
+        total,
         idle,
         iowait,
         user: user + nice,
@@ -609,15 +626,18 @@ fn sample_networks(
         if iface.is_empty() || iface == "lo" {
             continue;
         }
-        let fields: Vec<u64> = rest
+        let mut iter = rest
             .split_whitespace()
-            .filter_map(|f| f.parse::<u64>().ok())
-            .collect();
-        if fields.len() < 16 {
+            .filter_map(|f| f.parse::<u64>().ok());
+        let Some(rx_bytes) = iter.next() else {
+            continue;
+        };
+        let Some(tx_bytes) = iter.nth(7) else {
+            continue;
+        };
+        if iter.count() < 7 {
             continue;
         }
-        let rx_bytes = fields[0];
-        let tx_bytes = fields[8];
 
         let elapsed = prev_at
             .map(|p| now.duration_since(p).as_secs_f64())

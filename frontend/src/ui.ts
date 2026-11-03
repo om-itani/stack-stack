@@ -74,6 +74,13 @@ export function animateNumber(
   const previous = raw === undefined ? Number.NaN : Number(raw);
   node.dataset.value = String(value);
 
+  // Cancel any in-flight animation frame on this element before starting a new one
+  const el = node as HTMLElement & { _rafId?: number };
+  if (el._rafId !== undefined) {
+    cancelAnimationFrame(el._rafId);
+    el._rafId = undefined;
+  }
+
   if (!Number.isFinite(previous) || previous === value || durationMs <= 0) {
     node.textContent = format(value);
     return;
@@ -87,12 +94,32 @@ export function animateNumber(
     const current = previous + (value - previous) * eased;
     node.textContent = format(current);
     if (progress < 1) {
-      requestAnimationFrame(step);
+      el._rafId = requestAnimationFrame(step);
     } else {
+      el._rafId = undefined;
       node.textContent = format(value);
     }
   };
-  requestAnimationFrame(step);
+  el._rafId = requestAnimationFrame(step);
+}
+
+/**
+ * Debounce a callback by waitMs, preventing rapid DOM updates or network churn.
+ */
+export function debounce<T extends (...args: any[]) => void>(
+  fn: T,
+  waitMs = 200,
+): (...args: Parameters<T>) => void {
+  let timer: number | undefined;
+  return (...args: Parameters<T>) => {
+    if (timer !== undefined) {
+      window.clearTimeout(timer);
+    }
+    timer = window.setTimeout(() => {
+      timer = undefined;
+      fn(...args);
+    }, waitMs);
+  };
 }
 
 export interface Modal {

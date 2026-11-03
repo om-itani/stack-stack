@@ -49,6 +49,9 @@ pub fn spawn_sampler(state: AppState, cfg: Config) {
             let cfg = cfg.clone();
             let collected = tokio::task::spawn_blocking(move || {
                 let snapshot = taken.sample(&cfg);
+                // Pre-serialize into JSON on the blocking thread pool so connected
+                // WebSocket clients can fan out in O(1) without repeated serialization.
+                let _ = snapshot.serialized_json();
                 (taken, Arc::new(snapshot))
             })
             .await;
@@ -173,15 +176,6 @@ async fn send_snapshot(
     sink: &mut SplitSink<WebSocket, Message>,
     snapshot: &Snapshot,
 ) -> Result<(), axum::Error> {
-    // A snapshot that cannot serialise is a bug, not a transport error: send an
-    // empty frame rather than killing the client's stream, but never silently —
-    // a masked serialisation failure would make the UI degrade with no trace.
-    let payload = match serde_json::to_string(snapshot) {
-        Ok(payload) => payload,
-        Err(err) => {
-            tracing::warn!(%err, "failed to serialize snapshot; sending empty frame");
-            "{}".to_string()
-        }
-    };
-    sink.send(Message::Text(payload.into())).await
+    let payload = snapshot.serialized_json();
+    sink.send(Message::Text(payload.as_ref().into())).await
 }
