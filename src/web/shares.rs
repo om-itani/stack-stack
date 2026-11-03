@@ -324,25 +324,37 @@ fn collect_nfs(state: &AppState) -> NfsState {
 /// The LAN network in CIDR form, from the router document or the host's primary
 /// private network interface. Used for Samba's `hosts allow`.
 fn lan_cidr(state: &AppState) -> Option<String> {
+    let mut cidrs = Vec::new();
     let path = PathBuf::from(&state.config.network_path);
     let (config, _) = store::load(&path);
     for bridge in &config.bridges {
         if let Some(address) = bridge.address.as_deref()
             && let Ok(net) = Ipv4Net::parse(address)
         {
-            return Some(net.network_cidr());
+            let cidr = net.network_cidr();
+            if !cidrs.contains(&cidr) {
+                cidrs.push(cidr);
+            }
         }
     }
     for iface in &config.interfaces {
         if let Some(address) = iface.address.as_deref()
             && let Ok(net) = Ipv4Net::parse(address)
         {
-            return Some(net.network_cidr());
+            let cidr = net.network_cidr();
+            if !cidrs.contains(&cidr) {
+                cidrs.push(cidr);
+            }
         }
     }
     let interfaces = crate::networking::interfaces::discover(state.samba.runner.as_ref());
     for iface in interfaces {
-        if iface.kind == crate::networking::interfaces::InterfaceKind::Loopback {
+        if iface.kind == crate::networking::interfaces::InterfaceKind::Loopback
+            || iface.name.starts_with("br-")
+            || iface.name.starts_with("docker")
+            || iface.name.starts_with("veth")
+            || iface.name.starts_with("virbr")
+        {
             continue;
         }
         for addr in iface.addresses {
@@ -354,12 +366,20 @@ fn lan_cidr(state: &AppState) -> Option<String> {
                     || (octets[0] == 172 && (16..=31).contains(&octets[1]))
                     || (octets[0] == 192 && octets[1] == 168)
                 {
-                    return Some(net.network_cidr());
+                    let cidr = net.network_cidr();
+                    if !cidrs.contains(&cidr) {
+                        cidrs.push(cidr);
+                    }
                 }
             }
         }
     }
-    None
+    for private in ["192.168.0.0/16", "10.0.0.0/8", "172.16.0.0/12", "127.0.0.1"] {
+        if !cidrs.iter().any(|c| c == private) {
+            cidrs.push(private.to_string());
+        }
+    }
+    Some(cidrs.join(" "))
 }
 
 fn invalid(error: &str, problems: Vec<Problem>) -> Response {
