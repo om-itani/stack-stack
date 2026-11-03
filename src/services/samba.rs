@@ -354,6 +354,21 @@ pub fn ensure_system_user(runner: &dyn Runner, username: &str) -> Result<(), Api
         return Ok(());
     }
 
+    // Clear stale locks that cause "cannot lock /etc/passwd"
+    for lock in [
+        "/etc/.pwd.lock",
+        "/etc/passwd.lock",
+        "/etc/shadow.lock",
+        "/etc/group.lock",
+        "/etc/gshadow.lock",
+    ] {
+        let _ = runner.run_timeout(
+            "rm",
+            &["-f".to_string(), lock.to_string()],
+            Duration::from_secs(5),
+        );
+    }
+
     let binaries = ["useradd", "/usr/sbin/useradd", "/sbin/useradd"];
     let shells = ["/usr/sbin/nologin", "/bin/false", "/sbin/nologin"];
     let mut last_err = String::new();

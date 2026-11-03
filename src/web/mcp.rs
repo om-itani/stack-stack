@@ -79,7 +79,7 @@ pub async fn mcp_info() -> Json<Value> {
         "protocol": "2024-11-05",
         "transport": "HTTP JSON-RPC 2.0 (POST /api/mcp)",
         "description": "Model Context Protocol interface for stack-stack homeserver management",
-        "tools_count": 26,
+        "tools_count": 27,
         "capabilities": {
             "tools": { "listChanged": false }
         }
@@ -323,6 +323,17 @@ fn list_tools() -> Vec<Value> {
                 "type": "object",
                 "properties": {
                     "app_id": { "type": "string", "description": "Catalog App ID to install (e.g. 'jellyfin')" }
+                },
+                "required": ["app_id"]
+            }
+        }),
+        json!({
+            "name": "reset_app",
+            "description": "Reset an App Store application and its named volumes (runs docker compose down -v then re-installs fresh).",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "app_id": { "type": "string", "description": "Catalog App ID to reset (e.g. 'jellyfin')" }
                 },
                 "required": ["app_id"]
             }
@@ -880,6 +891,24 @@ async fn execute_tool(state: &AppState, name: &str, args: Value) -> Result<Strin
                 "app_id": app_id,
                 "output": output,
                 "message": format!("Application '{app_id}' installed and started successfully.")
+            });
+            serde_json::to_string_pretty(&res).map_err(|e| e.to_string())
+        }
+
+        "reset_app" => {
+            let app_id = args
+                .get("app_id")
+                .and_then(|v| v.as_str())
+                .ok_or("app_id is required")?;
+
+            let output = crate::containers::store::reset(&state.config, app_id)
+                .await
+                .map_err(|e| e.to_string())?;
+            let res = json!({
+                "ok": true,
+                "app_id": app_id,
+                "output": output,
+                "message": format!("Application '{app_id}' volumes reset and restarted fresh.")
             });
             serde_json::to_string_pretty(&res).map_err(|e| e.to_string())
         }
