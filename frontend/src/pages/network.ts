@@ -11,6 +11,7 @@
  */
 
 import { blocklistsApi, networkApi } from "../api";
+import { showToast } from "../toast";
 import type {
   ApiFailure,
   ApplyReport,
@@ -433,6 +434,451 @@ export function createNetworkPage(): PageHandle {
 
   const rerender = () => renderAll();
 
+  // --- Modals for firewall, dhcp, dns, tunnel, and certs -------------------
+
+  function openPortForwardModal(existing?: NetworkConfig["port_forwards"][number], idx?: number): void {
+    const isNew = existing === undefined;
+    const modal = openModal(isNew ? "Add Port Forward (DNAT)" : `Edit Port Forward · ${existing.id}`, "max-w-md");
+    modal.body.className = "flex flex-col gap-3";
+
+    const row = existing
+      ? structuredClone(existing)
+      : {
+          id: "",
+          protocol: "tcp",
+          external_port: 8080,
+          internal_ip: "192.168.0.",
+          internal_port: 80,
+          comment: "",
+          enabled: true,
+        };
+
+    const idInput = textInput(row.id, (v) => {
+      row.id = v;
+    }, { placeholder: "e.g. web, plex, minecraft" });
+    const protoSelect = select(row.protocol, [["tcp", "TCP"], ["udp", "UDP"]], (v) => {
+      row.protocol = v;
+    });
+    const extPortInput = numberInput(row.external_port, (v) => {
+      row.external_port = v;
+    }, { min: 1, max: 65535 });
+    const intIpInput = textInput(row.internal_ip, (v) => {
+      row.internal_ip = v;
+    }, { placeholder: "e.g. 192.168.0.50" });
+    const intPortInput = numberInput(row.internal_port, (v) => {
+      row.internal_port = v;
+    }, { min: 1, max: 65535 });
+    const commentInput = textInput(row.comment, (v) => {
+      row.comment = v;
+    }, { placeholder: "Optional description" });
+    const enabledCheck = checkbox(row.enabled, (v) => {
+      row.enabled = v;
+    }, "Enable rule immediately");
+
+    const errorEl = el("div", { class: "text-xs text-rose-400 min-h-4" });
+
+    modal.body.append(
+      field("Service Identifier", idInput, "Alphanumeric label for this port forwarding rule."),
+      el("div", { class: "grid grid-cols-2 gap-2" }, [
+        field("Protocol", protoSelect),
+        field("External WAN Port", extPortInput),
+      ]),
+      el("div", { class: "grid grid-cols-2 gap-2" }, [
+        field("Internal Target IP", intIpInput),
+        field("Internal Target Port", intPortInput),
+      ]),
+      field("Comment / Description", commentInput),
+      el("div", { class: "p-2 bg-black/20 rounded border border-white/5" }, [enabledCheck]),
+      errorEl,
+    );
+
+    const saveBtn = button(
+      isNew ? "Add Port Forward" : "Save Changes",
+      "border-emerald-600 bg-emerald-500/20 text-emerald-300 font-semibold hover:bg-emerald-500/30 px-4 py-1.5 text-xs shadow-sm",
+      () => {
+        errorEl.textContent = "";
+        if (!row.id.trim()) {
+          errorEl.textContent = "Service Identifier is required.";
+          return;
+        }
+        if (!row.internal_ip.trim()) {
+          errorEl.textContent = "Internal IP address is required.";
+          return;
+        }
+        if (isNew) {
+          draft?.port_forwards.push(row);
+        } else if (idx !== undefined && draft) {
+          draft.port_forwards[idx] = row;
+        }
+        markDirty();
+        modal.close();
+        rerender();
+      },
+    );
+
+    modal.body.append(
+      el("div", { class: "flex items-center justify-end gap-2 pt-2 border-t border-white/10" }, [
+        button("Cancel", "text-neutral-400 hover:text-white text-xs px-3 py-1", () => modal.close()),
+        saveBtn,
+      ]),
+    );
+  }
+
+  function openFirewallRuleModal(existing?: NetworkConfig["firewall"]["rules"][number], idx?: number): void {
+    const isNew = existing === undefined;
+    const modal = openModal(isNew ? "Add Firewall Input Rule" : `Edit Firewall Rule · ${existing.id}`, "max-w-md");
+    modal.body.className = "flex flex-col gap-3";
+
+    const row = existing
+      ? structuredClone(existing)
+      : {
+          id: "",
+          action: "accept" as FirewallAction,
+          protocol: "tcp",
+          port: 22,
+          source: null,
+          comment: "",
+          enabled: true,
+        };
+
+    const idInput = textInput(row.id, (v) => {
+      row.id = v;
+    }, { placeholder: "e.g. allow-ssh, allow-wireguard" });
+    const actionSelect = select(row.action, ACTION_OPTIONS, (v) => {
+      row.action = v as FirewallAction;
+    });
+    const protoSelect = select(row.protocol, PROTOCOL_OPTIONS, (v) => {
+      row.protocol = v;
+    });
+    const portInput = nullableNumber(row.port, (v) => {
+      row.port = v;
+    });
+    const sourceInput = nullableText(row.source, (v) => {
+      row.source = v;
+    });
+    const commentInput = textInput(row.comment, (v) => {
+      row.comment = v;
+    }, { placeholder: "Optional comment" });
+    const enabledCheck = checkbox(row.enabled, (v) => {
+      row.enabled = v;
+    }, "Enable rule immediately");
+
+    const errorEl = el("div", { class: "text-xs text-rose-400 min-h-4" });
+
+    modal.body.append(
+      field("Rule Identifier", idInput),
+      el("div", { class: "grid grid-cols-2 gap-2" }, [
+        field("Action", actionSelect),
+        field("Protocol", protoSelect),
+      ]),
+      el("div", { class: "grid grid-cols-2 gap-2" }, [
+        field("Port (blank = all)", portInput),
+        field("Source IP/CIDR (blank = LAN)", sourceInput),
+      ]),
+      field("Comment / Description", commentInput),
+      el("div", { class: "p-2 bg-black/20 rounded border border-white/5" }, [enabledCheck]),
+      errorEl,
+    );
+
+    const saveBtn = button(
+      isNew ? "Add Rule" : "Save Changes",
+      "border-emerald-600 bg-emerald-500/20 text-emerald-300 font-semibold hover:bg-emerald-500/30 px-4 py-1.5 text-xs shadow-sm",
+      () => {
+        errorEl.textContent = "";
+        if (!row.id.trim()) {
+          errorEl.textContent = "Rule Identifier is required.";
+          return;
+        }
+        if (isNew) {
+          draft?.firewall.rules.push(row);
+        } else if (idx !== undefined && draft) {
+          draft.firewall.rules[idx] = row;
+        }
+        markDirty();
+        modal.close();
+        rerender();
+      },
+    );
+
+    modal.body.append(
+      el("div", { class: "flex items-center justify-end gap-2 pt-2 border-t border-white/10" }, [
+        button("Cancel", "text-neutral-400 hover:text-white text-xs px-3 py-1", () => modal.close()),
+        saveBtn,
+      ]),
+    );
+  }
+
+  function openDhcpReservationModal(existing?: NetworkConfig["dhcp"]["reservations"][number], idx?: number): void {
+    const isNew = existing === undefined;
+    const modal = openModal(isNew ? "Add Static DHCP Lease" : `Edit DHCP Lease · ${existing.name || existing.mac}`, "max-w-md");
+    modal.body.className = "flex flex-col gap-3";
+
+    const row = existing
+      ? structuredClone(existing)
+      : {
+          mac: "",
+          ip: "",
+          name: "",
+        };
+
+    const nameInput = textInput(row.name, (v) => {
+      row.name = v;
+    }, { placeholder: "e.g. nas, printer, workstation" });
+    const macInput = textInput(row.mac, (v) => {
+      row.mac = v;
+    }, { placeholder: "e.g. 52:54:00:12:34:56" });
+    const ipInput = textInput(row.ip, (v) => {
+      row.ip = v;
+    }, { placeholder: "e.g. 192.168.0.50" });
+    const errorEl = el("div", { class: "text-xs text-rose-400 min-h-4" });
+
+    modal.body.append(
+      field("Device Name / Hostname", nameInput, "Friendly identifier for this client device."),
+      field("Hardware MAC Address", macInput, "Format: AA:BB:CC:DD:EE:FF"),
+      field("Static Reserved IP Address", ipInput, "Assigned IPv4 address within your subnet."),
+      errorEl,
+    );
+
+    const saveBtn = button(
+      isNew ? "Add Lease" : "Save Changes",
+      "border-emerald-600 bg-emerald-500/20 text-emerald-300 font-semibold hover:bg-emerald-500/30 px-4 py-1.5 text-xs shadow-sm",
+      () => {
+        errorEl.textContent = "";
+        if (!row.mac.trim()) {
+          errorEl.textContent = "MAC address is required.";
+          return;
+        }
+        if (!row.ip.trim()) {
+          errorEl.textContent = "IP address is required.";
+          return;
+        }
+        if (isNew) {
+          draft?.dhcp.reservations.push(row);
+        } else if (idx !== undefined && draft) {
+          draft.dhcp.reservations[idx] = row;
+        }
+        markDirty();
+        modal.close();
+        rerender();
+      },
+    );
+
+    modal.body.append(
+      el("div", { class: "flex items-center justify-end gap-2 pt-2 border-t border-white/10" }, [
+        button("Cancel", "text-neutral-400 hover:text-white text-xs px-3 py-1", () => modal.close()),
+        saveBtn,
+      ]),
+    );
+  }
+
+  function openDnsRewriteModal(existing?: NetworkConfig["dns"]["rewrites"][number], idx?: number): void {
+    const isNew = existing === undefined;
+    const modal = openModal(isNew ? "Add Local DNS Rewrite" : `Edit DNS Rewrite · ${existing.host}`, "max-w-md");
+    modal.body.className = "flex flex-col gap-3";
+
+    const row = existing
+      ? structuredClone(existing)
+      : {
+          host: "",
+          address: "",
+          comment: "",
+        };
+
+    const hostInput = textInput(row.host, (v) => {
+      row.host = v;
+    }, { placeholder: "e.g. app.local or *.home.lab" });
+    const addrInput = textInput(row.address, (v) => {
+      row.address = v;
+    }, { placeholder: "e.g. 192.168.0.3" });
+    const commentInput = textInput(row.comment, (v) => {
+      row.comment = v;
+    }, { placeholder: "Optional description" });
+    const errorEl = el("div", { class: "text-xs text-rose-400 min-h-4" });
+
+    modal.body.append(
+      field("Domain Name / Wildcard", hostInput, "Specific domain (app.local) or apex wildcard (*.home.lab)"),
+      field("Target IP Address", addrInput, "IPv4 address returned by Unbound for this domain."),
+      field("Comment / Description", commentInput),
+      errorEl,
+    );
+
+    const saveBtn = button(
+      isNew ? "Add Rewrite" : "Save Changes",
+      "border-emerald-600 bg-emerald-500/20 text-emerald-300 font-semibold hover:bg-emerald-500/30 px-4 py-1.5 text-xs shadow-sm",
+      () => {
+        errorEl.textContent = "";
+        if (!row.host.trim()) {
+          errorEl.textContent = "Domain / Host is required.";
+          return;
+        }
+        if (!row.address.trim()) {
+          errorEl.textContent = "Target IP address is required.";
+          return;
+        }
+        if (isNew) {
+          draft?.dns.rewrites.push(row);
+        } else if (idx !== undefined && draft) {
+          draft.dns.rewrites[idx] = row;
+        }
+        markDirty();
+        modal.close();
+        rerender();
+      },
+    );
+
+    modal.body.append(
+      el("div", { class: "flex items-center justify-end gap-2 pt-2 border-t border-white/10" }, [
+        button("Cancel", "text-neutral-400 hover:text-white text-xs px-3 py-1", () => modal.close()),
+        saveBtn,
+      ]),
+    );
+  }
+
+  function openTunnelIngressModal(existing?: NetworkConfig["tunnel"]["ingress"][number], idx?: number): void {
+    const isNew = existing === undefined;
+    const modal = openModal(isNew ? "Add Cloudflare Public Hostname" : `Edit Hostname · ${existing.hostname}`, "max-w-md");
+    modal.body.className = "flex flex-col gap-3";
+
+    const row = existing
+      ? structuredClone(existing)
+      : {
+          hostname: "",
+          service: "http://192.168.0.3:8553",
+          comment: "",
+        };
+
+    const hostInput = textInput(row.hostname, (v) => {
+      row.hostname = v;
+    }, { placeholder: "e.g. dash.example.com" });
+    const serviceInput = textInput(row.service, (v) => {
+      row.service = v;
+    }, { placeholder: "e.g. http://192.168.0.3:8553" });
+    const commentInput = textInput(row.comment, (v) => {
+      row.comment = v;
+    }, { placeholder: "Optional description" });
+    const errorEl = el("div", { class: "text-xs text-rose-400 min-h-4" });
+
+    modal.body.append(
+      field("Public Hostname", hostInput, "Fully qualified domain routed through Cloudflare Tunnel."),
+      field("Local Service URL", serviceInput, "Internal target protocol, host, and port."),
+      field("Comment / Description", commentInput),
+      errorEl,
+    );
+
+    const saveBtn = button(
+      isNew ? "Add Hostname" : "Save Changes",
+      "border-emerald-600 bg-emerald-500/20 text-emerald-300 font-semibold hover:bg-emerald-500/30 px-4 py-1.5 text-xs shadow-sm",
+      () => {
+        errorEl.textContent = "";
+        if (!row.hostname.trim()) {
+          errorEl.textContent = "Hostname is required.";
+          return;
+        }
+        if (!row.service.trim()) {
+          errorEl.textContent = "Service URL is required.";
+          return;
+        }
+        if (isNew) {
+          draft?.tunnel.ingress.push(row);
+        } else if (idx !== undefined && draft) {
+          draft.tunnel.ingress[idx] = row;
+        }
+        markDirty();
+        modal.close();
+        rerender();
+      },
+    );
+
+    modal.body.append(
+      el("div", { class: "flex items-center justify-end gap-2 pt-2 border-t border-white/10" }, [
+        button("Cancel", "text-neutral-400 hover:text-white text-xs px-3 py-1", () => modal.close()),
+        saveBtn,
+      ]),
+    );
+  }
+
+  function openImportCertModal(defaultName: string): void {
+    const modal = openModal("Import SSL / TLS Certificate Pair", "max-w-xl");
+    modal.body.className = "flex flex-col gap-3";
+
+    let certName = defaultName || "imported";
+    let certPem = "";
+    let keyPem = "";
+    const errorEl = el("div", { class: "text-xs text-rose-400 min-h-4" });
+
+    const nameInput = textInput(certName, (v) => {
+      certName = v;
+    }, { placeholder: "e.g. wild-example-com" });
+    const certArea = el("textarea", {
+      class: "w-full h-32 font-mono text-xs p-2 rounded bg-black/40 border border-white/10 text-neutral-200 resize-y",
+      placeholder: "-----BEGIN CERTIFICATE-----\n...\n-----END CERTIFICATE-----",
+    }) as HTMLTextAreaElement;
+    certArea.addEventListener("input", () => {
+      certPem = certArea.value;
+    });
+
+    const keyArea = el("textarea", {
+      class: "w-full h-32 font-mono text-xs p-2 rounded bg-black/40 border border-white/10 text-neutral-200 resize-y",
+      placeholder: "-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY-----",
+    }) as HTMLTextAreaElement;
+    keyArea.addEventListener("input", () => {
+      keyPem = keyArea.value;
+    });
+
+    modal.body.append(
+      el("div", {
+        class: "text-xs text-neutral-400 leading-relaxed",
+        text: "Import an existing X.509 PEM certificate and unencrypted private key pair (e.g. from Cloudflare Origin CA, Namecheap, or internal PKI).",
+      }),
+      field("Certificate Identifier", nameInput),
+      field("Certificate PEM (including intermediate CA chains)", certArea),
+      field("Private Key PEM", keyArea),
+      errorEl,
+    );
+
+    const importBtn = button(
+      "Import Certificate",
+      "border-emerald-600 bg-emerald-500/20 text-emerald-300 font-semibold hover:bg-emerald-500/30 px-4 py-1.5 text-xs shadow-sm",
+      async () => {
+        errorEl.textContent = "";
+        if (!certPem.trim().includes("-----BEGIN CERTIFICATE-----")) {
+          errorEl.textContent = "Please provide a valid PEM certificate containing '-----BEGIN CERTIFICATE-----'.";
+          return;
+        }
+        if (!keyPem.trim().includes("-----BEGIN") || !keyPem.trim().includes("KEY-----")) {
+          errorEl.textContent = "Please provide a valid PEM private key containing '-----BEGIN ... KEY-----'.";
+          return;
+        }
+
+        importBtn.disabled = true;
+        importBtn.textContent = "Importing…";
+
+        try {
+          const info = await networkApi.importCertificate({
+            name: certName.trim() || "imported",
+            cert_pem: certPem.trim(),
+            key_pem: keyPem.trim(),
+          });
+          certificates = await networkApi.certificates();
+          showToast({ tone: "ok", title: "Certificate Imported", message: `Successfully imported '${info.name}'` });
+          modal.close();
+          renderAll();
+        } catch (err) {
+          errorEl.textContent = errorText(err);
+          importBtn.disabled = false;
+          importBtn.textContent = "Import Certificate";
+        }
+      },
+    );
+
+    modal.body.append(
+      el("div", { class: "flex items-center justify-end gap-2 pt-2 border-t border-white/10" }, [
+        button("Cancel", "text-neutral-400 hover:text-white text-xs px-3 py-1", () => modal.close()),
+        importBtn,
+      ]),
+    );
+  }
+
   // --- tab: interfaces ---------------------------------------------------
 
   function buildInterfaces(): HTMLElement {
@@ -839,111 +1285,131 @@ export function createNetworkPage(): PageHandle {
     layout.append(policy);
 
     const forwardsSection = el("section", { class: "panel" });
-    forwardsSection.append(sectionTitle("port forwards (dnat)"));
-    forwardsSection.append(
-      tableEditor<NetworkConfig["port_forwards"][number]>(
-        draft.port_forwards,
-        [
-          {
-            header: "id",
-            width: "6rem",
-            cell: (row) =>
-              textInput(row.id, (value) => { row.id = value; markDirty(); }, { class: "w-full min-w-0" }),
-          },
-          {
-            header: "proto",
-            width: "4.5rem",
-            cell: (row) =>
-              select(row.protocol, [["tcp", "tcp"], ["udp", "udp"]], (value) => {
-                row.protocol = value;
-                markDirty();
-              }),
-          },
-          {
-            header: "ext",
-            width: "4.5rem",
-            cell: (row) =>
-              numberInput(row.external_port, (value) => { row.external_port = value; markDirty(); }, { min: 1, max: 65535, class: "w-full min-w-0" }),
-          },
-          {
-            header: "to ip",
-            width: "8.5rem",
-            cell: (row) =>
-              textInput(row.internal_ip, (value) => { row.internal_ip = value; markDirty(); }, { class: "w-full min-w-0" }),
-          },
-          {
-            header: "int",
-            width: "4.5rem",
-            cell: (row) =>
-              numberInput(row.internal_port, (value) => { row.internal_port = value; markDirty(); }, { min: 1, max: 65535, class: "w-full min-w-0" }),
-          },
-          {
-            header: "comment",
-            cell: (row) =>
-              textInput(row.comment, (value) => { row.comment = value; markDirty(); }, { class: "w-full min-w-0" }),
-          },
-          {
-            header: "on",
-            width: "3rem",
-            cell: (row) =>
-              checkbox(row.enabled, (value) => { row.enabled = value; markDirty(); }),
-          },
-        ],
-        () => ({ id: "", protocol: "tcp", external_port: 0, internal_ip: "", internal_port: 0, comment: "", enabled: true }),
-        rerender,
-        "add forward",
-        { fixed: true },
-      ),
+    const fwdHeader = el("div", { class: "flex items-center justify-between px-3 py-2 border-b border-white/5" });
+    fwdHeader.append(
+      el("div", { class: "flex items-center gap-2" }, [
+        el("span", { class: "font-semibold text-xs text-neutral-200", text: "Port Forwards (DNAT)" }),
+        el("span", { class: "text-[11px] text-neutral-500", text: "· Expose internal servers to external WAN" }),
+      ]),
+      button("+ Add Port Forward", "border-sky-600 bg-sky-500/20 text-sky-300 font-semibold hover:bg-sky-500/30 px-2.5 py-1 text-xs shadow-sm", () => {
+        openPortForwardModal();
+      }),
     );
+    forwardsSection.append(fwdHeader);
+
+    if (draft.port_forwards.length === 0) {
+      forwardsSection.append(el("div", { class: "p-3" }, [emptyNote("No port forwards configured. Click '+ Add Port Forward' above to expose a service.")]));
+    } else {
+      const fwdTable = el("table", { class: "w-full text-xs text-left" });
+      fwdTable.append(
+        el("thead", {}, [
+          el("tr", { class: "border-b border-white/10 text-[10px] uppercase text-neutral-500 tracking-wider" }, [
+            el("th", { class: "py-2 px-3", text: "Service ID" }),
+            el("th", { class: "py-2 px-3", text: "Protocol" }),
+            el("th", { class: "py-2 px-3", text: "WAN Port" }),
+            el("th", { class: "py-2 px-3", text: "LAN Target" }),
+            el("th", { class: "py-2 px-3", text: "Status" }),
+            el("th", { class: "py-2 px-3", text: "Comment" }),
+            el("th", { class: "py-2 px-3 text-right", text: "Actions" }),
+          ]),
+        ]),
+      );
+      const fwdTbody = el("tbody", { class: "divide-y divide-white/5 font-mono text-[11px]" });
+      draft.port_forwards.forEach((row, idx) => {
+        const tr = el("tr", { class: "hover:bg-white/[0.02]" });
+        tr.append(
+          el("td", { class: "py-2 px-3 text-sky-300 font-semibold", text: row.id }),
+          el("td", { class: "py-2 px-3 text-neutral-300 uppercase", text: row.protocol }),
+          el("td", { class: "py-2 px-3 text-emerald-400 font-medium", text: String(row.external_port) }),
+          el("td", { class: "py-2 px-3 text-neutral-200", text: `${row.internal_ip}:${row.internal_port}` }),
+          el("td", { class: "py-2 px-3 font-sans" }, [
+            row.enabled ? badge("Enabled", "ok") : badge("Disabled", "muted"),
+          ]),
+          el("td", { class: "py-2 px-3 font-sans text-neutral-400 text-xs truncate max-w-xs", text: row.comment || "—" }),
+          el("td", { class: "py-2 px-3 text-right font-sans" }, [
+            button("Edit", "mr-1 text-xs text-neutral-300 hover:text-white px-2 py-0.5", () => openPortForwardModal(row, idx)),
+            button("Delete", "text-xs text-rose-400 hover:text-rose-300 px-2 py-0.5", () => {
+              if (window.confirm(`Delete port forward '${row.id}'?`)) {
+                draft?.port_forwards.splice(idx, 1);
+                markDirty();
+                rerender();
+              }
+            }),
+          ]),
+        );
+        fwdTbody.append(tr);
+      });
+      fwdTable.append(fwdTbody);
+      forwardsSection.append(fwdTable);
+    }
     layout.append(forwardsSection);
 
     const rulesSection = el("section", { class: "panel xl:col-span-2" });
-    rulesSection.append(sectionTitle("input rules"));
-    rulesSection.append(
-      tableEditor<NetworkConfig["firewall"]["rules"][number]>(
-        firewall.rules,
-        [
-          { header: "id", cell: (row) => textInput(row.id, (value) => { row.id = value; markDirty(); }) },
-          {
-            header: "action",
-            cell: (row) =>
-              select(row.action, ACTION_OPTIONS, (value) => {
-                row.action = value as FirewallAction;
-                markDirty();
-              }),
-          },
-          {
-            header: "proto",
-            cell: (row) =>
-              select(row.protocol, PROTOCOL_OPTIONS, (value) => {
-                row.protocol = value;
-                markDirty();
-              }),
-          },
-          {
-            header: "port",
-            cell: (row) =>
-              nullableNumber(row.port, (value) => {
-                row.port = value;
-                markDirty();
-              }),
-          },
-          {
-            header: "source (blank = LAN)",
-            cell: (row) =>
-              nullableText(row.source, (value) => {
-                row.source = value;
-                markDirty();
-              }),
-          },
-          { header: "comment", cell: (row) => textInput(row.comment, (value) => { row.comment = value; markDirty(); }) },
-          { header: "on", cell: (row) => checkbox(row.enabled, (value) => { row.enabled = value; markDirty(); }) },
-        ],
-        () => ({ id: "", action: "accept" as FirewallAction, protocol: "tcp", port: null, source: null, comment: "", enabled: true }),
-        rerender,
-        "add rule",
-      ),
+    const rulesHeader = el("div", { class: "flex items-center justify-between px-3 py-2 border-b border-white/5" });
+    rulesHeader.append(
+      el("div", { class: "flex items-center gap-2" }, [
+        el("span", { class: "font-semibold text-xs text-neutral-200", text: "Firewall Input Rules" }),
+        el("span", { class: "text-[11px] text-neutral-500", text: "· Custom packet filtering on incoming host traffic" }),
+      ]),
+      button("+ Add Input Rule", "border-sky-600 bg-sky-500/20 text-sky-300 font-semibold hover:bg-sky-500/30 px-2.5 py-1 text-xs shadow-sm", () => {
+        openFirewallRuleModal();
+      }),
     );
+    rulesSection.append(rulesHeader);
+
+    if (firewall.rules.length === 0) {
+      rulesSection.append(el("div", { class: "p-3" }, [emptyNote("No custom input rules defined. Click '+ Add Input Rule' above to create one.")]));
+    } else {
+      const rulesTable = el("table", { class: "w-full text-xs text-left" });
+      rulesTable.append(
+        el("thead", {}, [
+          el("tr", { class: "border-b border-white/10 text-[10px] uppercase text-neutral-500 tracking-wider" }, [
+            el("th", { class: "py-2 px-3", text: "Rule ID" }),
+            el("th", { class: "py-2 px-3", text: "Action" }),
+            el("th", { class: "py-2 px-3", text: "Protocol" }),
+            el("th", { class: "py-2 px-3", text: "Port" }),
+            el("th", { class: "py-2 px-3", text: "Source" }),
+            el("th", { class: "py-2 px-3", text: "Status" }),
+            el("th", { class: "py-2 px-3", text: "Comment" }),
+            el("th", { class: "py-2 px-3 text-right", text: "Actions" }),
+          ]),
+        ]),
+      );
+      const rulesTbody = el("tbody", { class: "divide-y divide-white/5 font-mono text-[11px]" });
+      firewall.rules.forEach((row, idx) => {
+        const tr = el("tr", { class: "hover:bg-white/[0.02]" });
+        tr.append(
+          el("td", { class: "py-2 px-3 text-neutral-200 font-semibold", text: row.id }),
+          el("td", { class: "py-2 px-3 font-sans" }, [
+            row.action === "accept"
+              ? badge("ACCEPT", "ok")
+              : row.action === "reject"
+                ? badge("REJECT", "warn")
+                : badge("DROP", "err"),
+          ]),
+          el("td", { class: "py-2 px-3 text-neutral-300 uppercase", text: row.protocol }),
+          el("td", { class: "py-2 px-3 text-neutral-200", text: row.port ? String(row.port) : "any" }),
+          el("td", { class: "py-2 px-3 text-neutral-400", text: row.source || "LAN / any" }),
+          el("td", { class: "py-2 px-3 font-sans" }, [
+            row.enabled ? badge("Enabled", "ok") : badge("Disabled", "muted"),
+          ]),
+          el("td", { class: "py-2 px-3 font-sans text-neutral-400 text-xs truncate max-w-xs", text: row.comment || "—" }),
+          el("td", { class: "py-2 px-3 text-right font-sans" }, [
+            button("Edit", "mr-1 text-xs text-neutral-300 hover:text-white px-2 py-0.5", () => openFirewallRuleModal(row, idx)),
+            button("Delete", "text-xs text-rose-400 hover:text-rose-300 px-2 py-0.5", () => {
+              if (window.confirm(`Delete firewall rule '${row.id}'?`)) {
+                firewall.rules.splice(idx, 1);
+                markDirty();
+                rerender();
+              }
+            }),
+          ]),
+        );
+        rulesTbody.append(tr);
+      });
+      rulesTable.append(rulesTbody);
+      rulesSection.append(rulesTable);
+    }
     layout.append(rulesSection);
 
     return layout;
@@ -1013,20 +1479,55 @@ export function createNetworkPage(): PageHandle {
     layout.append(main);
 
     const reservations = el("section", { class: "panel" });
-    reservations.append(sectionTitle("static reservations"));
-    reservations.append(
-      tableEditor<NetworkConfig["dhcp"]["reservations"][number]>(
-        dhcp.reservations,
-        [
-          { header: "mac", cell: (row) => textInput(row.mac, (value) => { row.mac = value; markDirty(); }) },
-          { header: "ip", cell: (row) => textInput(row.ip, (value) => { row.ip = value; markDirty(); }) },
-          { header: "name", cell: (row) => textInput(row.name, (value) => { row.name = value; markDirty(); }) },
-        ],
-        () => ({ mac: "", ip: "", name: "" }),
-        rerender,
-        "add reservation",
-      ),
+    const resHeader = el("div", { class: "flex items-center justify-between px-3 py-2 border-b border-white/5" });
+    resHeader.append(
+      el("div", { class: "flex items-center gap-2" }, [
+        el("span", { class: "font-semibold text-xs text-neutral-200", text: "Static DHCP Reservations" }),
+        el("span", { class: "text-[11px] text-neutral-500", text: "· Map persistent IPs to device MAC addresses" }),
+      ]),
+      button("+ Add Static Lease", "border-sky-600 bg-sky-500/20 text-sky-300 font-semibold hover:bg-sky-500/30 px-2.5 py-1 text-xs shadow-sm", () => {
+        openDhcpReservationModal();
+      }),
     );
+    reservations.append(resHeader);
+
+    if (dhcp.reservations.length === 0) {
+      reservations.append(el("div", { class: "p-3" }, [emptyNote("No static reservations yet. Click '+ Add Static Lease' above to pin an IP.")]));
+    } else {
+      const resTable = el("table", { class: "w-full text-xs text-left" });
+      resTable.append(
+        el("thead", {}, [
+          el("tr", { class: "border-b border-white/10 text-[10px] uppercase text-neutral-500 tracking-wider" }, [
+            el("th", { class: "py-2 px-3", text: "Device Name" }),
+            el("th", { class: "py-2 px-3", text: "MAC Address" }),
+            el("th", { class: "py-2 px-3", text: "Static Assigned IP" }),
+            el("th", { class: "py-2 px-3 text-right", text: "Actions" }),
+          ]),
+        ]),
+      );
+      const resTbody = el("tbody", { class: "divide-y divide-white/5 font-mono text-[11px]" });
+      dhcp.reservations.forEach((row, idx) => {
+        const tr = el("tr", { class: "hover:bg-white/[0.02]" });
+        tr.append(
+          el("td", { class: "py-2 px-3 text-neutral-200 font-sans font-medium", text: row.name || "Unnamed Device" }),
+          el("td", { class: "py-2 px-3 text-sky-300", text: row.mac }),
+          el("td", { class: "py-2 px-3 text-emerald-400 font-semibold", text: row.ip }),
+          el("td", { class: "py-2 px-3 text-right font-sans" }, [
+            button("Edit", "mr-1 text-xs text-neutral-300 hover:text-white px-2 py-0.5", () => openDhcpReservationModal(row, idx)),
+            button("Delete", "text-xs text-rose-400 hover:text-rose-300 px-2 py-0.5", () => {
+              if (window.confirm(`Delete reservation for '${row.name || row.mac}'?`)) {
+                dhcp.reservations.splice(idx, 1);
+                markDirty();
+                rerender();
+              }
+            }),
+          ]),
+        );
+        resTbody.append(tr);
+      });
+      resTable.append(resTbody);
+      reservations.append(resTable);
+    }
     layout.append(reservations);
 
     return layout;
@@ -1064,20 +1565,55 @@ export function createNetworkPage(): PageHandle {
     layout.append(server);
 
     const rewrites = el("section", { class: "panel" });
-    rewrites.append(sectionTitle("local rewrites (*.domain at the apex)"));
-    rewrites.append(
-      tableEditor<NetworkConfig["dns"]["rewrites"][number]>(
-        dns.rewrites,
-        [
-          { header: "host", cell: (row) => textInput(row.host, (value) => { row.host = value; markDirty(); }, { placeholder: "app.example.com or *.example.com" }) },
-          { header: "address", cell: (row) => textInput(row.address, (value) => { row.address = value; markDirty(); }) },
-          { header: "comment", cell: (row) => textInput(row.comment, (value) => { row.comment = value; markDirty(); }) },
-        ],
-        () => ({ host: "", address: "", comment: "" }),
-        rerender,
-        "add rewrite",
-      ),
+    const rewritesHeader = el("div", { class: "flex items-center justify-between px-3 py-2 border-b border-white/5" });
+    rewritesHeader.append(
+      el("div", { class: "flex items-center gap-2" }, [
+        el("span", { class: "font-semibold text-xs text-neutral-200", text: "Local DNS Rewrites" }),
+        el("span", { class: "text-[11px] text-neutral-500", text: "· Custom domain mappings and apex wildcards (*.domain)" }),
+      ]),
+      button("+ Add DNS Rewrite", "border-sky-600 bg-sky-500/20 text-sky-300 font-semibold hover:bg-sky-500/30 px-2.5 py-1 text-xs shadow-sm", () => {
+        openDnsRewriteModal();
+      }),
     );
+    rewrites.append(rewritesHeader);
+
+    if (dns.rewrites.length === 0) {
+      rewrites.append(el("div", { class: "p-3" }, [emptyNote("No local DNS rewrites configured. Click '+ Add DNS Rewrite' above to map a local domain.")]));
+    } else {
+      const rewritesTable = el("table", { class: "w-full text-xs text-left" });
+      rewritesTable.append(
+        el("thead", {}, [
+          el("tr", { class: "border-b border-white/10 text-[10px] uppercase text-neutral-500 tracking-wider" }, [
+            el("th", { class: "py-2 px-3", text: "Domain / Host" }),
+            el("th", { class: "py-2 px-3", text: "Target IP Address" }),
+            el("th", { class: "py-2 px-3", text: "Comment" }),
+            el("th", { class: "py-2 px-3 text-right", text: "Actions" }),
+          ]),
+        ]),
+      );
+      const rewritesTbody = el("tbody", { class: "divide-y divide-white/5 font-mono text-[11px]" });
+      dns.rewrites.forEach((row, idx) => {
+        const tr = el("tr", { class: "hover:bg-white/[0.02]" });
+        tr.append(
+          el("td", { class: "py-2 px-3 text-sky-300 font-semibold", text: row.host }),
+          el("td", { class: "py-2 px-3 text-emerald-400 font-medium", text: row.address }),
+          el("td", { class: "py-2 px-3 font-sans text-neutral-400 text-xs truncate max-w-xs", text: row.comment || "—" }),
+          el("td", { class: "py-2 px-3 text-right font-sans" }, [
+            button("Edit", "mr-1 text-xs text-neutral-300 hover:text-white px-2 py-0.5", () => openDnsRewriteModal(row, idx)),
+            button("Delete", "text-xs text-rose-400 hover:text-rose-300 px-2 py-0.5", () => {
+              if (window.confirm(`Delete DNS rewrite for '${row.host}'?`)) {
+                dns.rewrites.splice(idx, 1);
+                markDirty();
+                rerender();
+              }
+            }),
+          ]),
+        );
+        rewritesTbody.append(tr);
+      });
+      rewritesTable.append(rewritesTbody);
+      rewrites.append(rewritesTable);
+    }
     layout.append(rewrites);
 
     const blocked = el("section", { class: "panel xl:col-span-2" });
@@ -1544,20 +2080,55 @@ export function createNetworkPage(): PageHandle {
     layout.append(main);
 
     const ingress = el("section", { class: "panel" });
-    ingress.append(sectionTitle("public hostnames"));
-    ingress.append(
-      tableEditor<NetworkConfig["tunnel"]["ingress"][number]>(
-        tunnel.ingress,
-        [
-          { header: "hostname", cell: (row) => textInput(row.hostname, (value) => { row.hostname = value; markDirty(); }, { placeholder: "app.example.com" }) },
-          { header: "service", cell: (row) => textInput(row.service, (value) => { row.service = value; markDirty(); }, { placeholder: "http://192.168.1.10:8080" }) },
-          { header: "comment", cell: (row) => textInput(row.comment, (value) => { row.comment = value; markDirty(); }) },
-        ],
-        () => ({ hostname: "", service: "", comment: "" }),
-        rerender,
-        "add hostname",
-      ),
+    const ingHeader = el("div", { class: "flex items-center justify-between px-3 py-2 border-b border-white/5" });
+    ingHeader.append(
+      el("div", { class: "flex items-center gap-2" }, [
+        el("span", { class: "font-semibold text-xs text-neutral-200", text: "Cloudflare Public Hostnames (Ingress)" }),
+        el("span", { class: "text-[11px] text-neutral-500", text: "· Map external domains to local services without opening WAN ports" }),
+      ]),
+      button("+ Add Public Hostname", "border-sky-600 bg-sky-500/20 text-sky-300 font-semibold hover:bg-sky-500/30 px-2.5 py-1 text-xs shadow-sm", () => {
+        openTunnelIngressModal();
+      }),
     );
+    ingress.append(ingHeader);
+
+    if (tunnel.ingress.length === 0) {
+      ingress.append(el("div", { class: "p-3" }, [emptyNote("No public tunnel hostnames yet. Click '+ Add Public Hostname' above to publish a local app.")]));
+    } else {
+      const ingTable = el("table", { class: "w-full text-xs text-left" });
+      ingTable.append(
+        el("thead", {}, [
+          el("tr", { class: "border-b border-white/10 text-[10px] uppercase text-neutral-500 tracking-wider" }, [
+            el("th", { class: "py-2 px-3", text: "Public Hostname" }),
+            el("th", { class: "py-2 px-3", text: "Target Local Service" }),
+            el("th", { class: "py-2 px-3", text: "Comment" }),
+            el("th", { class: "py-2 px-3 text-right", text: "Actions" }),
+          ]),
+        ]),
+      );
+      const ingTbody = el("tbody", { class: "divide-y divide-white/5 font-mono text-[11px]" });
+      tunnel.ingress.forEach((row, idx) => {
+        const tr = el("tr", { class: "hover:bg-white/[0.02]" });
+        tr.append(
+          el("td", { class: "py-2 px-3 text-sky-300 font-semibold", text: row.hostname }),
+          el("td", { class: "py-2 px-3 text-neutral-200", text: row.service }),
+          el("td", { class: "py-2 px-3 font-sans text-neutral-400 text-xs truncate max-w-xs", text: row.comment || "—" }),
+          el("td", { class: "py-2 px-3 text-right font-sans" }, [
+            button("Edit", "mr-1 text-xs text-neutral-300 hover:text-white px-2 py-0.5", () => openTunnelIngressModal(row, idx)),
+            button("Delete", "text-xs text-rose-400 hover:text-rose-300 px-2 py-0.5", () => {
+              if (window.confirm(`Delete public hostname '${row.hostname}'?`)) {
+                tunnel.ingress.splice(idx, 1);
+                markDirty();
+                rerender();
+              }
+            }),
+          ]),
+        );
+        ingTbody.append(tr);
+      });
+      ingTable.append(ingTbody);
+      ingress.append(ingTable);
+    }
     layout.append(ingress);
 
     return layout;
@@ -1600,7 +2171,7 @@ export function createNetworkPage(): PageHandle {
         void generate(nameInput.value);
       }),
       button("import PEM", "", () => {
-        void importPair(nameInput.value);
+        openImportCertModal(nameInput.value);
       }),
       button("issue Let's Encrypt / ACME", "text-sky-400 hover:border-sky-500", () => {
         openAcmeModal(nameInput.value);
@@ -1795,35 +2366,7 @@ export function createNetworkPage(): PageHandle {
     }
   }
 
-  async function importPair(name: string): Promise<void> {
-    if (busy) {
-      return;
-    }
-    const cert = window.prompt("Paste the certificate PEM:");
-    if (!cert) {
-      return;
-    }
-    const key = window.prompt("Paste the private key PEM:");
-    if (!key) {
-      return;
-    }
-    busy = true;
-    setStatus("importing…", "muted");
-    try {
-      const info = await networkApi.importCertificate({
-        name: name || "imported",
-        cert_pem: cert,
-        key_pem: key,
-      });
-      certificates = await networkApi.certificates();
-      setStatus(`imported ${info.name}`, "ok");
-    } catch (err) {
-      setStatus(errorText(err), "error");
-    } finally {
-      busy = false;
-      renderAll();
-    }
-  }
+
 
   async function removeCert(name: string): Promise<void> {
     if (busy) {

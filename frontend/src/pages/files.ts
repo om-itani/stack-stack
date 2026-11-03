@@ -16,6 +16,7 @@
 
 import { filesApi } from "../api";
 import type { FileEntry, FilesState } from "../api";
+import { showToast } from "../toast";
 import { bytes, el } from "../ui";
 
 export interface PageHandle {
@@ -196,8 +197,7 @@ export function createFilesPage(): PageHandle {
     } catch {
       // fallback
     }
-    window.prompt("Copy path: Ctrl+C, Enter", text);
-    return true;
+    return false;
   }
 
   // -------------------------------------------------------------------------
@@ -1721,7 +1721,9 @@ export function createFilesPage(): PageHandle {
         status = `Saved ${entry.name}`;
         renderChrome();
       } catch (err) {
-        alert(`Save failed: ${errorText(err)}`);
+        showToast({ tone: "error", title: "Save Failed", message: errorText(err) });
+        status = `Save failed: ${errorText(err)}`;
+        renderChrome();
       } finally {
         saveBtn.disabled = false;
         saveBtn.innerHTML = `<span>Save</span> <span class="text-[10px] opacity-75 font-mono">(Ctrl+S)</span>`;

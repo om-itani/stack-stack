@@ -609,17 +609,8 @@ function openStackEditor(deps: StackEditorDeps, prefill: StackEditorPrefill = {}
   let name = prefill.name ?? "";
   let compose = prefill.compose ?? STARTER_COMPOSE;
 
-  const overlay = el("div", {
-    class: "fixed inset-0 z-50 flex items-start justify-center overflow-auto bg-black/70 p-4",
-  });
-  const modal = el("div", {
-    class: "panel mt-8 flex w-full max-w-2xl flex-col gap-3 p-4",
-  });
-
-  const heading = el("div", {
-    class: "text-neutral-300",
-    text: prefill.name ? `edit stack · ${prefill.name}` : "create stack",
-  });
+  const modalHandle = openModal(prefill.name ? `Edit Stack · ${prefill.name}` : "Create Compose Stack", "max-w-3xl");
+  modalHandle.body.className = "flex flex-col gap-3";
 
   const nameInput = textInput(
     name,
@@ -634,7 +625,7 @@ function openStackEditor(deps: StackEditorDeps, prefill: StackEditorPrefill = {}
 
   const area = document.createElement("textarea");
   area.className =
-    "h-72 w-full resize-y border border-white/5 bg-black/40 p-2 font-mono text-[11px] text-neutral-300 outline-none focus:border-neutral-500";
+    "h-72 w-full resize-y border border-white/5 bg-black/40 p-2 font-mono text-[11px] text-neutral-300 outline-none focus:border-neutral-500 rounded";
   area.spellcheck = false;
   area.value = compose;
 
@@ -731,21 +722,10 @@ function openStackEditor(deps: StackEditorDeps, prefill: StackEditorPrefill = {}
   ]);
 
   function close(): void {
-    overlay.remove();
+    modalHandle.close();
   }
 
   cancelBtn.addEventListener("click", close);
-  overlay.addEventListener("click", (event) => {
-    if (event.target === overlay) {
-      close();
-    }
-  });
-  document.addEventListener("keydown", function onKey(event: KeyboardEvent) {
-    if (event.key === "Escape") {
-      close();
-      document.removeEventListener("keydown", onKey);
-    }
-  });
 
   deployBtn.addEventListener("click", async () => {
     if (deps.busy()) {
@@ -780,16 +760,13 @@ function openStackEditor(deps: StackEditorDeps, prefill: StackEditorPrefill = {}
     class: "text-[10px] text-neutral-600",
     text: "generated files include hardened defaults (no-new-privileges, 10m x 3 log rotation); pasted YAML is used verbatim",
   });
-  modal.append(
-    heading,
+  modalHandle.body.append(
     field("name", nameInput),
     field("compose (yaml)", area),
     validation,
     hint,
     actions,
   );
-  overlay.append(modal);
-  document.body.append(overlay);
   nameInput.focus();
   // Validate the prefilled document immediately, so the deploy button starts in
   // the correct state rather than optimistically enabled.

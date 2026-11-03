@@ -10,7 +10,7 @@ import { remoteAccessApi, wireguardApi } from "../api";
 import type { ClientExport, RemoteAccessOverview, WgPeer, WgState } from "../api";
 import { showToast } from "../toast";
 import { bytes, uptime } from "../ui";
-import { button, checkbox, el, emptyNote, field, panel, tableEditor, textInput } from "../ui";
+import { badge, button, checkbox, el, emptyNote, field, numberInput, openModal, panel, textInput } from "../ui";
 
 export interface PageHandle {
   root: HTMLElement;
@@ -59,7 +59,7 @@ export function createVpnPage(): PageHandle {
   const applyButton = button("apply", "text-emerald-400 hover:border-emerald-500", () =>
     void applyConfig(),
   );
-  const addPeerButton = button("add peer", "", () => void addPeer());
+  const addPeerButton = button("add peer", "", () => openPeerModal());
 
   const tabStrip = el("div", { class: "flex items-center gap-1 border-b border-white/10 pb-2" });
   const tabs: { id: VpnTab; label: string }[] = [
@@ -540,49 +540,175 @@ export function createVpnPage(): PageHandle {
     return card;
   }
 
+  function suggestNextIp(): string {
+    const defaultSubnet = "10.10.0.";
+    if (!state || !state.config.peers || state.config.peers.length === 0) {
+      return `${defaultSubnet}2/32`;
+    }
+    const occupied = new Set<number>();
+    for (const peer of state.config.peers) {
+      for (const ip of peer.allowed_ips) {
+        const match = ip.match(/10\.10\.0\.(\d+)/);
+        if (match) {
+          occupied.add(Number.parseInt(match[1], 10));
+        }
+      }
+    }
+    for (let host = 2; host < 254; host++) {
+      if (!occupied.has(host)) {
+        return `${defaultSubnet}${host}/32`;
+      }
+    }
+    return `${defaultSubnet}2/32`;
+  }
+
+  function openPeerModal(existing?: WgPeer, idx?: number): void {
+    const isNew = existing === undefined;
+    const modal = openModal(isNew ? "Add WireGuard Peer" : `Edit Peer · ${existing.name}`, "max-w-md");
+    modal.body.className = "flex flex-col gap-3";
+
+    const row = existing
+      ? structuredClone(existing)
+      : {
+          ...freshPeer(),
+          allowed_ips: [suggestNextIp()],
+        };
+
+    let allowedIpsStr = row.allowed_ips.join(", ");
+    const errorEl = el("div", { class: "text-xs text-rose-400 min-h-4" });
+
+    const nameInput = textInput(row.name, (v) => { row.name = v; }, { placeholder: "e.g. phone, laptop-work, macbook" });
+    const ipInput = textInput(allowedIpsStr, (v) => { allowedIpsStr = v; }, { placeholder: "10.10.0.2/32" });
+    const pubKeyInput = textInput(row.public_key, (v) => { row.public_key = v; }, { placeholder: "Leave empty to auto-generate for client export" });
+    const dnsInput = textInput(row.dns ?? "", (v) => { row.dns = v.trim() ? v.trim() : null; }, { placeholder: "e.g. 10.10.0.1 or 1.1.1.1" });
+    const keepaliveInput = numberInput(row.persistent_keepalive, (v) => { row.persistent_keepalive = v; }, { min: 0, max: 3600 });
+    const enabledCheck = checkbox(row.enabled, (v) => { row.enabled = v; }, "Enable peer immediately");
+
+    modal.body.append(
+      field("Peer Name", nameInput, "Friendly label for this client device."),
+      field("Tunnel IP Address (Allowed IPs)", ipInput, "Assigned virtual IP within the WireGuard interface network."),
+      field("Client Public Key (optional)", pubKeyInput, "If omitted, a keypair will be generated when clicking 'Client Conf'."),
+      el("div", { class: "grid grid-cols-2 gap-2" }, [
+        field("DNS Resolver (optional)", dnsInput),
+        field("Persistent Keepalive (s)", keepaliveInput),
+      ]),
+      el("div", { class: "p-2 bg-black/20 rounded border border-white/5" }, [enabledCheck]),
+      errorEl,
+    );
+
+    const saveBtn = button(isNew ? "Add Peer" : "Save Changes", "border-emerald-600 bg-emerald-500/20 text-emerald-300 font-semibold hover:bg-emerald-500/30 px-4 py-1.5 text-xs shadow-sm", async () => {
+      errorEl.textContent = "";
+      if (!row.name.trim()) {
+        errorEl.textContent = "Peer Name is required.";
+        return;
+      }
+      const ips = allowedIpsStr.split(",").map((s) => s.trim()).filter(Boolean);
+      if (ips.length === 0) {
+        errorEl.textContent = "At least one tunnel address is required (e.g. 10.10.0.2/32).";
+        return;
+      }
+      row.allowed_ips = ips;
+
+      if (isNew) {
+        try {
+          saveBtn.disabled = true;
+          saveBtn.textContent = "Adding…";
+          const result = await wireguardApi.addPeer({ ...freshPeer(), ...row });
+          state = result;
+          showToast({ tone: "ok", title: "Peer Added", message: `WireGuard peer '${row.name}' added successfully` });
+          modal.close();
+          render();
+        } catch (err) {
+          errorEl.textContent = errorText(err);
+          saveBtn.disabled = false;
+          saveBtn.textContent = "Add Peer";
+        }
+      } else if (idx !== undefined && state) {
+        state.config.peers[idx] = row;
+        showToast({ tone: "ok", title: "Peer Updated", message: `WireGuard peer '${row.name}' updated` });
+        modal.close();
+        render();
+      }
+    });
+
+    modal.body.append(
+      el("div", { class: "flex items-center justify-end gap-2 pt-2 border-t border-white/10" }, [
+        button("Cancel", "text-neutral-400 hover:text-white text-xs px-3 py-1", () => modal.close()),
+        saveBtn,
+      ]),
+    );
+  }
+
   function peersCard(): HTMLElement {
     const { root: card, body: cardBody } = panel("peers");
-    cardBody.append(
-      tableEditor(
-        state!.config.peers,
-        [
-          { header: "name", cell: (row) => textInput(row.name, (value) => (row.name = value)) },
-          {
-            header: "public key",
-            cell: (row) => textInput(row.public_key, (value) => (row.public_key = value)),
-          },
-          {
-            header: "allowed ips",
-            cell: (row) =>
-              textInput(row.allowed_ips.join(", "), (value) => {
-                row.allowed_ips = value
-                  .split(",")
-                  .map((part) => part.trim())
-                  .filter(Boolean);
-              }),
-          },
-          {
-            header: "dns",
-            cell: (row) => textInput(row.dns ?? "", (value) => (row.dns = value.trim() ? value.trim() : null)),
-          },
-          {
-            header: "keepalive",
-            cell: (row) =>
-              textInput(String(row.persistent_keepalive), (value) => {
-                row.persistent_keepalive = Number.parseInt(value, 10) || 0;
-              }),
-          },
-          {
-            header: "export",
-            cell: (row) =>
-              button("client conf", "text-[10px]", () => void exportClient(row)),
-          },
-        ],
-        freshPeer,
-        render,
-        "add peer",
+    cardBody.className = "flex flex-col gap-3 p-3";
+
+    const topBar = el("div", { class: "flex items-center justify-between" });
+    topBar.append(
+      el("div", { class: "flex flex-col" }, [
+        el("span", { class: "font-semibold text-xs text-neutral-200", text: "WireGuard Peers" }),
+        el("span", { class: "text-[11px] text-neutral-400", text: "Client devices connected to this WireGuard tunnel." }),
+      ]),
+      button(
+        "+ Add Peer",
+        "border-sky-600 bg-sky-500/20 text-sky-300 font-semibold hover:bg-sky-500/30 px-3 py-1.5 text-xs shadow-sm",
+        () => openPeerModal(),
       ),
     );
+    cardBody.append(topBar);
+
+    if (!state?.config.peers || state.config.peers.length === 0) {
+      cardBody.append(emptyNote("No peers configured yet. Click '+ Add Peer' above to add your first device."));
+      return card;
+    }
+
+    const table = el("table", { class: "w-full text-xs text-left" });
+    table.append(
+      el("thead", {}, [
+        el("tr", { class: "border-b border-white/10 text-[10px] uppercase text-neutral-500 tracking-wider" }, [
+          el("th", { class: "py-2 px-3", text: "Peer Name" }),
+          el("th", { class: "py-2 px-3", text: "Tunnel Address" }),
+          el("th", { class: "py-2 px-3", text: "Public Key" }),
+          el("th", { class: "py-2 px-3", text: "DNS" }),
+          el("th", { class: "py-2 px-3", text: "Keepalive" }),
+          el("th", { class: "py-2 px-3", text: "Status" }),
+          el("th", { class: "py-2 px-3 text-right", text: "Actions" }),
+        ]),
+      ]),
+    );
+    const tbody = el("tbody", { class: "divide-y divide-white/5 font-mono text-[11px]" });
+    state.config.peers.forEach((peer, idx) => {
+      const tr = el("tr", { class: "hover:bg-white/[0.02] transition-colors" });
+      const pubKeyShort = peer.public_key
+        ? `${peer.public_key.slice(0, 8)}…${peer.public_key.slice(-6)}`
+        : "(Auto-generated)";
+
+      tr.append(
+        el("td", { class: "py-2 px-3 text-neutral-200 font-sans font-medium", text: peer.name }),
+        el("td", { class: "py-2 px-3 text-emerald-400 font-semibold", text: peer.allowed_ips.join(", ") }),
+        el("td", { class: "py-2 px-3 text-neutral-400 font-mono text-[10px]", text: pubKeyShort }),
+        el("td", { class: "py-2 px-3 text-neutral-300", text: peer.dns || "—" }),
+        el("td", { class: "py-2 px-3 text-neutral-400 font-sans", text: `${peer.persistent_keepalive}s` }),
+        el("td", { class: "py-2 px-3 font-sans" }, [
+          peer.enabled ? badge("Active", "ok") : badge("Disabled", "muted"),
+        ]),
+        el("td", { class: "py-2 px-3 text-right font-sans flex items-center justify-end gap-1" }, [
+          button("📱 Client Conf", "border-sky-600 bg-sky-500/20 text-sky-300 font-semibold px-2 py-0.5 text-xs hover:bg-sky-500/30", () => {
+            void exportClient(peer);
+          }),
+          button("Edit", "text-neutral-300 hover:text-white px-2 py-0.5 text-xs", () => openPeerModal(peer, idx)),
+          button("Delete", "text-rose-400 hover:text-rose-300 px-2 py-0.5 text-xs", () => {
+            if (window.confirm(`Delete WireGuard peer '${peer.name}'?`)) {
+              state?.config.peers.splice(idx, 1);
+              render();
+            }
+          }),
+        ]),
+      );
+      tbody.append(tr);
+    });
+    table.append(tbody);
+    cardBody.append(table);
     return card;
   }
 
@@ -633,21 +759,6 @@ export function createVpnPage(): PageHandle {
     }
   }
 
-  async function addPeer(): Promise<void> {
-    const name = window.prompt("Peer name (e.g. phone)");
-    if (!name?.trim()) return;
-    const address = window.prompt("Tunnel address for this peer (inside the interface network)", "10.10.0.2/32");
-    if (!address?.trim()) return;
-    const result = await withBusy(() =>
-      wireguardApi.addPeer({ ...freshPeer(), name: name.trim(), allowed_ips: [address.trim()] }),
-    );
-    if (result) {
-      state = result;
-      status = `peer ${name.trim()} added`;
-      render();
-    }
-  }
-
   async function exportClient(peer: WgPeer): Promise<void> {
     const address = peer.allowed_ips[0] ?? "";
     if (!address) {
@@ -662,39 +773,68 @@ export function createVpnPage(): PageHandle {
     renderChrome();
   }
 
+  function downloadConf(filename: string, content: string): void {
+    const blob = new Blob([content], { type: "text/plain;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  }
+
   function showExport(exported: ClientExport, name: string): void {
-    const overlay = el("div", {
-      class: "fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4",
-    });
-    const card = el("div", {
-      class: "flex max-h-[85vh] w-full max-w-2xl flex-col gap-2 overflow-auto border border-white/5 bg-[#0e0e0e] p-3",
-    });
-    const close = (): void => overlay.remove();
-    card.append(
-      el("div", { class: "flex items-center gap-2" }, [
-        el("span", { class: "text-neutral-300", text: `client configuration — ${name}` }),
-        el("span", { class: "ml-auto" }),
-        button("close", "text-[10px]", close),
-      ]),
+    const modal = openModal(`Client Configuration · ${name}`, "max-w-2xl");
+    modal.body.className = "flex flex-col gap-3";
+
+    modal.body.append(
       el("div", {
-        class: "text-[11px] text-amber-400",
-        text: "The private key below is shown once and is not stored. Copy it now.",
-      }),
-      el("pre", {
-        class: "overflow-auto border border-white/5 bg-black/40 p-2 font-mono text-[10px] text-neutral-300",
-        text: exported.config,
+        class: "p-2.5 bg-amber-950/30 rounded border border-amber-600/30 text-amber-300 text-xs leading-relaxed",
+        text: "⚠️ Important: The client private key below was generated on demand and is never stored on the server. Download the .conf file or scan the QR code now before closing.",
       }),
     );
+
     if (exported.qr) {
-      card.append(el("pre", { class: "font-mono text-[8px] leading-3 text-emerald-400", text: exported.qr }));
+      modal.body.append(
+        el("div", { class: "flex flex-col items-center gap-1.5 p-2 bg-black/40 rounded border border-white/5" }, [
+          el("span", { class: "text-[10px] uppercase text-neutral-400 tracking-wider", text: "Scan with WireGuard Mobile App" }),
+          el("pre", { class: "font-mono text-[8px] leading-3 text-emerald-400 overflow-x-auto select-all", text: exported.qr }),
+        ]),
+      );
     } else if (exported.qr_error) {
-      card.append(el("div", { class: "text-[10px] text-neutral-600", text: `qr unavailable: ${exported.qr_error}` }));
+      modal.body.append(
+        el("div", { class: "text-[11px] text-neutral-500 italic", text: `QR code unavailable (${exported.qr_error}). Use configuration text below.` }),
+      );
     }
-    overlay.append(card);
-    overlay.addEventListener("mousedown", (event) => {
-      if (event.target === overlay) close();
+
+    const confBox = el("pre", {
+      class: "max-h-56 overflow-auto border border-white/5 bg-black/60 p-3 font-mono text-[11px] text-neutral-300 rounded",
+      text: exported.config,
     });
-    document.body.append(overlay);
+    modal.body.append(confBox);
+
+    const copyBtn = button("📋 Copy Config", "border-neutral-600 bg-white/5 text-neutral-200 hover:text-white px-3 py-1.5 text-xs", async () => {
+      try {
+        await navigator.clipboard.writeText(exported.config);
+        showToast({ tone: "ok", title: "Copied", message: "WireGuard configuration copied to clipboard" });
+      } catch {
+        showToast({ tone: "error", title: "Copy Failed", message: "Could not access clipboard" });
+      }
+    });
+
+    const downloadBtn = button("💾 Download .conf", "border-sky-600 bg-sky-500/20 text-sky-300 font-semibold hover:bg-sky-500/30 px-3 py-1.5 text-xs shadow-sm", () => {
+      downloadConf(`wg0-${name}.conf`, exported.config);
+      showToast({ tone: "ok", title: "File Downloaded", message: `Downloaded wg0-${name}.conf` });
+    });
+
+    modal.body.append(
+      el("div", { class: "flex items-center justify-between pt-2 border-t border-white/10" }, [
+        el("div", { class: "flex gap-2" }, [copyBtn, downloadBtn]),
+        button("Done", "border-emerald-600 bg-emerald-500/20 text-emerald-300 font-semibold px-4 py-1.5 text-xs hover:bg-emerald-500/30", () => modal.close()),
+      ]),
+    );
   }
 
   void load();
