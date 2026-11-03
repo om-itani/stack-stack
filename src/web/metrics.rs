@@ -59,6 +59,68 @@ pub async fn history(
     }))
 }
 
+#[derive(serde::Deserialize)]
+pub struct SetPowerProfileRequest {
+    pub profile: crate::system::power::PowerProfile,
+}
+
+pub async fn get_power_profile(
+    State(state): State<AppState>,
+) -> Result<Json<crate::system::power::PowerProfileStatus>, ApiError> {
+    let runner = state.samba.runner.clone();
+    let status = tokio::task::spawn_blocking(move || {
+        crate::system::power::get_power_profile(runner.as_ref())
+    })
+    .await
+    .map_err(|err| ApiError::internal(format!("power profile task failed: {err}")))?;
+    Ok(Json(status))
+}
+
+pub async fn set_power_profile(
+    State(state): State<AppState>,
+    Json(request): Json<SetPowerProfileRequest>,
+) -> Result<Json<crate::web::storage::StorageResult>, ApiError> {
+    let runner = state.samba.runner.clone();
+    let profile = request.profile;
+    let message = tokio::task::spawn_blocking(move || {
+        crate::system::power::set_power_profile(runner.as_ref(), profile)
+    })
+    .await
+    .map_err(|err| ApiError::internal(format!("set power profile task failed: {err}")))??;
+    state.audit("system.power_profile", &format!("{profile:?}"), "");
+    Ok(Json(crate::web::storage::StorageResult {
+        ok: true,
+        message,
+    }))
+}
+
+pub async fn get_hardening_status(
+    State(state): State<AppState>,
+) -> Result<Json<crate::system::power::HardeningStatus>, ApiError> {
+    let runner = state.samba.runner.clone();
+    let status = tokio::task::spawn_blocking(move || {
+        crate::system::power::get_hardening_status(runner.as_ref())
+    })
+    .await
+    .map_err(|err| ApiError::internal(format!("hardening status task failed: {err}")))?;
+    Ok(Json(status))
+}
+
+pub async fn apply_hardening(
+    State(state): State<AppState>,
+) -> Result<Json<crate::web::storage::StorageResult>, ApiError> {
+    let runner = state.samba.runner.clone();
+    let message =
+        tokio::task::spawn_blocking(move || crate::system::power::apply_hardening(runner.as_ref()))
+            .await
+            .map_err(|err| ApiError::internal(format!("hardening apply task failed: {err}")))??;
+    state.audit("system.hardening", "apply", "");
+    Ok(Json(crate::web::storage::StorageResult {
+        ok: true,
+        message,
+    }))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

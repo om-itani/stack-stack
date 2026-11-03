@@ -10,7 +10,7 @@
  * therefore survives the browser being closed.
  */
 
-import { containersApi, metricsApi } from "../api";
+import { containersApi, metricsApi, systemPowerApi } from "../api";
 import type { Container, HistoryRange, HistoryPoint } from "../api";
 import { Sparkline } from "../spark";
 import type { Telemetry } from "../telemetry";
@@ -108,6 +108,7 @@ const MARKUP = `
     <div class="panel-title flex shrink-0 items-baseline justify-between gap-3 border-b border-white/5 px-3 py-1.5 text-[10px]">
       <span>cpu</span>
       <span class="flex items-center gap-1" data-ref="cpu-range"></span>
+      <span class="flex items-center gap-1 border-l border-white/10 pl-2" data-ref="cpu-power"></span>
       <span data-ref="cpu-model" class="truncate text-[10px] normal-case tracking-normal text-neutral-600"></span>
     </div>
     <div class="flex shrink-0 items-center gap-3 px-3 py-1.5">
@@ -225,6 +226,40 @@ export function createSystemPage(telemetry: Telemetry): PageHandle {
         }
       });
       host.append(control);
+    }
+  }
+
+  type PowerProfile = "quiet" | "balanced" | "performance";
+  const POWER_PROFILES: Array<{ id: PowerProfile; label: string; icon: string }> = [
+    { id: "quiet", label: "quiet", icon: "🌿" },
+    { id: "balanced", label: "balanced", icon: "⚖️" },
+    { id: "performance", label: "turbo", icon: "⚡" },
+  ];
+
+  let currentPowerProfile: PowerProfile = "balanced";
+
+  function powerProfileControl(host: HTMLElement): void {
+    host.replaceChildren();
+    for (const p of POWER_PROFILES) {
+      const active = p.id === currentPowerProfile;
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.textContent = `${p.icon} ${p.label}`;
+      btn.className = active
+        ? "rounded border border-sky-500/50 bg-sky-500/10 px-1.5 py-0.5 text-[10px] text-sky-400 font-medium"
+        : "rounded border border-white/10 px-1.5 py-0.5 text-[10px] text-neutral-500 transition-colors duration-200 hover:text-neutral-200";
+      btn.addEventListener("click", async () => {
+        if (p.id !== currentPowerProfile) {
+          currentPowerProfile = p.id;
+          powerProfileControl(host);
+          try {
+            await systemPowerApi.setProfile(p.id);
+          } catch (e) {
+            console.error("failed to set power profile:", e);
+          }
+        }
+      });
+      host.append(btn);
     }
   }
 
@@ -610,6 +645,16 @@ export function createSystemPage(telemetry: Telemetry): PageHandle {
 
   rangeControl(ref("cpu-range"), cpuRange, selectCpuRange);
   rangeControl(ref("net-range"), netRange, selectNetRange);
+
+  const cpuPowerEl = ref<HTMLElement>("cpu-power");
+  powerProfileControl(cpuPowerEl);
+  void systemPowerApi
+    .getProfile()
+    .then((status) => {
+      currentPowerProfile = status.current_profile;
+      powerProfileControl(cpuPowerEl);
+    })
+    .catch(() => {});
 
   telemetry.onSnapshot(render);
   void telemetry.currentSnapshot().then((snapshot) => {

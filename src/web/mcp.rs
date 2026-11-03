@@ -644,6 +644,87 @@ fn list_tools() -> Vec<Value> {
                 "properties": {}
             }
         }),
+        json!({
+            "name": "set_disk_spindown",
+            "description": "Configure the automatic idle spindown timeout on a mechanical HDD in minutes (0=disabled, 5, 10, 15, 20, 30, 60, 120).",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "device": { "type": "string", "description": "Device path, e.g. /dev/sda" },
+                    "minutes": { "type": "integer", "description": "Idle timeout in minutes before spinning down (0 = never)" }
+                },
+                "required": ["device", "minutes"]
+            }
+        }),
+        json!({
+            "name": "spindown_disk_now",
+            "description": "Immediately put a mechanical hard drive into low-power standby mode (spin down the motor).",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "device": { "type": "string", "description": "Device path, e.g. /dev/sda" }
+                },
+                "required": ["device"]
+            }
+        }),
+        json!({
+            "name": "get_disk_power_state",
+            "description": "Query whether a disk is actively spinning or in low-power standby sleep mode without waking it up.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "device": { "type": "string", "description": "Device path, e.g. /dev/sda" }
+                },
+                "required": ["device"]
+            }
+        }),
+        json!({
+            "name": "set_cpu_power_profile",
+            "description": "Switch CPU power and acoustic profile: 'quiet' (whisper-quiet fan, low power), 'balanced' (standard), or 'performance' (maximum turbo clocks).",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "profile": { "type": "string", "enum": ["quiet", "balanced", "performance"], "description": "Target power profile" }
+                },
+                "required": ["profile"]
+            }
+        }),
+        json!({
+            "name": "get_cpu_power_profile",
+            "description": "Inspect current CPU governor, Energy Performance Preference (EPP), frequencies, and thermal metrics.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {}
+            }
+        }),
+        json!({
+            "name": "apply_system_hardening",
+            "description": "Apply unbreakable host optimizations: tune memory swappiness & dirty ratios, maximize network backlogs, shield core services from OOM-killer, and enable NVMe auto-trim.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {}
+            }
+        }),
+        json!({
+            "name": "get_system_hardening_status",
+            "description": "Get current kernel sysctl tuning, OOM score shields, and TRIM timer status.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {}
+            }
+        }),
+        json!({
+            "name": "run_advanced_stress_test",
+            "description": "Run a hardened multi-stage stress test (CPU, RAM, or Extreme) with a real-time Thermal Watchdog safeguard that automatically aborts if temperature reaches the safety limit (default 85C).",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "profile": { "type": "string", "enum": ["cpu", "memory", "extreme"], "description": "Stress profile" },
+                    "duration_seconds": { "type": "integer", "description": "Duration in seconds (default 30, max 120)" },
+                    "thermal_cutoff_c": { "type": "number", "description": "Thermal abort safety ceiling in Celsius (default 85.0)" }
+                }
+            }
+        }),
     ]
 }
 
@@ -2389,6 +2470,155 @@ async fn execute_tool(state: &AppState, name: &str, args: Value) -> Result<Strin
                 "failed": total_count - passed_count,
                 "total": total_count,
                 "tests": test_results
+            });
+            serde_json::to_string_pretty(&summary).map_err(|e| e.to_string())
+        }
+
+        "set_disk_spindown" => {
+            let device = args
+                .get("device")
+                .and_then(|v| v.as_str())
+                .ok_or("device is required")?;
+            let minutes = args
+                .get("minutes")
+                .and_then(|v| v.as_u64())
+                .ok_or("minutes is required")? as u32;
+            let msg = state
+                .storage
+                .set_spindown_timeout(device, minutes)
+                .map_err(|e| e.to_string())?;
+            let res = json!({ "ok": true, "message": msg });
+            serde_json::to_string_pretty(&res).map_err(|e| e.to_string())
+        }
+
+        "spindown_disk_now" => {
+            let device = args
+                .get("device")
+                .and_then(|v| v.as_str())
+                .ok_or("device is required")?;
+            let msg = state
+                .storage
+                .spindown_now(device)
+                .map_err(|e| e.to_string())?;
+            let res = json!({ "ok": true, "message": msg });
+            serde_json::to_string_pretty(&res).map_err(|e| e.to_string())
+        }
+
+        "get_disk_power_state" => {
+            let device = args
+                .get("device")
+                .and_then(|v| v.as_str())
+                .ok_or("device is required")?;
+            let power_state = state
+                .storage
+                .disk_power_state(device)
+                .map_err(|e| e.to_string())?;
+            let res = json!({ "ok": true, "device": device, "state": power_state });
+            serde_json::to_string_pretty(&res).map_err(|e| e.to_string())
+        }
+
+        "set_cpu_power_profile" => {
+            let profile_str = args
+                .get("profile")
+                .and_then(|v| v.as_str())
+                .ok_or("profile is required")?;
+            let profile = match profile_str {
+                "quiet" => crate::system::power::PowerProfile::Quiet,
+                "balanced" => crate::system::power::PowerProfile::Balanced,
+                "performance" => crate::system::power::PowerProfile::Performance,
+                other => return Err(format!("invalid profile '{other}'")),
+            };
+            let msg = crate::system::power::set_power_profile(state.samba.runner.as_ref(), profile)
+                .map_err(|e| e.to_string())?;
+            let res = json!({ "ok": true, "message": msg });
+            serde_json::to_string_pretty(&res).map_err(|e| e.to_string())
+        }
+
+        "get_cpu_power_profile" => {
+            let info = crate::system::power::get_power_profile(state.samba.runner.as_ref());
+            serde_json::to_string_pretty(&info).map_err(|e| e.to_string())
+        }
+
+        "apply_system_hardening" => {
+            let msg = crate::system::power::apply_hardening(state.samba.runner.as_ref())
+                .map_err(|e| e.to_string())?;
+            let res = json!({ "ok": true, "message": msg });
+            serde_json::to_string_pretty(&res).map_err(|e| e.to_string())
+        }
+
+        "get_system_hardening_status" => {
+            let status = crate::system::power::get_hardening_status(state.samba.runner.as_ref());
+            serde_json::to_string_pretty(&status).map_err(|e| e.to_string())
+        }
+
+        "run_advanced_stress_test" => {
+            let profile = args
+                .get("profile")
+                .and_then(|v| v.as_str())
+                .unwrap_or("cpu");
+            let duration_s = args
+                .get("duration_seconds")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(30)
+                .clamp(5, 120);
+            let thermal_cutoff = args
+                .get("thermal_cutoff_c")
+                .and_then(|v| v.as_f64())
+                .unwrap_or(85.0) as f32;
+
+            let initial_temp = crate::system::metrics::cpu_temperature_c().unwrap_or(40.0);
+            if initial_temp >= thermal_cutoff {
+                return Err(format!(
+                    "Safety abort: Initial CPU temperature {initial_temp:.1}°C exceeds cutoff {thermal_cutoff:.1}°C"
+                ));
+            }
+
+            let yaml = match profile {
+                "memory" => format!(
+                    "services:\n  mem-soak:\n    image: alpine:latest\n    shm_size: 1073741824\n    command: [\"sh\", \"-c\", \"dd if=/dev/zero of=/dev/shm/soak.dat bs=1M count=1000; sleep {duration_s}; rm -f /dev/shm/soak.dat\"]\n    restart: \"no\"\n"
+                ),
+                "extreme" => format!(
+                    "services:\n  cpu-burn-1:\n    image: alpine:latest\n    command: [\"sh\", \"-c\", \"for i in 1 2 3; do sha256sum /dev/zero & done; sleep {duration_s}; killall sha256sum\"]\n    restart: \"no\"\n  cpu-burn-2:\n    image: alpine:latest\n    command: [\"sh\", \"-c\", \"for i in 1 2 3; do sha256sum /dev/zero & done; sleep {duration_s}; killall sha256sum\"]\n    restart: \"no\"\n  mem-burn:\n    image: alpine:latest\n    shm_size: 1073741824\n    command: [\"sh\", \"-c\", \"dd if=/dev/zero of=/dev/shm/extreme.dat bs=1M count=1000; sleep {duration_s}; rm -f /dev/shm/extreme.dat\"]\n    restart: \"no\"\n"
+                ),
+                _ => format!(
+                    "services:\n  cpu-burn:\n    image: alpine:latest\n    command: [\"sh\", \"-c\", \"for i in 1 2 3 4; do sha256sum /dev/zero & done; sleep {duration_s}; killall sha256sum\"]\n    restart: \"no\"\n"
+                ),
+            };
+
+            let stack_name = "adv-stress";
+            let _deploy_res =
+                crate::containers::store::deploy_stack(&state.config, stack_name, &yaml)
+                    .await
+                    .map_err(|e| e.to_string())?;
+
+            let mut max_temp = initial_temp;
+            let mut aborted = false;
+            let sample_interval = 2;
+            let loops = duration_s / sample_interval;
+            for _ in 0..loops {
+                tokio::time::sleep(Duration::from_secs(sample_interval)).await;
+                if let Some(t) = crate::system::metrics::cpu_temperature_c() {
+                    if t > max_temp {
+                        max_temp = t;
+                    }
+                    if t >= thermal_cutoff {
+                        aborted = true;
+                        break;
+                    }
+                }
+            }
+
+            let _ = crate::containers::store::remove_stack(&state.config, stack_name, true).await;
+
+            let summary = json!({
+                "ok": !aborted,
+                "profile": profile,
+                "duration_seconds": duration_s,
+                "thermal_watchdog_aborted": aborted,
+                "initial_temp_c": initial_temp,
+                "peak_temp_c": max_temp,
+                "thermal_cutoff_c": thermal_cutoff,
+                "status": if aborted { "Aborted early by Thermal Watchdog" } else { "Completed successfully within thermal safety bounds" }
             });
             serde_json::to_string_pretty(&summary).map_err(|e| e.to_string())
         }

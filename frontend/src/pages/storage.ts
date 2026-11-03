@@ -84,6 +84,62 @@ export function createStoragePage(): PageHandle {
         class: "truncate text-[11px] text-neutral-500",
         text: disk.model ?? disk.kind,
       }),
+    );
+
+    if (disk.rotational || (disk.kind === "disk" && disk.name.startsWith("sd"))) {
+      const powerBadge = badge("checking…", "muted");
+      head.append(powerBadge);
+
+      storageApi.powerStatus(disk.path).then((res) => {
+        if (res.state.includes("standby") || res.state.includes("sleep")) {
+          powerBadge.textContent = "standby (sleeping)";
+          powerBadge.className = "rounded border border-sky-500/30 bg-sky-500/10 px-1.5 py-0.5 text-[10px] text-sky-400";
+        } else {
+          powerBadge.textContent = "active / spinning";
+          powerBadge.className = "rounded border border-emerald-500/30 bg-emerald-500/10 px-1.5 py-0.5 text-[10px] text-emerald-400";
+        }
+      }).catch(() => {
+        powerBadge.textContent = "rotational HDD";
+      });
+
+      const spindownSelect = el("select", {
+        class: "border border-white/10 bg-black/40 px-1.5 py-0.5 text-[10px] text-neutral-300 rounded",
+        title: "Idle spindown timeout",
+      }, [
+        el("option", { value: "0", text: "Sleep: Never" }),
+        el("option", { value: "5", text: "Sleep: 5 min idle" }),
+        el("option", { value: "10", text: "Sleep: 10 min idle" }),
+        el("option", { value: "15", text: "Sleep: 15 min idle" }),
+        el("option", { value: "30", text: "Sleep: 30 min idle" }),
+        el("option", { value: "60", text: "Sleep: 1 hour idle" }),
+        el("option", { value: "120", text: "Sleep: 2 hours idle" }),
+      ]) as HTMLSelectElement;
+
+      spindownSelect.addEventListener("change", async () => {
+        const mins = parseInt(spindownSelect.value, 10);
+        try {
+          const res = await storageApi.spindown(disk.path, mins);
+          setStatus(res.message, "ok");
+        } catch (e) {
+          setStatus(errorText(e), "error");
+        }
+      });
+
+      const sleepBtn = button("🌙 spin down now", "text-[10px] text-sky-400 border border-sky-500/20 hover:bg-sky-500/10", async () => {
+        try {
+          const res = await storageApi.standby(disk.path);
+          setStatus(res.message, "ok");
+          powerBadge.textContent = "standby (sleeping)";
+          powerBadge.className = "rounded border border-sky-500/30 bg-sky-500/10 px-1.5 py-0.5 text-[10px] text-sky-400";
+        } catch (e) {
+          setStatus(errorText(e), "error");
+        }
+      });
+
+      head.append(spindownSelect, sleepBtn);
+    }
+
+    head.append(
       el("span", { class: "tabular ml-auto text-[11px] text-neutral-500", text: bytes(disk.size_bytes) }),
     );
     panel.append(head);

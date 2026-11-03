@@ -6,4 +6,5 @@
 
 pub mod history;
 pub mod metrics;
+pub mod power;
 pub mod storage;

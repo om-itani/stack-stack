@@ -43,6 +43,8 @@ pub struct BlockDevice {
     pub fstype: Option<String>,
     pub mountpoint: Option<String>,
     pub label: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rotational: Option<bool>,
     pub children: Vec<BlockDevice>,
 }
 
@@ -113,7 +115,7 @@ impl StorageContext {
                     "-J",
                     "-b",
                     "-o",
-                    "NAME,PATH,TYPE,SIZE,MODEL,FSTYPE,MOUNTPOINT,LABEL",
+                    "NAME,PATH,TYPE,SIZE,MODEL,FSTYPE,MOUNTPOINT,LABEL,ROTA",
                 ],
             )
             .map_err(|err| ApiError::unavailable(format!("cannot run lsblk: {err}")))?;
@@ -382,6 +384,68 @@ impl StorageContext {
             ApiError::internal(format!("cannot update {}: {err}", self.fstab.display()))
         })
     }
+
+    /// Check whether a disk is spinning or in standby without waking it up (`hdparm -C`).
+    pub fn disk_power_state(&self, device: &str) -> Result<String, ApiError> {
+        validate_device_path(device)?;
+        let output = self
+            .runner
+            .call("hdparm", &["-C", device])
+            .map_err(|err| ApiError::unavailable(format!("cannot run hdparm: {err}")))?;
+        let text = output.combined().to_ascii_lowercase();
+        if text.contains("standby") {
+            Ok("standby".to_string())
+        } else if text.contains("sleeping") {
+            Ok("sleeping".to_string())
+        } else if text.contains("active") || text.contains("idle") {
+            Ok("active/idle".to_string())
+        } else if text.contains("unknown") {
+            Ok("unknown".to_string())
+        } else {
+            Ok("active/idle".to_string())
+        }
+    }
+
+    /// Spin down a mechanical disk immediately into standby mode (`hdparm -y`).
+    pub fn spindown_now(&self, device: &str) -> Result<String, ApiError> {
+        validate_device_path(device)?;
+        let output = self
+            .runner
+            .call("hdparm", &["-y", device])
+            .map_err(|err| ApiError::unavailable(format!("cannot run hdparm: {err}")))?;
+        if !output.success() {
+            return Err(ApiError::internal(format!(
+                "spindown failed: {}",
+                output.combined().trim()
+            )));
+        }
+        Ok(format!("{device} placed in standby (spun down)"))
+    }
+
+    /// Set disk idle spindown timer in minutes (0 = disabled, 5, 10, 15, 20, 30, 60, 120).
+    pub fn set_spindown_timeout(&self, device: &str, minutes: u32) -> Result<String, ApiError> {
+        validate_device_path(device)?;
+        let val = match minutes {
+            0 => "0".to_string(),
+            1..=20 => (minutes * 12).to_string(), // multiples of 5s: 5*12=60 (5m), 10*12=120 (10m)
+            21..=45 => "241".to_string(),         // 30 min
+            46..=90 => "242".to_string(),         // 1 hour
+            _ => "244".to_string(),               // 2 hours
+        };
+        let output = self
+            .runner
+            .call("hdparm", &["-S", &val, device])
+            .map_err(|err| ApiError::unavailable(format!("cannot run hdparm: {err}")))?;
+        if !output.success() {
+            return Err(ApiError::internal(format!(
+                "setting spindown failed: {}",
+                output.combined().trim()
+            )));
+        }
+        Ok(format!(
+            "{device} idle spindown timeout set to {minutes} minutes"
+        ))
+    }
 }
 
 /// Devices plus the context the UI needs to mark them.
@@ -477,6 +541,12 @@ fn node_to_device(node: &LsblkNode) -> BlockDevice {
         .clone()
         .filter(|p| !p.is_empty())
         .unwrap_or_else(|| format!("/dev/{name}"));
+    let rotational = node.rota.as_ref().map(|v| match v {
+        serde_json::Value::Bool(b) => *b,
+        serde_json::Value::Number(n) => n.as_u64().unwrap_or(0) == 1,
+        serde_json::Value::String(s) => s.trim() == "1" || s.trim().eq_ignore_ascii_case("true"),
+        _ => false,
+    });
     BlockDevice {
         name,
         path,
@@ -486,6 +556,7 @@ fn node_to_device(node: &LsblkNode) -> BlockDevice {
         fstype: clean(node.fstype.clone()),
         mountpoint: clean(node.mountpoint.clone()),
         label: clean(node.label.clone()),
+        rotational,
         children: node.children.iter().map(node_to_device).collect(),
     }
 }
@@ -528,6 +599,8 @@ struct LsblkNode {
     mountpoint: Option<String>,
     #[serde(default)]
     label: Option<String>,
+    #[serde(default)]
+    rota: Option<serde_json::Value>,
     #[serde(default)]
     children: Vec<LsblkNode>,
 }

@@ -318,7 +318,7 @@ fn cpu_model() -> Option<String> {
 /// Average current core clock from `/proc/cpuinfo`. Returns `None` when the
 /// field is absent or every core reports zero, which is normal on arm64 and in
 /// some virtualised guests.
-fn cpu_frequency_mhz() -> Option<u32> {
+pub(crate) fn cpu_frequency_mhz() -> Option<u32> {
     let info = read("/proc/cpuinfo")?;
     let mut total = 0.0f64;
     let mut count = 0u32;
@@ -342,7 +342,7 @@ fn cpu_frequency_mhz() -> Option<u32> {
 /// Package temperature, preferring a CPU hwmon chip (coretemp/k10temp/zenpower)
 /// and falling back to a CPU-ish thermal zone. Millidegrees become whole tenths
 /// of a degree.
-fn cpu_temperature_c() -> Option<f32> {
+pub(crate) fn cpu_temperature_c() -> Option<f32> {
     if let Ok(entries) = fs::read_dir("/sys/class/hwmon") {
         let mut chips: Vec<std::path::PathBuf> =
             entries.flatten().map(|entry| entry.path()).collect();

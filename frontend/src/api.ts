@@ -1821,6 +1821,7 @@ export interface BlockDevice {
   fstype: string | null;
   mountpoint: string | null;
   label: string | null;
+  rotational?: boolean;
   children: BlockDevice[];
 }
 
@@ -1844,6 +1845,40 @@ export const storageApi = {
     jsonRequest<StorageResult>("/api/storage/mount", "POST", { device, path, persist }),
   unmount: (target: string) =>
     jsonRequest<StorageResult>("/api/storage/unmount", "POST", { target }),
+  spindown: (device: string, minutes: number) =>
+    jsonRequest<StorageResult>("/api/storage/spindown", "POST", { device, minutes }),
+  standby: (device: string) =>
+    jsonRequest<StorageResult>("/api/storage/standby", "POST", { device }),
+  powerStatus: (device: string) =>
+    request<{ device: string; state: string }>(`/api/storage/power?device=${encodeURIComponent(device)}`),
+};
+
+export interface PowerProfileStatus {
+  current_profile: "quiet" | "balanced" | "performance";
+  governor: string;
+  energy_preference?: string | null;
+  available_governors: string[];
+  cpu_temp_c?: number | null;
+  freq_mhz?: number | null;
+}
+
+export interface HardeningStatus {
+  swappiness: number;
+  vfs_cache_pressure: number;
+  dirty_ratio: number;
+  dirty_background_ratio: number;
+  somaxconn: number;
+  file_max: number;
+  fstrim_active: boolean;
+  oom_shield_active: boolean;
+}
+
+export const systemPowerApi = {
+  getProfile: () => request<PowerProfileStatus>("/api/system/power-profile"),
+  setProfile: (profile: "quiet" | "balanced" | "performance") =>
+    jsonRequest<StorageResult>("/api/system/power-profile", "POST", { profile }),
+  getHardening: () => request<HardeningStatus>("/api/system/hardening"),
+  applyHardening: () => jsonRequest<StorageResult>("/api/system/hardening", "POST", {}),
 };
 
 // ---------------------------------------------------------------------------

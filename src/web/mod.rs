@@ -265,6 +265,17 @@ pub fn router(state: AppState) -> Router {
         .route("/api/storage/format", post(storage::format))
         .route("/api/storage/mount", post(storage::mount))
         .route("/api/storage/unmount", post(storage::unmount))
+        .route("/api/storage/spindown", post(storage::spindown))
+        .route("/api/storage/standby", post(storage::standby))
+        .route("/api/storage/power", get(storage::power_status))
+        .route(
+            "/api/system/power-profile",
+            get(metrics::get_power_profile).post(metrics::set_power_profile),
+        )
+        .route(
+            "/api/system/hardening",
+            get(metrics::get_hardening_status).post(metrics::apply_hardening),
+        )
         .route("/api/smart", get(smart::state))
         .route("/api/smart/config", put(smart::save_config))
         .route("/api/smart/{device}", post(smart::start))

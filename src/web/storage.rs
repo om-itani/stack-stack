@@ -5,7 +5,7 @@
 //! guards and validation live in `system::storage`.
 
 use axum::Json;
-use axum::extract::State;
+use axum::extract::{Query, State};
 use serde::{Deserialize, Serialize};
 
 use crate::error::ApiError;
@@ -92,4 +92,69 @@ pub async fn unmount(
         .map_err(|err| ApiError::internal(format!("unmount task failed: {err}")))??;
     state.audit("storage.unmount", &request.target, "");
     Ok(Json(StorageResult { ok: true, message }))
+}
+
+#[derive(Deserialize)]
+pub struct SpindownRequest {
+    pub device: String,
+    pub minutes: u32,
+}
+
+pub async fn spindown(
+    State(state): State<AppState>,
+    Json(request): Json<SpindownRequest>,
+) -> Result<Json<StorageResult>, ApiError> {
+    let storage = state.storage.clone();
+    let device = request.device.clone();
+    let minutes = request.minutes;
+    let message =
+        tokio::task::spawn_blocking(move || storage.set_spindown_timeout(&device, minutes))
+            .await
+            .map_err(|err| ApiError::internal(format!("spindown task failed: {err}")))??;
+    state.audit("storage.spindown", &request.device, &format!("{minutes}m"));
+    Ok(Json(StorageResult { ok: true, message }))
+}
+
+#[derive(Deserialize)]
+pub struct StandbyRequest {
+    pub device: String,
+}
+
+pub async fn standby(
+    State(state): State<AppState>,
+    Json(request): Json<StandbyRequest>,
+) -> Result<Json<StorageResult>, ApiError> {
+    let storage = state.storage.clone();
+    let device = request.device.clone();
+    let message = tokio::task::spawn_blocking(move || storage.spindown_now(&device))
+        .await
+        .map_err(|err| ApiError::internal(format!("standby task failed: {err}")))??;
+    state.audit("storage.standby", &request.device, "now");
+    Ok(Json(StorageResult { ok: true, message }))
+}
+
+#[derive(Deserialize)]
+pub struct PowerStatusQuery {
+    pub device: String,
+}
+
+#[derive(Serialize)]
+pub struct DiskPowerResponse {
+    pub device: String,
+    pub state: String,
+}
+
+pub async fn power_status(
+    State(state): State<AppState>,
+    Query(query): Query<PowerStatusQuery>,
+) -> Result<Json<DiskPowerResponse>, ApiError> {
+    let storage = state.storage.clone();
+    let device = query.device.clone();
+    let status = tokio::task::spawn_blocking(move || storage.disk_power_state(&device))
+        .await
+        .map_err(|err| ApiError::internal(format!("power status task failed: {err}")))??;
+    Ok(Json(DiskPowerResponse {
+        device: query.device,
+        state: status,
+    }))
 }

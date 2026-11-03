@@ -47,6 +47,7 @@ APT_PACKAGES=(
   wireguard-tools
   qrencode
   smartmontools
+  hdparm
   tar
   unzip
   zstd
@@ -747,7 +748,7 @@ enabled = true
     fi
   fi
 
-  # 4. Kernel sysctl parameters
+  # 4. Kernel sysctl parameters & host performance
   if write_if_changed /etc/sysctl.d/99-stack-stack.conf \
 '# stack-stack hardening
 net.ipv4.conf.all.rp_filter = 1
@@ -755,9 +756,21 @@ net.ipv4.conf.default.rp_filter = 1
 kernel.kptr_restrict = 2
 kernel.dmesg_restrict = 1
 kernel.yama.ptrace_scope = 1
+# Memory & responsiveness optimizations
+vm.swappiness = 10
+vm.vfs_cache_pressure = 50
+vm.dirty_ratio = 10
+vm.dirty_background_ratio = 5
+# Network backlog & socket headroom
+net.core.somaxconn = 4096
+net.ipv4.tcp_max_syn_backlog = 4096
+fs.file-max = 2097152
 '; then
     sysctl -p /etc/sysctl.d/99-stack-stack.conf >/dev/null 2>&1 || true
   fi
+
+  # 5. SSD auto-trim service
+  systemctl enable --now fstrim.timer >/dev/null 2>&1 || true
 
   local t1
   t1="$(date +%s)"
@@ -797,6 +810,7 @@ NoNewPrivileges=false
 PrivateTmp=false
 ProtectSystem=false
 AmbientCapabilities=CAP_NET_BIND_SERVICE CAP_NET_ADMIN CAP_NET_RAW
+OOMScoreAdjust=-1000
 
 [Install]
 WantedBy=multi-user.target
