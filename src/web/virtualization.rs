@@ -904,7 +904,7 @@ fn not_found(id: &str) -> ApiError {
     ApiError::not_found(format!("no guest called {id}"))
 }
 
-fn next_guest_id(doc: &VirtualizationConfig) -> String {
+pub fn next_guest_id(doc: &VirtualizationConfig) -> String {
     let mut next = doc
         .vms
         .iter()
@@ -920,7 +920,7 @@ fn next_guest_id(doc: &VirtualizationConfig) -> String {
     next.to_string()
 }
 
-fn prepare_vm(doc: &VirtualizationConfig, mut vm: VmConfig) -> VmConfig {
+pub fn prepare_vm(doc: &VirtualizationConfig, mut vm: VmConfig) -> VmConfig {
     if vm.id.trim().is_empty() {
         vm.id = next_guest_id(doc);
     }
@@ -930,7 +930,7 @@ fn prepare_vm(doc: &VirtualizationConfig, mut vm: VmConfig) -> VmConfig {
     vm
 }
 
-fn prepare_ct(doc: &VirtualizationConfig, mut ct: CtConfig) -> CtConfig {
+pub fn prepare_ct(doc: &VirtualizationConfig, mut ct: CtConfig) -> CtConfig {
     if ct.id.trim().is_empty() {
         ct.id = next_guest_id(doc);
     }

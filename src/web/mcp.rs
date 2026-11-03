@@ -79,7 +79,7 @@ pub async fn mcp_info() -> Json<Value> {
         "protocol": "2024-11-05",
         "transport": "HTTP JSON-RPC 2.0 (POST /api/mcp)",
         "description": "Model Context Protocol interface for stack-stack homeserver management",
-        "tools_count": 27,
+        "tools_count": 34,
         "capabilities": {
             "tools": { "listChanged": false }
         }
@@ -444,6 +444,94 @@ fn list_tools() -> Vec<Value> {
                     "domain": { "type": "string", "description": "Domain name to check (e.g. 'ads.google.com')" }
                 },
                 "required": ["domain"]
+            }
+        }),
+        json!({
+            "name": "create_virtual_machine",
+            "description": "Deploy a full QEMU virtual machine with custom CPU cores, RAM, disk size, and optional OS template.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "name": { "type": "string", "description": "VM name (e.g. 'ubuntu-server')" },
+                    "cores": { "type": "integer", "description": "Number of vCPUs (e.g. 2, default 2)" },
+                    "memory_mb": { "type": "integer", "description": "RAM size in Megabytes (e.g. 2048, default 2048)" },
+                    "disk_size_gb": { "type": "integer", "description": "Disk size in Gigabytes (e.g. 20, default 20)" },
+                    "image": { "type": "string", "description": "Optional catalog image ID or OS template" },
+                    "autostart": { "type": "boolean", "description": "Autostart on system boot (default false)" }
+                },
+                "required": ["name"]
+            }
+        }),
+        json!({
+            "name": "create_lightweight_container",
+            "description": "Deploy an LXC lightweight container (Debian, Ubuntu, Alpine) in seconds.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "name": { "type": "string", "description": "Container name (e.g. 'alpine-app')" },
+                    "cores": { "type": "integer", "description": "CPU allowance in cores (0 for unlimited, default 1)" },
+                    "memory_mb": { "type": "integer", "description": "RAM size in Megabytes (e.g. 512, default 512)" },
+                    "disk_size_gb": { "type": "integer", "description": "Rootfs size in Gigabytes (e.g. 8, default 8)" },
+                    "template": { "type": "string", "description": "Template or OS name (e.g. 'debian-12-standard', 'alpine-3.20', 'ubuntu-24.04')" },
+                    "password": { "type": "string", "description": "Optional root password" }
+                },
+                "required": ["name"]
+            }
+        }),
+        json!({
+            "name": "manage_guest",
+            "description": "Start, stop, reboot, shutdown, snapshot, or delete an existing VM or LXC container.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "id": { "type": "string", "description": "Guest ID (e.g. '1', '100')" },
+                    "action": { "type": "string", "enum": ["start", "stop", "reboot", "shutdown", "delete", "snapshot"], "description": "Lifecycle action to perform" },
+                    "snapshot_action": { "type": "string", "enum": ["create", "apply", "delete", "list"], "description": "Action if action is snapshot (create, apply, delete, list)" },
+                    "snapshot_name": { "type": "string", "description": "Snapshot name for create/apply/delete" }
+                },
+                "required": ["id", "action"]
+            }
+        }),
+        json!({
+            "name": "trigger_backup",
+            "description": "Trigger an immediate Restic backup snapshot for a configured job or default job.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "job_id": { "type": "string", "description": "Optional specific job ID to run; if omitted runs the first configured job" }
+                }
+            }
+        }),
+        json!({
+            "name": "list_backup_snapshots",
+            "description": "List all Restic backup snapshots across repositories with timestamp, paths, and size.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "job_id": { "type": "string", "description": "Optional job ID filter" }
+                }
+            }
+        }),
+        json!({
+            "name": "generate_vpn_client",
+            "description": "Generate a WireGuard client configuration profile and keypair for secure remote connection.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "name": { "type": "string", "description": "Client name (e.g. 'omars-phone', 'macbook')" },
+                    "address": { "type": "string", "description": "Optional client tunnel IP (e.g. '10.8.0.2/24')" }
+                },
+                "required": ["name"]
+            }
+        }),
+        json!({
+            "name": "get_drive_health",
+            "description": "Inspect SMART drive health, temperatures, power-on hours, wear levels, and self-test history across host NVMe and SATA drives.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "device": { "type": "string", "description": "Optional device path (e.g. '/dev/sda', '/dev/nvme0n1'). If omitted, probes all detected drives." }
+                }
             }
         }),
     ]
@@ -1151,6 +1239,610 @@ async fn execute_tool(state: &AppState, name: &str, args: Value) -> Result<Strin
                 "is_blocked": is_blocked,
                 "is_allowed": is_allowed,
                 "status": if is_blocked { "BLOCKED (Sinkholed by ad-blocker)" } else { "ALLOWED (Resolves normally)" }
+            });
+            serde_json::to_string_pretty(&res).map_err(|e| e.to_string())
+        }
+
+        "create_virtual_machine" => {
+            let name = args
+                .get("name")
+                .and_then(|v| v.as_str())
+                .ok_or("name is required")?;
+            let cores = args.get("cores").and_then(|v| v.as_u64()).unwrap_or(2) as u16;
+            let memory_mb = args
+                .get("memory_mb")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(2048) as u32;
+            let disk_size_gb = args
+                .get("disk_size_gb")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(20) as u32;
+            let image = args
+                .get("image")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string());
+            let autostart = args
+                .get("autostart")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+
+            let (doc, _) =
+                crate::virtualization::store::load(std::path::Path::new(&state.virt.config_path));
+            let raw_vm = crate::virtualization::model::VmConfig {
+                name: name.to_string(),
+                vcpus: cores,
+                memory_mb,
+                disk_gb: disk_size_gb,
+                image,
+                autostart,
+                ..Default::default()
+            };
+            let mut vm = crate::web::virtualization::prepare_vm(&doc, raw_vm);
+            if doc.vm(&vm.id).is_some() || doc.ct(&vm.id).is_some() {
+                return Err(format!("ID '{}' is already in use", vm.id));
+            }
+            if vm.vnc_enabled && vm.vnc_port.is_none() {
+                vm.vnc_port = Some(crate::virtualization::manager::allocate_vnc_port(
+                    &doc,
+                    doc.defaults.vnc_port_start,
+                ));
+            }
+
+            let mut candidate = doc.clone();
+            candidate.vms.push(vm.clone());
+            let problems = candidate.validate();
+            if !problems.is_empty() {
+                return Err(format!("Validation failed: {problems:?}"));
+            }
+
+            let cfg = state.config.clone();
+            let runner = state.virt.runner.clone();
+            let caps = crate::virtualization::host::probe(runner.as_ref());
+            let _guard = state.virt.lock.lock().await;
+
+            let mut to_create = vm.clone();
+            let report = tokio::task::spawn_blocking(move || {
+                crate::virtualization::manager::create_vm(
+                    &cfg,
+                    &mut to_create,
+                    &caps,
+                    runner.as_ref(),
+                )
+            })
+            .await
+            .map_err(|e| format!("Create VM task failed: {e}"))?
+            .map_err(|e| format!("Create VM failed: {e}"))?;
+
+            crate::virtualization::store::save(
+                std::path::Path::new(&state.virt.config_path),
+                &candidate,
+            )
+            .map_err(|e| format!("Failed to save config: {e}"))?;
+
+            let res = json!({
+                "ok": true,
+                "id": vm.id,
+                "name": vm.name,
+                "output": report.output,
+                "warnings": report.warnings
+            });
+            serde_json::to_string_pretty(&res).map_err(|e| e.to_string())
+        }
+
+        "create_lightweight_container" => {
+            let name = args
+                .get("name")
+                .and_then(|v| v.as_str())
+                .ok_or("name is required")?;
+            let cores = args.get("cores").and_then(|v| v.as_u64()).unwrap_or(1) as u32;
+            let memory_mb = args
+                .get("memory_mb")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(512) as u32;
+            let disk_size_gb = args
+                .get("disk_size_gb")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(8) as u32;
+            let template = args
+                .get("template")
+                .and_then(|v| v.as_str())
+                .unwrap_or("debian-12-standard");
+            let password = args
+                .get("password")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+
+            let (doc, _) =
+                crate::virtualization::store::load(std::path::Path::new(&state.virt.config_path));
+            let raw_ct = crate::virtualization::model::CtConfig {
+                name: name.to_string(),
+                hostname: name.to_string(),
+                cores,
+                memory_mb,
+                rootfs_gb: disk_size_gb,
+                template: template.to_string(),
+                password,
+                ..Default::default()
+            };
+            let ct = crate::web::virtualization::prepare_ct(&doc, raw_ct);
+            if doc.vm(&ct.id).is_some() || doc.ct(&ct.id).is_some() {
+                return Err(format!("ID '{}' is already in use", ct.id));
+            }
+
+            let mut candidate = doc.clone();
+            candidate.cts.push(ct.clone());
+            let problems = candidate.validate();
+            if !problems.is_empty() {
+                return Err(format!("Validation failed: {problems:?}"));
+            }
+
+            let cfg = state.config.clone();
+            let runner = state.virt.runner.clone();
+            let caps = crate::virtualization::host::probe(runner.as_ref());
+            let _guard = state.virt.lock.lock().await;
+
+            let to_create = ct.clone();
+            let report = tokio::task::spawn_blocking(move || {
+                crate::virtualization::manager::create_ct(&cfg, &to_create, &caps, runner.as_ref())
+            })
+            .await
+            .map_err(|e| format!("Create CT task failed: {e}"))?
+            .map_err(|e| format!("Create CT failed: {e}"))?;
+
+            crate::virtualization::store::save(
+                std::path::Path::new(&state.virt.config_path),
+                &candidate,
+            )
+            .map_err(|e| format!("Failed to save config: {e}"))?;
+
+            let res = json!({
+                "ok": true,
+                "id": ct.id,
+                "name": ct.name,
+                "output": report.output,
+                "warnings": report.warnings
+            });
+            serde_json::to_string_pretty(&res).map_err(|e| e.to_string())
+        }
+
+        "manage_guest" => {
+            let id = args
+                .get("id")
+                .and_then(|v| v.as_str())
+                .ok_or("id is required")?;
+            let action = args
+                .get("action")
+                .and_then(|v| v.as_str())
+                .ok_or("action is required")?;
+            let (doc, _) =
+                crate::virtualization::store::load(std::path::Path::new(&state.virt.config_path));
+
+            if let Some(vm) = doc.vm(id).cloned() {
+                let cfg = state.config.clone();
+                let runner = state.virt.runner.clone();
+                let _guard = state.virt.lock.lock().await;
+
+                match action {
+                    "start" => {
+                        let caps = crate::virtualization::host::probe(runner.as_ref());
+                        let report = tokio::task::spawn_blocking(move || {
+                            crate::virtualization::manager::start_vm(
+                                &cfg,
+                                &vm,
+                                &caps,
+                                runner.as_ref(),
+                            )
+                        })
+                        .await
+                        .map_err(|e| format!("Task failed: {e}"))?
+                        .map_err(|e| format!("Start VM failed: {e}"))?;
+                        let res = json!({ "ok": true, "id": id, "action": "start", "output": report.output, "warnings": report.warnings });
+                        serde_json::to_string_pretty(&res).map_err(|e| e.to_string())
+                    }
+                    "stop" => {
+                        let report = tokio::task::spawn_blocking(move || {
+                            crate::virtualization::manager::control_vm(
+                                &cfg,
+                                &vm,
+                                crate::virtualization::manager::VmControl::Stop,
+                                runner.as_ref(),
+                            )
+                        })
+                        .await
+                        .map_err(|e| format!("Task failed: {e}"))?
+                        .map_err(|e| format!("Stop VM failed: {e}"))?;
+                        let res = json!({ "ok": true, "id": id, "action": "stop", "output": report.output, "warnings": report.warnings });
+                        serde_json::to_string_pretty(&res).map_err(|e| e.to_string())
+                    }
+                    "reboot" => {
+                        let report = tokio::task::spawn_blocking(move || {
+                            crate::virtualization::manager::control_vm(
+                                &cfg,
+                                &vm,
+                                crate::virtualization::manager::VmControl::Reboot,
+                                runner.as_ref(),
+                            )
+                        })
+                        .await
+                        .map_err(|e| format!("Task failed: {e}"))?
+                        .map_err(|e| format!("Reboot VM failed: {e}"))?;
+                        let res = json!({ "ok": true, "id": id, "action": "reboot", "output": report.output, "warnings": report.warnings });
+                        serde_json::to_string_pretty(&res).map_err(|e| e.to_string())
+                    }
+                    "shutdown" => {
+                        let report = tokio::task::spawn_blocking(move || {
+                            crate::virtualization::manager::control_vm(
+                                &cfg,
+                                &vm,
+                                crate::virtualization::manager::VmControl::Shutdown,
+                                runner.as_ref(),
+                            )
+                        })
+                        .await
+                        .map_err(|e| format!("Task failed: {e}"))?
+                        .map_err(|e| format!("Shutdown VM failed: {e}"))?;
+                        let res = json!({ "ok": true, "id": id, "action": "shutdown", "output": report.output, "warnings": report.warnings });
+                        serde_json::to_string_pretty(&res).map_err(|e| e.to_string())
+                    }
+                    "delete" => {
+                        let report = tokio::task::spawn_blocking(move || {
+                            crate::virtualization::manager::delete_vm(&cfg, &vm, runner.as_ref())
+                        })
+                        .await
+                        .map_err(|e| format!("Task failed: {e}"))?
+                        .map_err(|e| format!("Delete VM failed: {e}"))?;
+
+                        let mut updated = doc.clone();
+                        updated.vms.retain(|v| v.id != id);
+                        let _ = crate::virtualization::store::save(
+                            std::path::Path::new(&state.virt.config_path),
+                            &updated,
+                        );
+                        let res = json!({ "ok": true, "id": id, "action": "delete", "output": report.output, "warnings": report.warnings });
+                        serde_json::to_string_pretty(&res).map_err(|e| e.to_string())
+                    }
+                    "snapshot" => {
+                        let snapshot_action_str = args
+                            .get("snapshot_action")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("list");
+                        let snapshot_name = args
+                            .get("snapshot_name")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("");
+                        let action_enum = match snapshot_action_str {
+                            "create" => crate::virtualization::manager::SnapshotAction::Create(
+                                snapshot_name.to_string(),
+                            ),
+                            "apply" => crate::virtualization::manager::SnapshotAction::Apply(
+                                snapshot_name.to_string(),
+                            ),
+                            "delete" => crate::virtualization::manager::SnapshotAction::Delete(
+                                snapshot_name.to_string(),
+                            ),
+                            _ => crate::virtualization::manager::SnapshotAction::List,
+                        };
+                        let report = tokio::task::spawn_blocking(move || {
+                            crate::virtualization::manager::snapshot_vm(
+                                &cfg,
+                                &vm,
+                                &action_enum,
+                                runner.as_ref(),
+                            )
+                        })
+                        .await
+                        .map_err(|e| format!("Task failed: {e}"))?
+                        .map_err(|e| format!("Snapshot VM failed: {e}"))?;
+                        let res = json!({ "ok": true, "id": id, "action": "snapshot", "output": report.output, "warnings": report.warnings });
+                        serde_json::to_string_pretty(&res).map_err(|e| e.to_string())
+                    }
+                    other => Err(format!(
+                        "Unsupported VM action '{other}'. Valid: start, stop, reboot, shutdown, delete, snapshot."
+                    )),
+                }
+            } else if let Some(ct) = doc.ct(id).cloned() {
+                let cfg = state.config.clone();
+                let runner = state.virt.runner.clone();
+                let _guard = state.virt.lock.lock().await;
+
+                match action {
+                    "start" => {
+                        let report = tokio::task::spawn_blocking(move || {
+                            crate::virtualization::manager::start_ct(&cfg, &ct, runner.as_ref())
+                        })
+                        .await
+                        .map_err(|e| format!("Task failed: {e}"))?
+                        .map_err(|e| format!("Start CT failed: {e}"))?;
+                        let res = json!({ "ok": true, "id": id, "action": "start", "output": report.output, "warnings": report.warnings });
+                        serde_json::to_string_pretty(&res).map_err(|e| e.to_string())
+                    }
+                    "stop" => {
+                        let report = tokio::task::spawn_blocking(move || {
+                            crate::virtualization::manager::stop_ct(
+                                &cfg,
+                                &ct,
+                                false,
+                                runner.as_ref(),
+                            )
+                        })
+                        .await
+                        .map_err(|e| format!("Task failed: {e}"))?
+                        .map_err(|e| format!("Stop CT failed: {e}"))?;
+                        let res = json!({ "ok": true, "id": id, "action": "stop", "output": report.output, "warnings": report.warnings });
+                        serde_json::to_string_pretty(&res).map_err(|e| e.to_string())
+                    }
+                    "reboot" | "restart" => {
+                        let ct_c = ct.clone();
+                        let cfg_c = cfg.clone();
+                        let run_c = runner.clone();
+                        let report = tokio::task::spawn_blocking(move || {
+                            let _ = crate::virtualization::manager::stop_ct(
+                                &cfg_c,
+                                &ct_c,
+                                false,
+                                run_c.as_ref(),
+                            );
+                            crate::virtualization::manager::start_ct(&cfg, &ct, runner.as_ref())
+                        })
+                        .await
+                        .map_err(|e| format!("Task failed: {e}"))?
+                        .map_err(|e| format!("Restart CT failed: {e}"))?;
+                        let res = json!({ "ok": true, "id": id, "action": "reboot", "output": report.output, "warnings": report.warnings });
+                        serde_json::to_string_pretty(&res).map_err(|e| e.to_string())
+                    }
+                    "delete" => {
+                        let report = tokio::task::spawn_blocking(move || {
+                            crate::virtualization::manager::delete_ct(&cfg, &ct, runner.as_ref())
+                        })
+                        .await
+                        .map_err(|e| format!("Task failed: {e}"))?
+                        .map_err(|e| format!("Delete CT failed: {e}"))?;
+
+                        let mut updated = doc.clone();
+                        updated.cts.retain(|c| c.id != id);
+                        let _ = crate::virtualization::store::save(
+                            std::path::Path::new(&state.virt.config_path),
+                            &updated,
+                        );
+                        let res = json!({ "ok": true, "id": id, "action": "delete", "output": report.output, "warnings": report.warnings });
+                        serde_json::to_string_pretty(&res).map_err(|e| e.to_string())
+                    }
+                    other => Err(format!(
+                        "Unsupported container action '{other}'. Valid: start, stop, reboot, delete."
+                    )),
+                }
+            } else {
+                Err(format!("Guest with ID '{id}' not found"))
+            }
+        }
+
+        "trigger_backup" => {
+            let job_id = args.get("job_id").and_then(|v| v.as_str());
+            let config = state.backup.config();
+            if config.jobs.is_empty() {
+                return Err("No backup jobs configured".to_string());
+            }
+            let target_job = if let Some(id) = job_id {
+                config
+                    .find(id)
+                    .cloned()
+                    .ok_or_else(|| format!("Backup job '{id}' not found"))?
+            } else {
+                config
+                    .jobs
+                    .iter()
+                    .find(|j| j.enabled)
+                    .cloned()
+                    .unwrap_or_else(|| config.jobs[0].clone())
+            };
+
+            let run = state.backup.run_job(&target_job).await;
+            let res = json!({
+                "ok": run.ok,
+                "job_id": target_job.id,
+                "job_name": target_job.name,
+                "duration_ms": run.duration_ms,
+                "snapshot_id": run.snapshot_id,
+                "bytes": run.bytes,
+                "detail": run.detail
+            });
+            serde_json::to_string_pretty(&res).map_err(|e| e.to_string())
+        }
+
+        "list_backup_snapshots" => {
+            let job_id = args.get("job_id").and_then(|v| v.as_str());
+            let config = state.backup.config();
+            if config.jobs.is_empty() {
+                let res = json!({
+                    "count": 0,
+                    "snapshots": [],
+                    "message": "No backup jobs configured yet."
+                });
+                return serde_json::to_string_pretty(&res).map_err(|e| e.to_string());
+            }
+
+            let mut all_snapshots = Vec::new();
+            for job in &config.jobs {
+                if let Some(id) = job_id
+                    && job.id != id
+                {
+                    continue;
+                }
+                match state.backup.snapshots(job).await {
+                    Ok(snaps) => {
+                        for s in snaps {
+                            all_snapshots.push(json!({
+                                "job_id": job.id,
+                                "job_name": job.name,
+                                "snapshot": s
+                            }));
+                        }
+                    }
+                    Err(e) => {
+                        all_snapshots.push(json!({
+                            "job_id": job.id,
+                            "job_name": job.name,
+                            "error": e.to_string()
+                        }));
+                    }
+                }
+            }
+            let res = json!({
+                "count": all_snapshots.len(),
+                "snapshots": all_snapshots
+            });
+            serde_json::to_string_pretty(&res).map_err(|e| e.to_string())
+        }
+
+        "generate_vpn_client" => {
+            let name = args
+                .get("name")
+                .and_then(|v| v.as_str())
+                .ok_or("name is required")?;
+            let address_arg = args.get("address").and_then(|v| v.as_str());
+
+            let secrets_path = state.wireguard.secrets_path.clone();
+            let mut secrets = crate::services::wireguard::load_secrets(&secrets_path);
+            let runner = state.wireguard.runner.clone();
+
+            // Ensure server key exists
+            if !crate::services::wireguard::is_wg_key(&secrets.private_key) {
+                let (server_priv, _) =
+                    crate::services::wireguard::generate_keypair(runner.as_ref())
+                        .map_err(|e| format!("Failed to generate server keypair: {e}"))?;
+                secrets.private_key = server_priv;
+                let _ = crate::services::wireguard::save_secrets(&secrets_path, &secrets);
+            }
+
+            let server_public = state
+                .wireguard
+                .public_key()
+                .map_err(|e| format!("Cannot get server public key: {e}"))?;
+            let host_ip = crate::containers::host::detect().ip;
+            let mut config = state.wireguard.config();
+            let endpoint = format!("{}:{}", host_ip, config.listen_port);
+
+            // Determine client tunnel address
+            let client_address = if let Some(addr) = address_arg {
+                addr.to_string()
+            } else {
+                let peer_idx = config.peers.len() + 2;
+                format!("10.8.0.{peer_idx}/32")
+            };
+
+            // Generate client keypair
+            let (client_private, client_public) =
+                crate::services::wireguard::generate_keypair(runner.as_ref())
+                    .map_err(|e| format!("Failed to generate client keypair: {e}"))?;
+
+            // Add peer to wireguard config if not existing
+            let mut peer_exists = false;
+            for peer in &mut config.peers {
+                if peer.name == name {
+                    peer.public_key = client_public.clone();
+                    peer.allowed_ips = vec![client_address.clone()];
+                    peer_exists = true;
+                    break;
+                }
+            }
+            if !peer_exists {
+                config.peers.push(crate::services::wireguard::WgPeer {
+                    name: name.to_string(),
+                    public_key: client_public.clone(),
+                    allowed_ips: vec![client_address.clone()],
+                    dns: Some("1.1.1.1".to_string()),
+                    persistent_keepalive: 25,
+                    enabled: true,
+                });
+            }
+            config.enabled = true;
+
+            // Save and apply WireGuard config
+            let conf_path = state.wireguard.config_path.clone();
+            let _ = crate::services::wireguard::save(&conf_path, &config);
+            let _ = crate::services::wireguard::apply(&state.wireguard, &config).await;
+
+            let dns = Some("1.1.1.1");
+            let client_conf = crate::services::wireguard::render_client(
+                &client_private,
+                &client_address,
+                &server_public,
+                &endpoint,
+                dns,
+            );
+
+            let qr = crate::services::wireguard::qr_text(runner.as_ref(), &client_conf).ok();
+
+            let res = json!({
+                "ok": true,
+                "client_name": name,
+                "client_address": client_address,
+                "server_endpoint": endpoint,
+                "public_key": client_public,
+                "config": client_conf,
+                "qr": qr
+            });
+            serde_json::to_string_pretty(&res).map_err(|e| e.to_string())
+        }
+
+        "get_drive_health" => {
+            let device_arg = args.get("device").and_then(|v| v.as_str());
+            let detected = state.smart.detect_devices();
+            let devices_to_check = if let Some(d) = device_arg {
+                vec![d.to_string()]
+            } else if !detected.is_empty() {
+                detected
+            } else {
+                vec!["/dev/nvme0n1".to_string(), "/dev/sda".to_string()]
+            };
+
+            let runner = state.smart.runner.clone();
+            let mut drive_reports = Vec::new();
+
+            for dev in devices_to_check {
+                let output = runner.run_timeout(
+                    "smartctl",
+                    &["-a".to_string(), "-j".to_string(), dev.clone()],
+                    Duration::from_secs(5),
+                );
+                if let Ok(res) = output
+                    && !res.stdout.trim().is_empty()
+                    && let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&res.stdout)
+                {
+                    drive_reports.push(json!({
+                        "device": dev,
+                        "status": "ok",
+                        "smart_data": parsed
+                    }));
+                    continue;
+                }
+
+                let health_out = runner.run_timeout(
+                    "smartctl",
+                    &["-H".to_string(), dev.clone()],
+                    Duration::from_secs(5),
+                );
+                if let Ok(res) = health_out
+                    && res.success()
+                {
+                    drive_reports.push(json!({
+                        "device": dev,
+                        "status": "ok",
+                        "health_output": res.stdout.trim()
+                    }));
+                } else {
+                    drive_reports.push(json!({
+                        "device": dev,
+                        "status": "unsupported_or_not_found"
+                    }));
+                }
+            }
+
+            let res = json!({
+                "smart_available": state.smart.available(),
+                "drives_count": drive_reports.len(),
+                "drives": drive_reports
             });
             serde_json::to_string_pretty(&res).map_err(|e| e.to_string())
         }

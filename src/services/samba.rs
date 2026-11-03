@@ -361,9 +361,17 @@ pub fn ensure_system_user(runner: &dyn Runner, username: &str) -> Result<(), Api
         "/etc/shadow.lock",
         "/etc/group.lock",
         "/etc/gshadow.lock",
+        "/etc/subuid.lock",
+        "/etc/subgid.lock",
     ] {
+        let _ = std::fs::remove_file(lock);
         let _ = runner.run_timeout(
             "rm",
+            &["-f".to_string(), lock.to_string()],
+            Duration::from_secs(5),
+        );
+        let _ = runner.run_timeout(
+            "/bin/rm",
             &["-f".to_string(), lock.to_string()],
             Duration::from_secs(5),
         );
@@ -416,6 +424,44 @@ pub fn ensure_system_user(runner: &dyn Runner, username: &str) -> Result<(), Api
                     last_err = msg;
                 }
             }
+        }
+    }
+
+    // Fallback: try adduser (Debian / Ubuntu standard tool)
+    let adduser_bins = ["adduser", "/usr/sbin/adduser", "/sbin/adduser"];
+    for bin in adduser_bins {
+        let add = runner.run_timeout(
+            bin,
+            &[
+                "--system".to_string(),
+                "--no-create-home".to_string(),
+                "--shell".to_string(),
+                "/bin/false".to_string(),
+                username.to_string(),
+            ],
+            Duration::from_secs(10),
+        );
+        if let Ok(res) = &add
+            && res.success()
+        {
+            return Ok(());
+        }
+
+        let add_disabled = runner.run_timeout(
+            bin,
+            &[
+                "--disabled-password".to_string(),
+                "--gecos".to_string(),
+                "".to_string(),
+                "--no-create-home".to_string(),
+                username.to_string(),
+            ],
+            Duration::from_secs(10),
+        );
+        if let Ok(res) = &add_disabled
+            && res.success()
+        {
+            return Ok(());
         }
     }
 

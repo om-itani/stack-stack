@@ -795,9 +795,7 @@ TimeoutStopSec=30
 LimitNOFILE=65536
 NoNewPrivileges=false
 PrivateTmp=false
-ProtectSystem=strict
-ReadWritePaths=/etc/stack-stack /var/lib/stack-stack /run/docker.sock -/run/libvirt -/run/lxc -/run/qemu -/var/cache/lxc -/var/log/stack-stack /mnt /srv /media -/etc/exports -/etc/exports.d /etc/samba /var/lib/samba -/etc/unbound/unbound.conf.d -/etc/dnsmasq.d -/etc/nftables.conf -/etc/cloudflared -/etc/systemd/system/unbound.service.d
-CapabilityBoundingSet=CAP_NET_BIND_SERVICE CAP_NET_ADMIN CAP_NET_RAW CAP_SYS_ADMIN CAP_DAC_OVERRIDE CAP_CHOWN CAP_FOWNER CAP_SYS_RESOURCE
+ProtectSystem=false
 AmbientCapabilities=CAP_NET_BIND_SERVICE CAP_NET_ADMIN CAP_NET_RAW
 
 [Install]
