@@ -247,7 +247,11 @@ pub async fn nfs_apply(
 fn sync_samba_users(state: &AppState, config: &mut SmbConfig) {
     if let Ok(users) = samba::list_users(state.samba.runner.as_ref()) {
         for u in users {
-            if !config.users.iter().any(|existing| existing.username == u.username) {
+            if !config
+                .users
+                .iter()
+                .any(|existing| existing.username == u.username)
+            {
                 config.users.push(samba::SmbUser {
                     username: u.username,
                     enabled: true,
@@ -264,13 +268,14 @@ fn sync_samba_users(state: &AppState, config: &mut SmbConfig) {
                 });
             }
         }
-        if let Some(fu) = &share.force_user {
-            if !fu.trim().is_empty() && !config.users.iter().any(|existing| &existing.username == fu) {
-                config.users.push(samba::SmbUser {
-                    username: fu.clone(),
-                    enabled: true,
-                });
-            }
+        if let Some(fu) = &share.force_user
+            && !fu.trim().is_empty()
+            && !config.users.iter().any(|existing| &existing.username == fu)
+        {
+            config.users.push(samba::SmbUser {
+                username: fu.clone(),
+                enabled: true,
+            });
         }
     }
 }
