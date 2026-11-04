@@ -72,6 +72,7 @@ impl McpResponse {
 /// GET /api/mcp
 /// Returns human-readable & AI-discoverable information about the stack-stack MCP server.
 pub async fn mcp_info() -> Json<Value> {
+    let tools = list_tools();
     Json(json!({
         "status": "active",
         "name": "stack-stack MCP Server",
@@ -79,7 +80,7 @@ pub async fn mcp_info() -> Json<Value> {
         "protocol": "2024-11-05",
         "transport": "HTTP JSON-RPC 2.0 (POST /api/mcp)",
         "description": "Model Context Protocol interface for stack-stack homeserver management",
-        "tools_count": 45,
+        "tools_count": tools.len(),
         "capabilities": {
             "tools": { "listChanged": false }
         }
@@ -723,6 +724,188 @@ fn list_tools() -> Vec<Value> {
                     "duration_seconds": { "type": "integer", "description": "Duration in seconds (default 30, max 120)" },
                     "thermal_cutoff_c": { "type": "number", "description": "Thermal abort safety ceiling in Celsius (default 85.0)" }
                 }
+            }
+        }),
+        // Secrets Management
+        json!({
+            "name": "secrets_list",
+            "description": "List all encrypted secret keys and their descriptions (plaintext values remain safely encrypted).",
+            "inputSchema": {
+                "type": "object",
+                "properties": {}
+            }
+        }),
+        json!({
+            "name": "secrets_set",
+            "description": "Create or update an AES-256-GCM encrypted secret key with a plaintext value and optional description.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "key": { "type": "string", "description": "Unique secret identifier (e.g. DB_PASSWORD, API_KEY)" },
+                    "value": { "type": "string", "description": "Secret plaintext value to encrypt and store" },
+                    "description": { "type": "string", "description": "Optional human-readable description" }
+                },
+                "required": ["key", "value"]
+            }
+        }),
+        json!({
+            "name": "secrets_remove",
+            "description": "Permanently delete an encrypted secret by key.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "key": { "type": "string", "description": "Secret key to delete" }
+                },
+                "required": ["key"]
+            }
+        }),
+        // System Disaster Recovery Backup & Restore
+        json!({
+            "name": "system_backup_export",
+            "description": "Generate a full disaster-recovery system backup archive (tar.gz of /etc/stack-stack/*.json and compose stacks) and return archive metadata and base64 encoded archive content.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {}
+            }
+        }),
+        json!({
+            "name": "system_backup_restore",
+            "description": "Restore system configurations, secrets, and compose stacks from a disaster-recovery backup archive (provided as base64 string).",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "archive_base64": { "type": "string", "description": "Base64 encoded tar.gz backup archive" }
+                },
+                "required": ["archive_base64"]
+            }
+        }),
+        // Multi-User RBAC Management
+        json!({
+            "name": "users_list",
+            "description": "List all registered system users, their assigned RBAC roles (admin, operator, viewer), and creation timestamps.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {}
+            }
+        }),
+        json!({
+            "name": "users_create",
+            "description": "Create a new user account with a username, initial password (min 12 chars), and assigned RBAC role (admin, operator, viewer).",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "username": { "type": "string", "description": "Unique username (alphanumeric, hyphens, underscores)" },
+                    "password": { "type": "string", "description": "Account password (minimum 12 characters)" },
+                    "role": { "type": "string", "enum": ["admin", "operator", "viewer"], "description": "RBAC role" }
+                },
+                "required": ["username", "password", "role"]
+            }
+        }),
+        json!({
+            "name": "users_update_role",
+            "description": "Update the RBAC role for an existing user account (admin, operator, viewer).",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "username": { "type": "string", "description": "Target username" },
+                    "role": { "type": "string", "enum": ["admin", "operator", "viewer"], "description": "New RBAC role" }
+                },
+                "required": ["username", "role"]
+            }
+        }),
+        json!({
+            "name": "users_set_password",
+            "description": "Change or reset the password for a registered user account.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "username": { "type": "string", "description": "Target username" },
+                    "password": { "type": "string", "description": "New account password (minimum 12 characters)" }
+                },
+                "required": ["username", "password"]
+            }
+        }),
+        json!({
+            "name": "users_delete",
+            "description": "Delete a registered user account from the system (cannot delete last remaining admin).",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "username": { "type": "string", "description": "Target username to delete" }
+                },
+                "required": ["username"]
+            }
+        }),
+        // Host Systemd Services
+        json!({
+            "name": "services_list",
+            "description": "List all host systemd services with their load status, active state, substate, and description.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {}
+            }
+        }),
+        json!({
+            "name": "services_action",
+            "description": "Perform a lifecycle action on a host systemd service (start, stop, restart, enable, disable, reload).",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "name": { "type": "string", "description": "Service unit name (e.g. unbound, nginx, smbd)" },
+                    "action": { "type": "string", "enum": ["start", "stop", "restart", "enable", "disable", "reload"], "description": "Action to perform" }
+                },
+                "required": ["name", "action"]
+            }
+        }),
+        json!({
+            "name": "services_create",
+            "description": "Create and enable a new custom systemd service unit on the host.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "name": { "type": "string", "description": "Service name without .service suffix (e.g. my-worker)" },
+                    "description": { "type": "string", "description": "Human-readable description of the service" },
+                    "exec_start": { "type": "string", "description": "Absolute command line to execute on startup" },
+                    "restart": { "type": "string", "description": "Restart policy (e.g. on-failure, always, no)" },
+                    "after": { "type": "string", "description": "Unit dependency (e.g. network.target, docker.service)" },
+                    "user": { "type": "string", "description": "User account to run service as (default root)" }
+                },
+                "required": ["name", "description", "exec_start"]
+            }
+        }),
+        // Storage Spindown & HDD Power State
+        json!({
+            "name": "storage_spindown_configure",
+            "description": "Configure and persist an idle spindown sleep timer in minutes for a rotational hard drive (0 = disabled, 5, 10, 15, 30, 60, 120). Automatically saves to /etc/stack-stack/disks.json.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "device": { "type": "string", "description": "Device path (e.g. /dev/sdb)" },
+                    "minutes": { "type": "integer", "description": "Idle timer in minutes (0 to disable sleep)" }
+                },
+                "required": ["device", "minutes"]
+            }
+        }),
+        json!({
+            "name": "storage_spindown_now",
+            "description": "Immediately command a mechanical hard drive into low-power standby (spins down motor).",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "device": { "type": "string", "description": "Device path (e.g. /dev/sdb)" }
+                },
+                "required": ["device"]
+            }
+        }),
+        json!({
+            "name": "storage_power_status",
+            "description": "Query the current power state of a drive without waking it up (active/idle, standby, sleeping, unsupported).",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "device": { "type": "string", "description": "Device path (e.g. /dev/sdb)" }
+                },
+                "required": ["device"]
             }
         }),
     ]
@@ -2623,6 +2806,527 @@ async fn execute_tool(state: &AppState, name: &str, args: Value) -> Result<Strin
             serde_json::to_string_pretty(&summary).map_err(|e| e.to_string())
         }
 
+        // Secrets
+        "secrets_list" => {
+            let path = std::path::PathBuf::from(&state.config.app_secrets_path);
+            let secrets = crate::services::secrets::load_secrets(&path);
+            let mut keys: Vec<String> = secrets.secrets.keys().cloned().collect();
+            keys.sort();
+            let summary = json!({
+                "secrets": keys,
+                "count": keys.len()
+            });
+            serde_json::to_string_pretty(&summary).map_err(|e| e.to_string())
+        }
+
+        "secrets_set" => {
+            let key = args
+                .get("key")
+                .or_else(|| args.get("name"))
+                .and_then(|v| v.as_str())
+                .ok_or("Missing 'key' or 'name'")?
+                .trim();
+            if key.is_empty() {
+                return Err("Secret key cannot be empty".to_string());
+            }
+            let value = args
+                .get("value")
+                .and_then(|v| v.as_str())
+                .ok_or("Missing 'value'")?;
+            let path = std::path::PathBuf::from(&state.config.app_secrets_path);
+            let mut current = crate::services::secrets::load_secrets(&path);
+            current.secrets.insert(key.to_string(), value.to_string());
+            crate::services::secrets::save_secrets(&path, &current).map_err(|e| e.to_string())?;
+            state.audit("secrets.set", key, "");
+            Ok(format!("Secret '{key}' stored successfully"))
+        }
+
+        "secrets_remove" => {
+            let key = args
+                .get("key")
+                .or_else(|| args.get("name"))
+                .and_then(|v| v.as_str())
+                .ok_or("Missing 'key' or 'name'")?
+                .trim();
+            let path = std::path::PathBuf::from(&state.config.app_secrets_path);
+            let mut current = crate::services::secrets::load_secrets(&path);
+            let existed = current.secrets.remove(key).is_some();
+            if existed {
+                crate::services::secrets::save_secrets(&path, &current)
+                    .map_err(|e| e.to_string())?;
+                state.audit("secrets.remove", key, "");
+                Ok(format!("Secret '{key}' removed"))
+            } else {
+                Ok(format!("Secret '{key}' not found (no changes made)"))
+            }
+        }
+
+        // Disaster Recovery Backup
+        "system_backup_export" => {
+            let now_secs = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs())
+                .unwrap_or(0);
+            let temp_archive =
+                std::env::temp_dir().join(format!("ss-mcp-export-{now_secs}.tar.gz"));
+            let config_path = std::path::PathBuf::from(&state.config.auth_path);
+            let config_dir = config_path
+                .parent()
+                .unwrap_or(std::path::Path::new("/etc/stack-stack"))
+                .to_path_buf();
+            let stacks_dir = std::path::PathBuf::from(&state.config.stacks_dir);
+            let runner = state.auth.runner.clone();
+
+            let archive_path = temp_archive.clone();
+            tokio::task::spawn_blocking(move || {
+                crate::services::system_backup::create_system_backup(
+                    runner.as_ref(),
+                    &config_dir,
+                    &stacks_dir,
+                    &archive_path,
+                )
+            })
+            .await
+            .map_err(|e| e.to_string())?
+            .map_err(|e| e.to_string())?;
+
+            let bytes = std::fs::read(&temp_archive).map_err(|e| e.to_string())?;
+            let _ = std::fs::remove_file(&temp_archive);
+            let b64 = base64_encode(&bytes);
+
+            state.audit(
+                "system.backup",
+                "mcp_export",
+                &format!("{} bytes", bytes.len()),
+            );
+            let res = json!({
+                "ok": true,
+                "size_bytes": bytes.len(),
+                "timestamp": now_secs,
+                "archive_base64": b64
+            });
+            serde_json::to_string_pretty(&res).map_err(|e| e.to_string())
+        }
+
+        "system_backup_restore" => {
+            let b64 = args
+                .get("archive_base64")
+                .and_then(|v| v.as_str())
+                .ok_or("Missing 'archive_base64'")?;
+            let bytes = base64_decode(b64).map_err(|e| format!("Invalid base64 payload: {e}"))?;
+            if bytes.is_empty() {
+                return Err("Backup archive bytes are empty".to_string());
+            }
+
+            let temp_archive =
+                std::env::temp_dir().join(format!("ss-mcp-restore-{}.tar.gz", std::process::id()));
+            std::fs::write(&temp_archive, &bytes).map_err(|e| e.to_string())?;
+
+            let config_path = std::path::PathBuf::from(&state.config.auth_path);
+            let config_dir = config_path
+                .parent()
+                .unwrap_or(std::path::Path::new("/etc/stack-stack"))
+                .to_path_buf();
+            let stacks_dir = std::path::PathBuf::from(&state.config.stacks_dir);
+            let runner = state.auth.runner.clone();
+
+            let archive_path = temp_archive.clone();
+            tokio::task::spawn_blocking(move || {
+                let res = crate::services::system_backup::restore_system_backup(
+                    runner.as_ref(),
+                    &archive_path,
+                    &config_dir,
+                    &stacks_dir,
+                );
+                let _ = std::fs::remove_file(&archive_path);
+                res
+            })
+            .await
+            .map_err(|e| e.to_string())?
+            .map_err(|e| e.to_string())?;
+
+            state.audit(
+                "system.backup",
+                "mcp_restore",
+                &format!("{} bytes", bytes.len()),
+            );
+            let summary = json!({
+                "ok": true,
+                "message": "System configuration and stacks restored successfully",
+                "bytes_processed": bytes.len()
+            });
+            serde_json::to_string_pretty(&summary).map_err(|e| e.to_string())
+        }
+
+        // Multi-User RBAC
+        "users_list" => {
+            let auth = state.auth.clone();
+            let users = tokio::task::spawn_blocking(move || auth.list_users())
+                .await
+                .map_err(|e| e.to_string())?
+                .map_err(|e| e.to_string())?;
+            serde_json::to_string_pretty(&users).map_err(|e| e.to_string())
+        }
+
+        "users_create" => {
+            let username = args
+                .get("username")
+                .and_then(|v| v.as_str())
+                .ok_or("Missing 'username'")?;
+            let password = args
+                .get("password")
+                .and_then(|v| v.as_str())
+                .ok_or("Missing 'password'")?;
+            let role_str = args
+                .get("role")
+                .and_then(|v| v.as_str())
+                .unwrap_or("operator");
+            let role = match role_str.to_ascii_lowercase().as_str() {
+                "admin" => crate::auth::Role::Admin,
+                "viewer" => crate::auth::Role::Viewer,
+                _ => crate::auth::Role::Operator,
+            };
+            let auth = state.auth.clone();
+            let u = username.to_string();
+            let p = password.to_string();
+            tokio::task::spawn_blocking(move || auth.add_user(&u, &p, role))
+                .await
+                .map_err(|e| e.to_string())?
+                .map_err(|e| e.to_string())?;
+            state.audit("users.create", username, role_str);
+            Ok(format!("User '{username}' created with role '{role_str}'"))
+        }
+
+        "users_update_role" => {
+            let username = args
+                .get("username")
+                .and_then(|v| v.as_str())
+                .ok_or("Missing 'username'")?;
+            let role_str = args
+                .get("role")
+                .and_then(|v| v.as_str())
+                .ok_or("Missing 'role'")?;
+            let role = match role_str.to_ascii_lowercase().as_str() {
+                "admin" => crate::auth::Role::Admin,
+                "viewer" => crate::auth::Role::Viewer,
+                _ => crate::auth::Role::Operator,
+            };
+            let auth = state.auth.clone();
+            let u = username.to_string();
+            tokio::task::spawn_blocking(move || auth.update_user_role(&u, role))
+                .await
+                .map_err(|e| e.to_string())?
+                .map_err(|e| e.to_string())?;
+            state.audit("users.update_role", username, role_str);
+            Ok(format!("User '{username}' role updated to '{role_str}'"))
+        }
+
+        "users_set_password" => {
+            let username = args
+                .get("username")
+                .and_then(|v| v.as_str())
+                .ok_or("Missing 'username'")?;
+            let password = args
+                .get("password")
+                .and_then(|v| v.as_str())
+                .ok_or("Missing 'password'")?;
+            let auth = state.auth.clone();
+            let u = username.to_string();
+            let p = password.to_string();
+            tokio::task::spawn_blocking(move || auth.set_user_password(&u, &p))
+                .await
+                .map_err(|e| e.to_string())?
+                .map_err(|e| e.to_string())?;
+            state.audit("users.set_password", username, "");
+            Ok(format!("Password for '{username}' updated successfully"))
+        }
+
+        "users_delete" => {
+            let username = args
+                .get("username")
+                .and_then(|v| v.as_str())
+                .ok_or("Missing 'username'")?;
+            let auth = state.auth.clone();
+            let u = username.to_string();
+            tokio::task::spawn_blocking(move || auth.delete_user(&u, "mcp_admin"))
+                .await
+                .map_err(|e| e.to_string())?
+                .map_err(|e| e.to_string())?;
+            state.audit("users.delete", username, "");
+            Ok(format!("User '{username}' deleted successfully"))
+        }
+
+        // Host Services
+        "services_list" => {
+            let runner = state.auth.runner.clone();
+            let services = tokio::task::spawn_blocking(move || {
+                crate::services::systemd::list_services(runner.as_ref())
+            })
+            .await
+            .map_err(|e| e.to_string())?
+            .map_err(|e| e.to_string())?;
+            serde_json::to_string_pretty(&services).map_err(|e| e.to_string())
+        }
+
+        "services_action" => {
+            let name = args
+                .get("name")
+                .and_then(|v| v.as_str())
+                .ok_or("Missing 'name'")?;
+            let action = args
+                .get("action")
+                .and_then(|v| v.as_str())
+                .ok_or("Missing 'action'")?;
+            let runner = state.auth.runner.clone();
+            let n = name.to_string();
+            let a = action.to_string();
+            let msg = tokio::task::spawn_blocking(move || {
+                crate::services::systemd::service_action(runner.as_ref(), &n, &a)
+            })
+            .await
+            .map_err(|e| e.to_string())?
+            .map_err(|e| e.to_string())?;
+            state.audit("services.action", name, action);
+            Ok(msg)
+        }
+
+        "services_create" => {
+            let name = args
+                .get("name")
+                .and_then(|v| v.as_str())
+                .ok_or("Missing 'name'")?;
+            let description = args
+                .get("description")
+                .and_then(|v| v.as_str())
+                .ok_or("Missing 'description'")?;
+            let exec_start = args
+                .get("exec_start")
+                .and_then(|v| v.as_str())
+                .ok_or("Missing 'exec_start'")?;
+            let restart = args
+                .get("restart")
+                .and_then(|v| v.as_str())
+                .unwrap_or("always")
+                .to_string();
+            let user = args
+                .get("user")
+                .and_then(|v| v.as_str())
+                .unwrap_or("root")
+                .to_string();
+            let working_dir = args
+                .get("working_dir")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string());
+
+            let req = crate::services::systemd::CreateServiceRequest {
+                name: name.to_string(),
+                description: description.to_string(),
+                exec_start: exec_start.to_string(),
+                restart,
+                user,
+                working_dir,
+            };
+            let runner = state.auth.runner.clone();
+            let unit_dir = std::path::PathBuf::from("/etc/systemd/system");
+            let created_name = tokio::task::spawn_blocking(move || {
+                crate::services::systemd::create_service(runner.as_ref(), &req, &unit_dir)
+            })
+            .await
+            .map_err(|e| e.to_string())?
+            .map_err(|e| e.to_string())?;
+            state.audit("services.create", name, exec_start);
+            Ok(format!("Created and enabled service '{created_name}'"))
+        }
+
+        // Storage Spindown & HDD Power
+        "storage_spindown_configure" => {
+            let device = args
+                .get("device")
+                .and_then(|v| v.as_str())
+                .ok_or("Missing 'device'")?;
+            let minutes = args
+                .get("minutes")
+                .and_then(|v| v.as_u64())
+                .ok_or("Missing 'minutes'")? as u32;
+            let storage = state.storage.clone();
+            let dev = device.to_string();
+            let msg =
+                tokio::task::spawn_blocking(move || storage.set_spindown_timeout(&dev, minutes))
+                    .await
+                    .map_err(|e| e.to_string())?
+                    .map_err(|e| e.to_string())?;
+            state.audit("storage.spindown_configure", device, &format!("{minutes}m"));
+            Ok(msg)
+        }
+
+        "storage_spindown_now" => {
+            let device = args
+                .get("device")
+                .and_then(|v| v.as_str())
+                .ok_or("Missing 'device'")?;
+            let storage = state.storage.clone();
+            let dev = device.to_string();
+            let msg = tokio::task::spawn_blocking(move || storage.spindown_now(&dev))
+                .await
+                .map_err(|e| e.to_string())?
+                .map_err(|e| e.to_string())?;
+            state.audit("storage.spindown_now", device, "");
+            Ok(msg)
+        }
+
+        "storage_power_status" => {
+            let device = args
+                .get("device")
+                .and_then(|v| v.as_str())
+                .ok_or("Missing 'device'")?;
+            let storage = state.storage.clone();
+            let dev = device.to_string();
+            let pstate = tokio::task::spawn_blocking(move || storage.disk_power_state(&dev))
+                .await
+                .map_err(|e| e.to_string())?
+                .map_err(|e| e.to_string())?;
+            let res = json!({
+                "device": device,
+                "power_state": pstate
+            });
+            serde_json::to_string_pretty(&res).map_err(|e| e.to_string())
+        }
+
         unknown => Err(format!("Unknown tool '{unknown}'")),
+    }
+}
+
+fn base64_encode(data: &[u8]) -> String {
+    const CHARSET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut out = String::with_capacity(data.len().div_ceil(3) * 4);
+    for chunk in data.chunks(3) {
+        let b0 = chunk[0];
+        let b1 = if chunk.len() > 1 { chunk[1] } else { 0 };
+        let b2 = if chunk.len() > 2 { chunk[2] } else { 0 };
+        out.push(CHARSET[(b0 >> 2) as usize] as char);
+        out.push(CHARSET[(((b0 & 3) << 4) | (b1 >> 4)) as usize] as char);
+        if chunk.len() > 1 {
+            out.push(CHARSET[(((b1 & 15) << 2) | (b2 >> 6)) as usize] as char);
+        } else {
+            out.push('=');
+        }
+        if chunk.len() > 2 {
+            out.push(CHARSET[(b2 & 63) as usize] as char);
+        } else {
+            out.push('=');
+        }
+    }
+    out
+}
+
+fn base64_decode(input: &str) -> Result<Vec<u8>, String> {
+    fn char_to_val(c: u8) -> Result<u8, String> {
+        match c {
+            b'A'..=b'Z' => Ok(c - b'A'),
+            b'a'..=b'z' => Ok(c - b'a' + 26),
+            b'0'..=b'9' => Ok(c - b'0' + 52),
+            b'+' => Ok(62),
+            b'/' => Ok(63),
+            _ => Err(format!("invalid base64 char '{}'", c as char)),
+        }
+    }
+    let clean: Vec<u8> = input.bytes().filter(|b| !b.is_ascii_whitespace()).collect();
+    if !clean.len().is_multiple_of(4) {
+        return Err("invalid base64 length (must be multiple of 4)".to_string());
+    }
+    let mut out = Vec::with_capacity(clean.len() / 4 * 3);
+    for chunk in clean.chunks(4) {
+        let pad_count = chunk.iter().filter(|&&b| b == b'=').count();
+        let c0 = char_to_val(chunk[0])?;
+        let c1 = char_to_val(chunk[1])?;
+        let c2 = if chunk[2] == b'=' {
+            0
+        } else {
+            char_to_val(chunk[2])?
+        };
+        let c3 = if chunk[3] == b'=' {
+            0
+        } else {
+            char_to_val(chunk[3])?
+        };
+        out.push((c0 << 2) | (c1 >> 4));
+        if pad_count < 2 {
+            out.push(((c1 & 15) << 4) | (c2 >> 2));
+        }
+        if pad_count < 1 {
+            out.push(((c2 & 3) << 6) | c3);
+        }
+    }
+    Ok(out)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_base64_encode_and_decode() {
+        let cases: &[&[u8]] = &[
+            b"",
+            b"f",
+            b"fo",
+            b"foo",
+            b"foob",
+            b"fooba",
+            b"foobar",
+            b"hello world this is a test of base64 encode and decode!",
+            &[0, 1, 2, 255, 254, 128, 64, 32, 16, 8, 4, 2, 1],
+        ];
+
+        for &original in cases {
+            let encoded = base64_encode(original);
+            let decoded = base64_decode(&encoded).expect("decode should succeed");
+            assert_eq!(
+                decoded.as_slice(),
+                original,
+                "roundtrip mismatch for {original:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_mcp_tools_list_completeness() {
+        let tools = list_tools();
+        assert!(
+            tools.len() >= 60,
+            "tools count should be at least 60, was {}",
+            tools.len()
+        );
+
+        let tool_names: Vec<&str> = tools
+            .iter()
+            .filter_map(|t| t.get("name").and_then(|v| v.as_str()))
+            .collect();
+
+        let required = [
+            "secrets_list",
+            "secrets_set",
+            "secrets_remove",
+            "system_backup_export",
+            "system_backup_restore",
+            "users_list",
+            "users_create",
+            "users_update_role",
+            "users_set_password",
+            "users_delete",
+            "services_list",
+            "services_action",
+            "services_create",
+            "storage_spindown_configure",
+            "storage_spindown_now",
+            "storage_power_status",
+        ];
+
+        for req in required {
+            assert!(
+                tool_names.contains(&req),
+                "Missing required tool in list_tools: {req}"
+            );
+        }
     }
 }

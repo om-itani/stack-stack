@@ -332,7 +332,6 @@ function startShell(): void {
   const pages: PageDef[] = [
     { id: "system", label: "System", group: "Overview", icon: ICONS.system, color: "text-cyan-400", badgeBg: "bg-cyan-500/10", badgeBorder: "border-cyan-500/25", create: () => createSystemPage(tl) },
     { id: "containers", label: "Containers", group: "Compute", icon: ICONS.containers, color: "text-blue-400", badgeBg: "bg-blue-500/10", badgeBorder: "border-blue-500/25", create: () => createContainersPage() },
-    { id: "services", label: "Services", group: "Compute", icon: ICONS.services, color: "text-amber-400", badgeBg: "bg-amber-500/10", badgeBorder: "border-amber-500/25", create: () => createServicesPage() },
     { id: "apps", label: "App Store", group: "Compute", icon: ICONS.apps, color: "text-amber-400", badgeBg: "bg-amber-500/10", badgeBorder: "border-amber-500/25", create: () => createAppsPage() },
     { id: "virtualization", label: "Virtualization", group: "Compute", icon: ICONS.virtualization, color: "text-purple-400", badgeBg: "bg-purple-500/10", badgeBorder: "border-purple-500/25", create: () => createVirtualizationPage() },
     { id: "files", label: "Files", group: "Storage", icon: ICONS.files, color: "text-yellow-400", badgeBg: "bg-yellow-500/10", badgeBorder: "border-yellow-500/25", create: () => createFilesPage() },
@@ -341,6 +340,7 @@ function startShell(): void {
     { id: "backups", label: "Backups", group: "Storage", icon: ICONS.backups, color: "text-emerald-400", badgeBg: "bg-emerald-500/10", badgeBorder: "border-emerald-500/25", create: () => createBackupsPage() },
     { id: "network", label: "Network", group: "Network", icon: ICONS.network, color: "text-sky-400", badgeBg: "bg-sky-500/10", badgeBorder: "border-sky-500/25", create: () => createNetworkPage() },
     { id: "vpn", label: "VPN", group: "Network", icon: ICONS.vpn, color: "text-rose-400", badgeBg: "bg-rose-500/10", badgeBorder: "border-rose-500/25", create: () => createVpnPage() },
+    { id: "services", label: "Services", group: "System", icon: ICONS.services, color: "text-amber-400", badgeBg: "bg-amber-500/10", badgeBorder: "border-amber-500/25", create: () => createServicesPage() },
     { id: "logs", label: "Logs", group: "System", icon: ICONS.logs, color: "text-slate-400", badgeBg: "bg-slate-500/10", badgeBorder: "border-slate-500/25", create: () => createLogsPage() },
     { id: "terminal", label: "Terminal", group: "System", icon: ICONS.terminal, color: "text-emerald-400", badgeBg: "bg-emerald-500/10", badgeBorder: "border-emerald-500/25", create: () => createTerminalPage(() => hostEl.textContent ?? "") },
     { id: "tasks", label: "Tasks", group: "System", icon: ICONS.tasks, color: "text-violet-400", badgeBg: "bg-violet-500/10", badgeBorder: "border-violet-500/25", create: () => createTasksPage() },

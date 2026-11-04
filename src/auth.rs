@@ -261,7 +261,19 @@ impl AuthContext {
     fn state(&self) -> AuthState {
         match std::fs::read_to_string(&self.path) {
             Ok(raw) => match serde_json::from_str::<AuthFile>(&raw) {
-                Ok(file) if file.is_configured() => AuthState::Configured(Box::new(file)),
+                Ok(mut file) if file.is_configured() => {
+                    // Auto-migrate legacy single-admin instances
+                    if file.users.is_empty() && !file.password_hash.is_empty() {
+                        file.users.push(UserEntry {
+                            username: "admin".to_string(),
+                            password_hash: file.password_hash.clone(),
+                            role: Role::Admin,
+                            created_at: file.created_at,
+                        });
+                        let _ = self.persist(&file);
+                    }
+                    AuthState::Configured(Box::new(file))
+                }
                 // A document with an empty hash is treated as "not set up yet",
                 // which is what a hand-created stub should mean.
                 Ok(_) => AuthState::Missing,
@@ -594,6 +606,7 @@ impl AuthContext {
             .users
             .iter()
             .any(|u| u.username.eq_ignore_ascii_case(trimmed))
+            || (trimmed.eq_ignore_ascii_case("admin") && !file.password_hash.is_empty())
         {
             return Err(ApiError::bad_request(format!(
                 "user '{trimmed}' already exists"

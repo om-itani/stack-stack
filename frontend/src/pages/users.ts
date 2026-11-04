@@ -168,8 +168,18 @@ export function createUsersPage(): PageHandle {
     let password = "";
     let role: UserRole = "operator";
 
-    const userInput = textInput("", (v) => { username = v.trim(); }, { placeholder: "e.g. operator1" });
-    const passInput = textInput("", (v) => { password = v; }, { type: "password", placeholder: "Minimum 12 characters" });
+    const errorBanner = el("div", {
+      class: "hidden rounded border border-rose-500/40 bg-rose-500/10 p-2 text-xs text-rose-300",
+    });
+
+    const userInput = textInput("", (v) => {
+      username = v.trim();
+      errorBanner.classList.add("hidden");
+    }, { placeholder: "e.g. operator1" });
+    const passInput = textInput("", (v) => {
+      password = v;
+      errorBanner.classList.add("hidden");
+    }, { type: "password", placeholder: "Minimum 12 characters" });
     const roleSelector = select(
       role,
       [
@@ -181,11 +191,16 @@ export function createUsersPage(): PageHandle {
     );
 
     const submitBtn = button("Create Account", "w-full py-1.5 text-xs font-semibold border-emerald-500/40 bg-emerald-500/20 text-emerald-300 hover:bg-emerald-500/30", async () => {
+      errorBanner.classList.add("hidden");
       if (!username) {
+        errorBanner.textContent = "Please enter a username (alphanumeric, hyphens, underscores)";
+        errorBanner.classList.remove("hidden");
         showToast({ title: "Please enter a username", tone: "error" });
         return;
       }
       if (!password || password.length < 12) {
+        errorBanner.textContent = "Password must be at least 12 characters long";
+        errorBanner.classList.remove("hidden");
         showToast({ title: "Password must be at least 12 characters", tone: "error" });
         return;
       }
@@ -196,13 +211,17 @@ export function createUsersPage(): PageHandle {
         modal.close();
         load();
       } catch (err) {
-        showToast({ title: err instanceof Error ? err.message : String(err), tone: "error" });
+        const msg = err instanceof Error ? err.message : String(err);
+        errorBanner.textContent = msg;
+        errorBanner.classList.remove("hidden");
+        showToast({ title: msg, tone: "error" });
       } finally {
         submitBtn.disabled = false;
       }
     });
 
     modal.body.append(
+      errorBanner,
       field("Username", userInput, "Allowed: alphanumeric, hyphens, and underscores"),
       field("Password", passInput, "Must be at least 12 characters"),
       field("Role", roleSelector),
@@ -214,9 +233,19 @@ export function createUsersPage(): PageHandle {
     const modal = openModal(`Reset Password: ${targetUser}`, "max-w-md");
     let newPassword = "";
 
-    const passInput = textInput("", (v) => { newPassword = v; }, { type: "password", placeholder: "Minimum 12 characters" });
+    const errorBanner = el("div", {
+      class: "hidden rounded border border-rose-500/40 bg-rose-500/10 p-2 text-xs text-rose-300",
+    });
+
+    const passInput = textInput("", (v) => {
+      newPassword = v;
+      errorBanner.classList.add("hidden");
+    }, { type: "password", placeholder: "Minimum 12 characters" });
     const confirmBtn = button("Set New Password", "w-full py-1.5 text-xs font-semibold border-emerald-500/40 bg-emerald-500/20 text-emerald-300 hover:bg-emerald-500/30", async () => {
+      errorBanner.classList.add("hidden");
       if (!newPassword || newPassword.length < 12) {
+        errorBanner.textContent = "Password must be at least 12 characters long";
+        errorBanner.classList.remove("hidden");
         showToast({ title: "Password must be at least 12 characters", tone: "error" });
         return;
       }
@@ -226,13 +255,17 @@ export function createUsersPage(): PageHandle {
         showToast({ title: `Password updated for ${targetUser}`, tone: "ok" });
         modal.close();
       } catch (err) {
-        showToast({ title: err instanceof Error ? err.message : String(err), tone: "error" });
+        const msg = err instanceof Error ? err.message : String(err);
+        errorBanner.textContent = msg;
+        errorBanner.classList.remove("hidden");
+        showToast({ title: msg, tone: "error" });
       } finally {
         confirmBtn.disabled = false;
       }
     });
 
     modal.body.append(
+      errorBanner,
       field("New Password", passInput, "Must be at least 12 characters"),
       confirmBtn,
     );

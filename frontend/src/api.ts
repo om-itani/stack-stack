@@ -1847,6 +1847,7 @@ export interface BlockDevice {
   mountpoint: string | null;
   label: string | null;
   rotational?: boolean;
+  spindown_timeout?: number;
   children: BlockDevice[];
 }
 

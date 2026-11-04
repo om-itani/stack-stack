@@ -45,6 +45,8 @@ pub struct BlockDevice {
     pub label: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rotational: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub spindown_timeout: Option<u32>,
     pub children: Vec<BlockDevice>,
 }
 
@@ -67,11 +69,30 @@ impl BlockDevice {
     }
 }
 
+/// Check if a block device name or path corresponds to an optical drive (/dev/sr*, cdrom, dvd, rom).
+pub fn is_optical_device(device: &str) -> bool {
+    let lower = device.trim().to_ascii_lowercase();
+    let name = lower.strip_prefix("/dev/").unwrap_or(&lower);
+    name.starts_with("sr")
+        || name.starts_with("cdrom")
+        || name.starts_with("dvd")
+        || name.starts_with("scd")
+        || name.ends_with("rom")
+}
+
+/// Disks configuration persisted in `/etc/stack-stack/disks.json`.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct DisksConfig {
+    #[serde(default)]
+    pub spindown_minutes: std::collections::HashMap<String, u32>,
+}
+
 /// Disk operations, over an injected runner so tests need no Linux host.
 #[derive(Clone)]
 pub struct StorageContext {
     runner: Arc<dyn Runner>,
     fstab: PathBuf,
+    disks_config: PathBuf,
     /// Prefixes a mount point may live under. Injectable so a test can mount
     /// under its own temporary directory instead of creating `/mnt/...` on the
     /// machine running the suite (which fails for an unprivileged CI user).
@@ -83,6 +104,7 @@ impl StorageContext {
         Self {
             runner,
             fstab: PathBuf::from("/etc/fstab"),
+            disks_config: PathBuf::from("/etc/stack-stack/disks.json"),
             mount_prefixes: default_mount_prefixes(),
         }
     }
@@ -91,9 +113,11 @@ impl StorageContext {
     /// Test-only: production always uses the real paths.
     #[cfg(test)]
     pub fn with_fstab(runner: Arc<dyn Runner>, fstab: PathBuf) -> Self {
+        let disks_config = fstab.with_file_name("disks.json");
         Self {
             runner,
             fstab,
+            disks_config,
             mount_prefixes: default_mount_prefixes(),
         }
     }
@@ -103,6 +127,38 @@ impl StorageContext {
     pub fn with_mount_prefixes(mut self, prefixes: Vec<String>) -> Self {
         self.mount_prefixes = prefixes;
         self
+    }
+
+    #[cfg(test)]
+    pub fn with_disks_config(mut self, path: PathBuf) -> Self {
+        self.disks_config = path;
+        self
+    }
+
+    pub fn read_disks_config(&self) -> DisksConfig {
+        std::fs::read_to_string(&self.disks_config)
+            .ok()
+            .and_then(|raw| serde_json::from_str(&raw).ok())
+            .unwrap_or_default()
+    }
+
+    pub fn persist_spindown(&self, device: &str, minutes: u32) -> Result<(), ApiError> {
+        let mut cfg = self.read_disks_config();
+        let key = device.strip_prefix("/dev/").unwrap_or(device).to_string();
+        if minutes == 0 {
+            cfg.spindown_minutes.remove(&key);
+            cfg.spindown_minutes.remove(device);
+        } else {
+            cfg.spindown_minutes.insert(key, minutes);
+        }
+        if let Some(parent) = self.disks_config.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        let data = serde_json::to_string_pretty(&cfg)
+            .map_err(|e| ApiError::internal(format!("failed to serialize disks config: {e}")))?;
+        std::fs::write(&self.disks_config, data)
+            .map_err(|e| ApiError::internal(format!("cannot write disks config: {e}")))?;
+        Ok(())
     }
 
     /// The full block-device tree, root filesystem check included.
@@ -131,8 +187,27 @@ impl StorageContext {
     /// Everything the UI needs in one call, plus which device backs `/` so the
     /// page can mark it as untouchable.
     pub fn state(&self) -> Result<StorageState, ApiError> {
+        let mut devices = self.devices()?;
+        let cfg = self.read_disks_config();
+        fn apply_spindown(dev: &mut BlockDevice, cfg: &DisksConfig) {
+            let key = dev.path.strip_prefix("/dev/").unwrap_or(&dev.path);
+            if let Some(mins) = cfg
+                .spindown_minutes
+                .get(key)
+                .or_else(|| cfg.spindown_minutes.get(&dev.path))
+                .or_else(|| cfg.spindown_minutes.get(&dev.name))
+            {
+                dev.spindown_timeout = Some(*mins);
+            }
+            for child in &mut dev.children {
+                apply_spindown(child, cfg);
+            }
+        }
+        for dev in &mut devices {
+            apply_spindown(dev, &cfg);
+        }
         Ok(StorageState {
-            devices: self.devices()?,
+            devices,
             root_device: self.root_source(),
             formats: FORMATS.iter().map(|fs| (*fs).to_string()).collect(),
         })
@@ -388,11 +463,28 @@ impl StorageContext {
     /// Check whether a disk is spinning or in standby without waking it up (`hdparm -C`).
     pub fn disk_power_state(&self, device: &str) -> Result<String, ApiError> {
         validate_device_path(device)?;
-        let output = self
-            .runner
-            .call("hdparm", &["-C", device])
-            .map_err(|err| ApiError::unavailable(format!("cannot run hdparm: {err}")))?;
+        if is_optical_device(device) {
+            return Ok("unsupported".to_string());
+        }
+        let args = vec!["-C".to_string(), device.to_string()];
+        let output =
+            match self
+                .runner
+                .run_timeout("hdparm", &args, std::time::Duration::from_secs(3))
+            {
+                Ok(out) => out,
+                Err(_) => return Ok("unsupported".to_string()),
+            };
         let text = output.combined().to_ascii_lowercase();
+        if !output.success()
+            && (text.contains("not supported")
+                || text.contains("inappropriate ioctl")
+                || text.contains("invalid")
+                || text.contains("permission denied")
+                || text.contains("failed"))
+        {
+            return Ok("unsupported".to_string());
+        }
         if text.contains("standby") {
             Ok("standby".to_string())
         } else if text.contains("sleeping") {
@@ -409,9 +501,15 @@ impl StorageContext {
     /// Spin down a mechanical disk immediately into standby mode (`hdparm -y`).
     pub fn spindown_now(&self, device: &str) -> Result<String, ApiError> {
         validate_device_path(device)?;
+        if is_optical_device(device) {
+            return Err(ApiError::bad_request(format!(
+                "{device} is an optical drive and cannot be spun down"
+            )));
+        }
+        let args = vec!["-y".to_string(), device.to_string()];
         let output = self
             .runner
-            .call("hdparm", &["-y", device])
+            .run_timeout("hdparm", &args, std::time::Duration::from_secs(3))
             .map_err(|err| ApiError::unavailable(format!("cannot run hdparm: {err}")))?;
         if !output.success() {
             return Err(ApiError::internal(format!(
@@ -425,6 +523,11 @@ impl StorageContext {
     /// Set disk idle spindown timer in minutes (0 = disabled, 5, 10, 15, 20, 30, 60, 120).
     pub fn set_spindown_timeout(&self, device: &str, minutes: u32) -> Result<String, ApiError> {
         validate_device_path(device)?;
+        if is_optical_device(device) {
+            return Err(ApiError::bad_request(format!(
+                "{device} is an optical drive and cannot be spun down"
+            )));
+        }
         let val = match minutes {
             0 => "0".to_string(),
             1..=20 => (minutes * 12).to_string(), // multiples of 5s: 5*12=60 (5m), 10*12=120 (10m)
@@ -432,9 +535,10 @@ impl StorageContext {
             46..=90 => "242".to_string(),         // 1 hour
             _ => "244".to_string(),               // 2 hours
         };
+        let args = vec!["-S".to_string(), val, device.to_string()];
         let output = self
             .runner
-            .call("hdparm", &["-S", &val, device])
+            .run_timeout("hdparm", &args, std::time::Duration::from_secs(3))
             .map_err(|err| ApiError::unavailable(format!("cannot run hdparm: {err}")))?;
         if !output.success() {
             return Err(ApiError::internal(format!(
@@ -442,6 +546,7 @@ impl StorageContext {
                 output.combined().trim()
             )));
         }
+        let _ = self.persist_spindown(device, minutes);
         Ok(format!(
             "{device} idle spindown timeout set to {minutes} minutes"
         ))
@@ -557,6 +662,7 @@ fn node_to_device(node: &LsblkNode) -> BlockDevice {
         mountpoint: clean(node.mountpoint.clone()),
         label: clean(node.label.clone()),
         rotational,
+        spindown_timeout: None,
         children: node.children.iter().map(node_to_device).collect(),
     }
 }
@@ -891,5 +997,59 @@ mod tests {
             ),
             other => panic!("expected Internal, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn optical_device_detection_and_safeguards() {
+        assert!(is_optical_device("/dev/sr0"));
+        assert!(is_optical_device("/dev/sr1"));
+        assert!(is_optical_device("/dev/cdrom"));
+        assert!(is_optical_device("/dev/dvd"));
+        assert!(!is_optical_device("/dev/sda"));
+        assert!(!is_optical_device("/dev/nvme0n1"));
+
+        let runner = FakeRunner::new(vec![]);
+        let ctx = StorageContext::new(runner);
+
+        // Power state on optical device immediately returns "unsupported" without calling hdparm
+        let state = ctx.disk_power_state("/dev/sr1").expect("power state");
+        assert_eq!(state, "unsupported");
+
+        // Spindown commands are rejected
+        let spin_err = ctx.spindown_now("/dev/sr1").expect_err("should reject");
+        assert!(spin_err.to_string().contains("optical drive"));
+
+        let timeout_err = ctx
+            .set_spindown_timeout("/dev/sr1", 15)
+            .expect_err("should reject");
+        assert!(timeout_err.to_string().contains("optical drive"));
+    }
+
+    #[test]
+    fn spindown_persistence_and_loading() {
+        let dir = std::env::temp_dir().join(format!("ss-storage-disks-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("create temp dir");
+
+        let runner = FakeRunner::new(vec![("hdparm", ok("")), ("lsblk", ok(lsblk_sample()))]);
+        let disks_path = dir.join("disks.json");
+        let ctx = StorageContext::new(runner).with_disks_config(disks_path.clone());
+
+        ctx.set_spindown_timeout("/dev/sdb", 15)
+            .expect("set timeout");
+        assert!(disks_path.exists());
+
+        let cfg = ctx.read_disks_config();
+        assert_eq!(cfg.spindown_minutes.get("sdb"), Some(&15));
+
+        let state = ctx.state().expect("state");
+        let sdb = state
+            .devices
+            .iter()
+            .find(|d| d.name == "sdb")
+            .expect("found sdb");
+        assert_eq!(sdb.spindown_timeout, Some(15));
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

@@ -78,7 +78,7 @@ pub async fn system(State(state): State<AppState>) -> Json<SystemLog> {
             runner.as_ref(),
             Some(SERVICE_UNIT),
             SYSTEM_LINES,
-            Duration::from_secs(20),
+            Duration::from_secs(5),
         )
     })
     .await
@@ -97,35 +97,38 @@ pub async fn system(State(state): State<AppState>) -> Json<SystemLog> {
 }
 
 async fn collect(state: &AppState, query: &TailQuery) -> LogsState {
-    let runner = Arc::clone(&state.logs.runner);
-    let (units, units_error) =
-        tokio::task::spawn_blocking(move || logs::list_units(runner.as_ref()))
-            .await
-            .map(|result| match result {
-                Ok(units) => (units, None),
-                Err(err) => (Vec::new(), Some(err)),
-            })
-            .unwrap_or_else(|err| (Vec::new(), Some(err.to_string())));
-
+    let logs_ctx = state.logs.clone();
     let runner = Arc::clone(&state.logs.runner);
     let unit = query.unit.clone();
     let lines = query.lines.unwrap_or(DEFAULT_LINES);
     let priority = query.priority.clone();
-    let (entries, entries_error) = tokio::task::spawn_blocking(move || {
+
+    let units_fut = tokio::task::spawn_blocking(move || logs_ctx.list_units_cached());
+    let entries_fut = tokio::task::spawn_blocking(move || {
         logs::tail(
             runner.as_ref(),
             unit.as_deref(),
             lines,
             priority.as_deref(),
-            Duration::from_secs(30),
+            Duration::from_secs(5),
         )
-    })
-    .await
-    .map(|result| match result {
-        Ok(entries) => (entries, None),
-        Err(err) => (Vec::new(), Some(err.to_string())),
-    })
-    .unwrap_or_else(|err| (Vec::new(), Some(err.to_string())));
+    });
+
+    let (units_res, entries_res) = tokio::join!(units_fut, entries_fut);
+
+    let (units, units_error) = units_res
+        .map(|result| match result {
+            Ok(units) => (units, None),
+            Err(err) => (Vec::new(), Some(err)),
+        })
+        .unwrap_or_else(|err| (Vec::new(), Some(err.to_string())));
+
+    let (entries, entries_error) = entries_res
+        .map(|result| match result {
+            Ok(entries) => (entries, None),
+            Err(err) => (Vec::new(), Some(err.to_string())),
+        })
+        .unwrap_or_else(|err| (Vec::new(), Some(err.to_string())));
 
     LogsState {
         units,

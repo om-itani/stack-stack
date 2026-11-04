@@ -86,12 +86,21 @@ export function createStoragePage(): PageHandle {
       }),
     );
 
-    if (disk.rotational || (disk.kind === "disk" && disk.name.startsWith("sd"))) {
+    const isOptical =
+      disk.kind === "rom" ||
+      disk.name.startsWith("sr") ||
+      disk.name.startsWith("cdrom") ||
+      disk.name.startsWith("dvd") ||
+      disk.path.includes("/sr");
+
+    if (!isOptical && (disk.rotational || (disk.kind === "disk" && disk.name.startsWith("sd")))) {
       const powerBadge = badge("checking…", "muted");
       head.append(powerBadge);
 
       storageApi.powerStatus(disk.path).then((res) => {
-        if (res.state.includes("standby") || res.state.includes("sleep")) {
+        if (res.state.includes("unsupported")) {
+          powerBadge.remove();
+        } else if (res.state.includes("standby") || res.state.includes("sleep")) {
           powerBadge.textContent = "standby (sleeping)";
           powerBadge.className = "rounded border border-sky-500/30 bg-sky-500/10 px-1.5 py-0.5 text-[10px] text-sky-400";
         } else {
@@ -104,7 +113,7 @@ export function createStoragePage(): PageHandle {
 
       const spindownSelect = el("select", {
         class: "border border-white/10 bg-black/40 px-1.5 py-0.5 text-[10px] text-neutral-300 rounded",
-        title: "Idle spindown timeout",
+        title: "Idle spindown timeout (auto-saves to disk)",
       }, [
         el("option", { value: "0", text: "Sleep: Never" }),
         el("option", { value: "5", text: "Sleep: 5 min idle" }),
@@ -115,11 +124,22 @@ export function createStoragePage(): PageHandle {
         el("option", { value: "120", text: "Sleep: 2 hours idle" }),
       ]) as HTMLSelectElement;
 
+      if (disk.spindown_timeout !== undefined && disk.spindown_timeout !== null) {
+        spindownSelect.value = String(disk.spindown_timeout);
+      }
+
+      const saveBadge = el("span", {
+        class: "text-[10px] text-emerald-400 font-mono transition-opacity duration-300 opacity-0",
+        text: "✓ auto-saved",
+      });
+
       spindownSelect.addEventListener("change", async () => {
         const mins = parseInt(spindownSelect.value, 10);
         try {
           const res = await storageApi.spindown(disk.path, mins);
           setStatus(res.message, "ok");
+          saveBadge.classList.remove("opacity-0");
+          setTimeout(() => saveBadge.classList.add("opacity-0"), 2500);
         } catch (e) {
           setStatus(errorText(e), "error");
         }
@@ -136,7 +156,7 @@ export function createStoragePage(): PageHandle {
         }
       });
 
-      head.append(spindownSelect, sleepBtn);
+      head.append(spindownSelect, saveBadge, sleepBtn);
     }
 
     head.append(

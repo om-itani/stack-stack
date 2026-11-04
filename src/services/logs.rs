@@ -151,6 +151,7 @@ pub fn tail(
         "-o".to_string(),
         "json".to_string(),
         "--no-pager".to_string(),
+        "-b".to_string(),
         "-n".to_string(),
         lines.min(MAX_LINES).to_string(),
     ];
@@ -191,6 +192,7 @@ pub fn tail_raw(
         "-o".to_string(),
         "short-iso".to_string(),
         "--no-pager".to_string(),
+        "-b".to_string(),
         "-n".to_string(),
         lines.min(MAX_LINES).to_string(),
     ];
@@ -475,6 +477,7 @@ mod tests {
                 "-o",
                 "json",
                 "--no-pager",
+                "-b",
                 "-n",
                 "100",
                 "-u",
@@ -505,19 +508,43 @@ mod tests {
     }
 }
 
+type UnitsCache = Arc<Mutex<Option<(std::time::Instant, Vec<UnitInfo>)>>>;
+
 /// Shared runtime handles for the log surface.
 #[derive(Clone)]
 pub struct LogsContext {
     pub runner: Arc<dyn Runner>,
+    units_cache: UnitsCache,
 }
 
 impl LogsContext {
     pub fn new(runner: Arc<dyn Runner>) -> Self {
-        Self { runner }
+        Self {
+            runner,
+            units_cache: Arc::new(Mutex::new(None)),
+        }
     }
 
     /// True when both `journalctl` and `systemctl` answer.
     pub fn available(&self) -> bool {
         self.runner.available("journalctl", &["--version"])
+    }
+
+    /// Units from `systemctl list-units --type=service`, cached for 60s so
+    /// frequent log filter updates don't repeatedly invoke systemctl.
+    pub fn list_units_cached(&self) -> Result<Vec<UnitInfo>, String> {
+        let now = std::time::Instant::now();
+        {
+            let guard = self.units_cache.lock().unwrap_or_else(|e| e.into_inner());
+            if let Some((cached_at, ref units)) = *guard
+                && now.duration_since(cached_at) < Duration::from_secs(60)
+            {
+                return Ok(units.clone());
+            }
+        }
+        let fresh = list_units(self.runner.as_ref())?;
+        let mut guard = self.units_cache.lock().unwrap_or_else(|e| e.into_inner());
+        *guard = Some((now, fresh.clone()));
+        Ok(fresh)
     }
 }
