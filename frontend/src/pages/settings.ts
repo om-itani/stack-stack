@@ -6,7 +6,7 @@
  * self-contained; a failure in one never blocks the others.
  */
 
-import { authApi, ddnsApi, notifyApi } from "../api";
+import { authApi, ddnsApi, notifyApi, systemBackupApi } from "../api";
 import type { DdnsState, ProviderConfig } from "../api";
 import { button, checkbox, el, emptyNote, field, panel, select, textInput } from "../ui";
 
@@ -25,7 +25,7 @@ function when(unix: number | null | undefined): string {
 
 export function createSettingsPage(): PageHandle {
   const root = el("div", { class: "flex min-h-0 flex-1 flex-col gap-2 overflow-auto p-3" });
-  root.append(passwordCard(), ddnsCard(), notificationsCard());
+  root.append(passwordCard(), ddnsCard(), notificationsCard(), disasterRecoveryCard());
   return { root };
 }
 
@@ -323,5 +323,69 @@ function notificationsCard(): HTMLElement {
   };
 
   void load();
+  return card;
+}
+
+// ---------------------------------------------------------------------------
+// Disaster Recovery (Full System Backup & Restore)
+// ---------------------------------------------------------------------------
+
+function disasterRecoveryCard(): HTMLElement {
+  const { root: card, body: cardBody } = panel("disaster recovery (system backup & restore)");
+  cardBody.className = "flex flex-col gap-3 px-3 py-2";
+
+  const description = el("div", {
+    class: "text-[11px] text-neutral-400 leading-relaxed",
+    text: "Export a complete system snapshot containing all configurations, secrets, and compose stacks (.tar.gz). In the event of host failure or OS reinstallation, importing this archive restores all settings and app definitions instantly.",
+  });
+
+  const exportBtn = button("download system backup (.tar.gz)", "text-emerald-400 hover:border-emerald-500", () => {
+    window.location.href = systemBackupApi.exportUrl;
+  });
+
+  const fileInput = document.createElement("input");
+  fileInput.type = "file";
+  fileInput.accept = ".tar.gz,.tgz";
+  fileInput.className = "hidden";
+
+  const status = el("div", { class: "text-[11px] text-neutral-500" });
+
+  const importBtn = button("restore from backup archive", "text-amber-400 hover:border-amber-500", () => {
+    fileInput.click();
+  });
+
+  fileInput.addEventListener("change", async () => {
+    const file = fileInput.files?.[0];
+    if (!file) return;
+
+    if (!window.confirm(`Warning: Restoring "${file.name}" will overwrite existing configurations, secrets, and stacks. Do you want to proceed?`)) {
+      fileInput.value = "";
+      return;
+    }
+
+    importBtn.disabled = true;
+    status.className = "text-[11px] text-neutral-400";
+    status.textContent = "restoring system configuration…";
+
+    try {
+      const res = await systemBackupApi.import(file);
+      status.className = "text-[11px] text-emerald-400 font-medium";
+      status.textContent = `${res.message} — restart or reload to apply`;
+    } catch (err) {
+      status.className = "text-[11px] text-rose-400 font-medium";
+      status.textContent = errorText(err);
+    } finally {
+      importBtn.disabled = false;
+      fileInput.value = "";
+    }
+  });
+
+  const actions = el("div", { class: "flex flex-wrap items-center gap-3" }, [
+    exportBtn,
+    importBtn,
+    fileInput,
+  ]);
+
+  cardBody.append(description, actions, status);
   return card;
 }

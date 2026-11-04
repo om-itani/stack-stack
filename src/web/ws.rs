@@ -106,13 +106,17 @@ pub fn spawn_sampler(state: AppState, cfg: Config) {
 pub async fn telemetry_ws(ws: WebSocketUpgrade, State(state): State<AppState>) -> Response {
     tracing::debug!("telemetry_ws upgrade request received");
     let stream = state.telemetry.subscribe();
+    let jobs_stream = state.jobs.subscribe();
+    let notify_stream = state.notify.subscribe();
     let initial = state.latest_snapshot();
-    ws.on_upgrade(move |socket| handler(socket, stream, initial))
+    ws.on_upgrade(move |socket| handler(socket, stream, jobs_stream, notify_stream, initial))
 }
 
 async fn handler(
     socket: WebSocket,
     mut stream: broadcast::Receiver<Arc<Snapshot>>,
+    mut jobs_stream: broadcast::Receiver<crate::jobs::Job>,
+    mut notify_stream: broadcast::Receiver<crate::notify::Notification>,
     initial: Option<Arc<Snapshot>>,
 ) {
     // Splitting gives us independent send/receive halves, which is what lets the
@@ -144,6 +148,32 @@ async fn handler(
                 }
                 Err(broadcast::error::RecvError::Closed) => break,
             },
+            job_event = jobs_stream.recv() => match job_event {
+                Ok(job) => {
+                    let frame = serde_json::json!({
+                        "event": "job",
+                        "data": job
+                    }).to_string();
+                    if sink.send(Message::Text(frame.into())).await.is_err() {
+                        break;
+                    }
+                }
+                Err(broadcast::error::RecvError::Lagged(_)) => {}
+                Err(broadcast::error::RecvError::Closed) => {}
+            },
+            notify_event = notify_stream.recv() => match notify_event {
+                Ok(notification) => {
+                    let frame = serde_json::json!({
+                        "event": "notification",
+                        "data": notification
+                    }).to_string();
+                    if sink.send(Message::Text(frame.into())).await.is_err() {
+                        break;
+                    }
+                }
+                Err(broadcast::error::RecvError::Lagged(_)) => {}
+                Err(broadcast::error::RecvError::Closed) => {}
+            },
             _ = heartbeat.tick() => {
                 if sink.send(Message::Ping(Bytes::new())).await.is_err() {
                     break;
@@ -169,7 +199,7 @@ async fn handler(
     }
 
     let _ = sink.close().await;
-    tracing::debug!("telemetry socket closed");
+    tracing::debug!("consolidated telemetry socket closed");
 }
 
 async fn send_snapshot(

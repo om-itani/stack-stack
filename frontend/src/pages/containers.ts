@@ -11,7 +11,7 @@
  * is in flight, so it does not fight the user or hammer a slow daemon.
  */
 
-import { api, stacksApi } from "../api";
+import { api, secretsApi, stacksApi } from "../api";
 import type { Container, StackInfo } from "../api";
 import { HARDENING_FRAGMENT, composeForImage, serviceName, takeStackDraft } from "../stackdraft";
 // xterm is by far the largest dependency; it is imported on demand so it stays
@@ -21,6 +21,7 @@ import {
   badge,
   button,
   bytes,
+  dangerButton,
   el,
   emptyNote,
   field,
@@ -305,7 +306,7 @@ export function createContainersPage(): PageHandle {
           `deploying ${stack.name}…`,
         ),
       );
-      const removeBtn = button("remove", "text-[10px] text-rose-400 hover:border-rose-500");
+      const removeBtn = dangerButton("remove", "text-[10px]");
       removeBtn.disabled = busy;
       removeBtn.addEventListener("click", () => {
         if (window.confirm(`Remove stack ${stack.name}? Its containers are stopped and removed.`)) {
@@ -314,7 +315,7 @@ export function createContainersPage(): PageHandle {
       });
       // Force removal skips `down`, so it is only offered behind its own, more
       // explicit confirmation.
-      const forceBtn = button("force remove", "text-[10px] text-rose-500");
+      const forceBtn = dangerButton("force remove", "text-[10px]");
       forceBtn.disabled = busy;
       forceBtn.addEventListener("click", () => {
         if (
@@ -744,6 +745,35 @@ function openStackEditor(deps: StackEditorDeps, prefill: StackEditorPrefill = {}
   area.spellcheck = false;
   area.value = compose;
 
+  const editorToolbar = el("div", { class: "flex items-center justify-between text-xs" }, [
+    el("span", { class: "text-neutral-400 font-medium", text: "compose (yaml)" }),
+  ]);
+  const secretDropdown = document.createElement("select");
+  secretDropdown.className =
+    "bg-neutral-800 text-neutral-300 border border-white/10 rounded px-2 py-0.5 text-xs outline-none hover:border-neutral-500 cursor-pointer";
+  secretDropdown.innerHTML = `<option value="">+ Insert Secret…</option>`;
+  void secretsApi.list().then((list) => {
+    for (const s of list) {
+      const opt = document.createElement("option");
+      opt.value = s.name;
+      opt.textContent = `{{secret.${s.name}}}`;
+      secretDropdown.append(opt);
+    }
+  });
+  secretDropdown.addEventListener("change", () => {
+    const val = secretDropdown.value;
+    if (!val) return;
+    const tag = `{{secret.${val}}}`;
+    const start = area.selectionStart ?? area.value.length;
+    const end = area.selectionEnd ?? area.value.length;
+    area.value = area.value.slice(0, start) + tag + area.value.slice(end);
+    area.selectionStart = area.selectionEnd = start + tag.length;
+    area.focus();
+    secretDropdown.value = "";
+    scheduleCheck();
+  });
+  editorToolbar.append(secretDropdown);
+
   const validation = el("div", { class: "tabular text-[11px] text-neutral-500" });
   validation.textContent = "checking…";
 
@@ -877,7 +907,8 @@ function openStackEditor(deps: StackEditorDeps, prefill: StackEditorPrefill = {}
   });
   modalHandle.body.append(
     field("name", nameInput),
-    field("compose (yaml)", area),
+    editorToolbar,
+    area,
     validation,
     hint,
     actions,

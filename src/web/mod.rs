@@ -20,12 +20,16 @@ pub mod network;
 pub mod notify;
 pub mod proxy;
 pub mod remote_access;
+pub mod secrets;
 pub mod shares;
 pub mod shell_ws;
 pub mod smart;
 pub mod storage;
+pub mod system_backup;
+pub mod systemd;
 pub mod tasks;
 pub mod updates;
+pub mod users;
 pub mod virtualization;
 pub mod wireguard;
 pub mod ws;
@@ -59,6 +63,16 @@ pub fn router(state: AppState) -> Router {
         .route("/api/auth/logout", post(auth::logout))
         .route("/api/auth/session", get(auth::session))
         .route("/api/auth/password", post(auth::change_password))
+        .route(
+            "/api/users",
+            get(users::list_users).post(users::create_user),
+        )
+        .route("/api/users/{username}/role", put(users::update_user_role))
+        .route(
+            "/api/users/{username}/password",
+            put(users::set_user_password),
+        )
+        .route("/api/users/{username}", delete(users::delete_user))
         .route("/api/notifications", get(notify::feed))
         .route("/api/notify", get(notify::feed))
         .route("/api/notifications/clear", post(notify::clear))
@@ -88,6 +102,11 @@ pub fn router(state: AppState) -> Router {
         )
         .route("/api/health", get(health))
         .route("/api/system/snapshot", get(system_snapshot))
+        .route(
+            "/api/system/services",
+            get(systemd::list).post(systemd::create),
+        )
+        .route("/api/system/services/{unit}/action", post(systemd::action))
         .route("/api/ws/telemetry", get(ws::telemetry_ws))
         .route("/api/host/ip", get(host_ip))
         .route("/api/containers", get(containers::list))
@@ -117,6 +136,8 @@ pub fn router(state: AppState) -> Router {
             "/api/containers/stacks/{name}",
             delete(containers::delete_stack),
         )
+        .route("/api/secrets", get(secrets::list).post(secrets::set))
+        .route("/api/secrets/{name}", delete(secrets::remove))
         .route("/api/apps/catalog", get(apps::catalog))
         .route("/api/apps/hub-search", get(apps::hub_search))
         .route("/api/apps/{app}/install", post(apps::install))
@@ -216,6 +237,12 @@ pub fn router(state: AppState) -> Router {
         )
         .route("/api/backup/jobs/{id}/restore", post(backup::restore))
         .route("/api/backup/jobs/{id}/download", get(backup::download))
+        .route("/api/backup/system/export", get(system_backup::export))
+        .route(
+            "/api/backup/system/import",
+            post(system_backup::import)
+                .layer(axum::extract::DefaultBodyLimit::max(100 * 1024 * 1024)),
+        )
         .route("/api/wireguard", get(wireguard::state))
         .route("/api/wireguard/config", put(wireguard::save))
         .route("/api/wireguard/apply", post(wireguard::apply))

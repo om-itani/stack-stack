@@ -380,16 +380,41 @@ pub async fn deploy_stack(cfg: &Config, raw_name: &str, yaml: &str) -> Result<St
         .map_err(|err| ApiError::internal(format!("stack task failed: {err}")))??;
 
     let compose_file = stack_compose_path(cfg, &name);
+    let has_secrets = yaml.contains("{{secret.") || yaml.contains("{{ secret.");
+    let (target_compose, temp_cleanup) = if has_secrets {
+        let secrets =
+            crate::services::secrets::load_secrets(std::path::Path::new(&cfg.app_secrets_path));
+        let rendered = crate::services::secrets::interpolate_secrets(yaml, &secrets)?;
+        let temp_path = dir.join(format!(
+            ".docker-compose.{}.rendered.tmp",
+            std::process::id()
+        ));
+        std::fs::write(&temp_path, rendered.as_bytes())
+            .map_err(|err| ApiError::internal(format!("cannot write temporary compose: {err}")))?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = std::fs::set_permissions(&temp_path, std::fs::Permissions::from_mode(0o600));
+        }
+        (temp_path.clone(), Some(temp_path))
+    } else {
+        (compose_file, None)
+    };
+
     let args = vec![
         "-p".to_string(),
         name.clone(),
         "-f".to_string(),
-        compose_file.to_string_lossy().into_owned(),
+        target_compose.to_string_lossy().into_owned(),
         "up".to_string(),
         "-d".to_string(),
         "--remove-orphans".to_string(),
     ];
-    let output = run_compose_owned(&dir, args, cfg.compose_timeout_s).await?;
+    let run_res = run_compose_owned(&dir, args, cfg.compose_timeout_s).await;
+    if let Some(temp) = temp_cleanup {
+        let _ = std::fs::remove_file(temp);
+    }
+    let output = run_res?;
     tracing::info!(stack = %name, "compose stack deployed");
     Ok(output)
 }

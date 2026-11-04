@@ -9,7 +9,7 @@
 
 import { storageApi } from "../api";
 import type { BlockDevice, StorageState } from "../api";
-import { badge, button, bytes, el, emptyNote, field, openModal, textInput } from "../ui";
+import { badge, button, bytes, dangerButton, el, emptyNote, field, openModal, textInput } from "../ui";
 
 export interface PageHandle {
   root: HTMLElement;
@@ -255,7 +255,7 @@ export function createStoragePage(): PageHandle {
     );
 
     const feedback = el("div", { class: "tabular text-[11px] text-neutral-500" });
-    const confirm = button("format", "text-rose-400 hover:border-rose-500");
+    const confirm = dangerButton("Format Disk");
     const cancel = button("cancel", "", () => modal.close());
     confirm.addEventListener("click", async () => {
       if (confirmation.trim() !== device.path) {

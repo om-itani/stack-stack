@@ -471,3 +471,139 @@ export function tableEditor<T>(
   }));
   return wrapper;
 }
+
+export function dangerButton(
+  label: string,
+  className = "",
+  onClick?: () => void,
+): HTMLButtonElement {
+  return button(
+    label,
+    `border-rose-500/40 bg-rose-500/15 text-rose-300 hover:border-rose-500/60 hover:bg-rose-500/25 ${className}`,
+    onClick,
+  );
+}
+
+export interface ModalStep {
+  title: string;
+  description?: string;
+  render: (container: HTMLElement) => void;
+  isValid?: () => boolean;
+  onNext?: () => Promise<boolean> | boolean;
+}
+
+export interface StepperModalOptions {
+  width?: string;
+  finishLabel?: string;
+  isDanger?: boolean;
+  onFinish: () => Promise<void> | void;
+}
+
+export function openStepperModal(
+  modalTitle: string,
+  steps: ModalStep[],
+  options: StepperModalOptions,
+): Modal {
+  const modal = openModal(modalTitle, options.width ?? "max-w-xl");
+  let currentStep = 0;
+
+  // Step header / Progress indicator
+  const progressContainer = el("div", {
+    class: "flex flex-col gap-2 rounded-lg border border-white/10 bg-white/5 p-3",
+  });
+  const stepMeta = el("div", { class: "flex items-center justify-between text-xs" });
+  const stepCountText = el("span", { class: "font-semibold text-emerald-400" });
+  const stepTitleText = el("span", { class: "text-neutral-400 font-mono text-[11px]" });
+  stepMeta.append(stepCountText, stepTitleText);
+
+  // Stepper dots / bar
+  const indicatorBar = el("div", { class: "flex items-center gap-1.5" });
+  for (let i = 0; i < steps.length; i++) {
+    const dot = el("div", {
+      class: "h-1.5 flex-1 rounded-full transition-all duration-200",
+      id: `stepper-dot-${i}`,
+    });
+    indicatorBar.append(dot);
+  }
+  progressContainer.append(stepMeta, indicatorBar);
+
+  const stepBody = el("div", { class: "min-h-[140px] flex flex-col gap-3 py-1" });
+
+  // Footer navigation
+  const footer = el("div", {
+    class: "flex items-center justify-between border-t border-white/10 pt-3 mt-2",
+  });
+  const backBtn = button("← Back", "px-3 py-1 text-xs", () => {
+    if (currentStep > 0) {
+      currentStep--;
+      renderStep();
+    }
+  });
+
+  const rightGroup = el("div", { class: "flex items-center gap-2" });
+  const cancelBtn = button("Cancel", "px-3 py-1 text-xs", () => modal.close());
+  const nextBtn = button("Next →", "px-3 py-1 text-xs font-semibold border-emerald-500/40 bg-emerald-500/15 text-emerald-300 hover:bg-emerald-500/25", async () => {
+    const step = steps[currentStep];
+    if (step.isValid && !step.isValid()) {
+      return;
+    }
+    if (step.onNext) {
+      const ok = await step.onNext();
+      if (!ok) return;
+    }
+    if (currentStep < steps.length - 1) {
+      currentStep++;
+      renderStep();
+    } else {
+      nextBtn.disabled = true;
+      try {
+        await options.onFinish();
+        modal.close();
+      } finally {
+        nextBtn.disabled = false;
+      }
+    }
+  });
+  rightGroup.append(cancelBtn, nextBtn);
+  footer.append(backBtn, rightGroup);
+
+  const renderStep = () => {
+    const step = steps[currentStep];
+    stepCountText.textContent = `Step ${currentStep + 1} of ${steps.length}: ${step.title}`;
+    stepTitleText.textContent = step.description ?? "";
+
+    // Update dots
+    for (let i = 0; i < steps.length; i++) {
+      const dot = indicatorBar.querySelector(`#stepper-dot-${i}`) as HTMLElement;
+      if (dot) {
+        if (i < currentStep) {
+          dot.className = "h-1.5 flex-1 rounded-full bg-emerald-500/50";
+        } else if (i === currentStep) {
+          dot.className = "h-1.5 flex-1 rounded-full bg-emerald-400 shadow-sm shadow-emerald-500/50";
+        } else {
+          dot.className = "h-1.5 flex-1 rounded-full bg-white/10";
+        }
+      }
+    }
+
+    backBtn.disabled = currentStep === 0;
+    if (currentStep === steps.length - 1) {
+      nextBtn.textContent = options.finishLabel ?? "Confirm";
+      if (options.isDanger) {
+        nextBtn.className = "px-3 py-1 text-xs font-semibold rounded-lg border border-rose-500/40 bg-rose-500/20 text-rose-300 hover:bg-rose-500/30 transition-colors";
+      } else {
+        nextBtn.className = "px-3 py-1 text-xs font-semibold rounded-lg border border-emerald-500/40 bg-emerald-500/20 text-emerald-300 hover:bg-emerald-500/30 transition-colors";
+      }
+    } else {
+      nextBtn.textContent = "Next →";
+      nextBtn.className = "px-3 py-1 text-xs font-semibold rounded-lg border border-emerald-500/40 bg-emerald-500/15 text-emerald-300 hover:bg-emerald-500/25 transition-colors";
+    }
+
+    stepBody.replaceChildren();
+    step.render(stepBody);
+  };
+
+  modal.body.append(progressContainer, stepBody, footer);
+  renderStep();
+  return modal;
+}

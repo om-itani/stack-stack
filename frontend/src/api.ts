@@ -527,10 +527,20 @@ export const networkApi = {
 // Auth / login gate
 // ---------------------------------------------------------------------------
 
+export type UserRole = "admin" | "operator" | "viewer";
+
+export interface UserSummary {
+  username: string;
+  role: UserRole;
+  created_at: number;
+}
+
 export interface AuthStatus {
   setup_required: boolean;
   authenticated: boolean;
   must_change: boolean;
+  username?: string;
+  role?: UserRole;
   error?: string;
 }
 
@@ -539,14 +549,29 @@ export const authApi = {
   session: () => request<AuthStatus>("/api/auth/session"),
   setup: (password: string) =>
     jsonRequest<AuthStatus>("/api/auth/setup", "POST", { password }),
-  login: (password: string) =>
-    jsonRequest<AuthStatus>("/api/auth/login", "POST", { password }),
+  login: (password: string, username?: string) =>
+    jsonRequest<AuthStatus>("/api/auth/login", "POST", {
+      password,
+      ...(username && username.trim() ? { username: username.trim() } : {}),
+    }),
   logout: () => post<AuthStatus>("/api/auth/logout"),
   changePassword: (current: string, newPassword: string) =>
     jsonRequest<AuthStatus>("/api/auth/password", "POST", {
       current,
       new_password: newPassword,
     }),
+};
+
+export const usersApi = {
+  list: () => request<UserSummary[]>("/api/users"),
+  create: (data: { username: string; password: string; role: UserRole }) =>
+    jsonRequest<{ ok: boolean }>("/api/users", "POST", data),
+  updateRole: (username: string, role: UserRole) =>
+    jsonRequest<{ ok: boolean }>(`/api/users/${encodeURIComponent(username)}/role`, "PUT", { role }),
+  setPassword: (username: string, password: string) =>
+    jsonRequest<{ ok: boolean }>(`/api/users/${encodeURIComponent(username)}/password`, "PUT", { password }),
+  delete: (username: string) =>
+    request<{ ok: boolean }>(`/api/users/${encodeURIComponent(username)}`, { method: "DELETE" }),
 };
 
 // ---------------------------------------------------------------------------
@@ -2210,4 +2235,70 @@ export const debugApi = {
   systemLog: () => request<SystemLog>("/api/logs/system"),
   /** Deliberately hits a route that does not exist, to exercise the error toast. */
   forceError: () => request<unknown>("/api/debug/force-error", { method: "POST" }),
+};
+
+export interface SecretSummary {
+  name: string;
+}
+
+export const secretsApi = {
+  list: async (): Promise<SecretSummary[]> => {
+    const res = await request<{ secrets: SecretSummary[] }>("/api/secrets");
+    return res.secrets;
+  },
+  set: (name: string, value: string): Promise<{ status: string }> =>
+    request<{ status: string }>("/api/secrets", {
+      method: "POST",
+      body: JSON.stringify({ name, value }),
+    }),
+  remove: (name: string): Promise<{ status: string }> =>
+    request<{ status: string }>(`/api/secrets/${encodeURIComponent(name)}`, {
+      method: "DELETE",
+    }),
+};
+
+export const systemBackupApi = {
+  exportUrl: "/api/backup/system/export",
+  import: async (file: File): Promise<{ status: string; message: string }> => {
+    const res = await fetch("/api/backup/system/import", {
+      method: "POST",
+      headers: { "Content-Type": "application/gzip" },
+      body: file,
+    });
+    if (!res.ok) {
+      const err = (await res.json().catch(() => ({ message: res.statusText }))) as { message?: string };
+      throw new Error(err.message || "Failed to restore backup");
+    }
+    return res.json() as Promise<{ status: string; message: string }>;
+  },
+};
+
+export interface ServiceUnit {
+  name: string;
+  description: string;
+  load_state: string;
+  active_state: string;
+  sub_state: string;
+  enabled: string;
+}
+
+export interface CreateServiceRequest {
+  name: string;
+  description: string;
+  exec_start: string;
+  restart?: string;
+  user?: string;
+  working_dir?: string;
+}
+
+export const servicesApi = {
+  list: () => request<ServiceUnit[]>("/api/system/services"),
+  action: (unit: string, action: "start" | "stop" | "restart" | "enable" | "disable") =>
+    jsonRequest<{ ok: boolean; message: string }>(
+      `/api/system/services/${encodeURIComponent(unit)}/action`,
+      "POST",
+      { action },
+    ),
+  create: (data: CreateServiceRequest) =>
+    jsonRequest<{ ok: boolean; message: string }>("/api/system/services", "POST", data),
 };

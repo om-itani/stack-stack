@@ -103,7 +103,7 @@ export function createLogsPage(): PageHandle {
   const refreshButton = button("refresh", "", () => void tail());
 
   const header = el("div", { class: "flex flex-wrap items-end gap-2" }, [
-    el("span", { class: "text-neutral-300", text: "logs" }),
+    el("span", { class: "text-neutral-300 font-semibold text-xs", text: "logs" }),
     field("unit", unitSelect),
     field("severity", prioritySelect),
     field("lines", linesSelect),
@@ -112,6 +112,47 @@ export function createLogsPage(): PageHandle {
     followButton,
     el("span", { class: "ml-auto" }, [statusLine]),
   ]);
+
+  const quickPills = el("div", { class: "flex flex-wrap items-center gap-1.5 border-b border-white/5 pb-2" });
+  const pillLabel = el("span", { class: "text-[10px] font-semibold uppercase tracking-wider text-neutral-400 mr-1", text: "Journal Views:" });
+  quickPills.append(pillLabel);
+
+  const presets = [
+    { label: "All Logs", unit: "" },
+    { label: "stack-stack Engine", unit: "stack-stack.service" },
+    { label: "Docker Engine", unit: "docker.service" },
+    { label: "Kernel", unit: "kernel" },
+  ];
+
+  const pillButtons: HTMLButtonElement[] = [];
+  const updatePillStyles = () => {
+    presets.forEach((p, idx) => {
+      const btn = pillButtons[idx];
+      if (btn) {
+        if (unit === p.unit) {
+          btn.className = "rounded-full border border-emerald-500/40 bg-emerald-500/20 px-2.5 py-0.5 text-[11px] font-medium text-emerald-300 transition-colors";
+        } else {
+          btn.className = "rounded-full border border-white/10 bg-white/5 px-2.5 py-0.5 text-[11px] text-neutral-400 hover:text-neutral-200 hover:bg-white/10 transition-colors";
+        }
+      }
+    });
+  };
+
+  presets.forEach((p) => {
+    const btn = button(p.label, "", () => {
+      unit = p.unit;
+      if (p.unit && !Array.from(unitSelect.options).some((o) => o.value === p.unit)) {
+        unitSelect.append(el("option", { value: p.unit, text: p.unit }));
+      }
+      unitSelect.value = p.unit;
+      updatePillStyles();
+      if (follow) restartFollow();
+      else void tail();
+    });
+    pillButtons.push(btn);
+    quickPills.append(btn);
+  });
+  updatePillStyles();
 
   const tableHost = el("div", { class: "min-h-0 flex-1 overflow-auto" });
   const tableBody = el("tbody");
@@ -128,7 +169,7 @@ export function createLogsPage(): PageHandle {
   );
   tableHost.append(table);
 
-  root.append(header, tableHost);
+  root.append(header, quickPills, tableHost);
 
   function renderChrome(): void {
     statusLine.textContent = status + (follow ? " · following" : "");
@@ -315,6 +356,25 @@ export function createLogsPage(): PageHandle {
       // journalctl only emits JSON here; ignore anything else.
     }
   }
+
+  const selectUnitByName = (targetUnit: string) => {
+    unit = targetUnit;
+    if (targetUnit && !Array.from(unitSelect.options).some((o) => o.value === targetUnit)) {
+      unitSelect.append(el("option", { value: targetUnit, text: targetUnit }));
+    }
+    unitSelect.value = targetUnit;
+    updatePillStyles();
+    follow = true;
+    restartFollow();
+  };
+
+  const onLogsUnitEvent = (e: Event): void => {
+    const detail = (e as CustomEvent).detail as { unit?: string } | undefined;
+    if (detail && typeof detail.unit === "string") {
+      selectUnitByName(detail.unit);
+    }
+  };
+  window.addEventListener("stack-stack:logs-unit", onLogsUnitEvent);
 
   // Severity options arrive from the server state; seed the common set so the
   // control is usable before the first fetch completes.

@@ -21,9 +21,11 @@ import { createContainersPage } from "./pages/containers";
 import { createFilesPage } from "./pages/files";
 import { createLogsPage } from "./pages/logs";
 import { createNetworkPage } from "./pages/network";
+import { createServicesPage } from "./pages/services";
 import { createSharesPage } from "./pages/shares";
 import { createSettingsPage } from "./pages/settings";
 import { createStoragePage } from "./pages/storage";
+import { createUsersPage } from "./pages/users";
 import { createVpnPage } from "./pages/vpn";
 import { createSystemPage } from "./pages/system";
 import { createTasksPage } from "./pages/tasks";
@@ -155,14 +157,17 @@ function renderSetup(): void {
 }
 
 function renderLogin(): void {
-  const { card, body } = gateCard("Sign in", "Enter the admin password to continue.");
+  const { card, body } = gateCard("Sign in", "Enter your credentials to continue.");
+  let username = "admin";
   let password = "";
   const error = el("div", { class: "min-h-4 text-xs text-rose-400" });
 
+  const userInput = textInput("admin", (value) => (username = value.trim()), {
+    class: "w-full",
+    placeholder: "admin",
+  });
   const input = textInput("", (value) => (password = value), { type: "password", class: "w-full" });
-  // Focused programmatically at the end of this function instead of via the
-  // `autofocus` attribute, which browsers warn about (and sometimes block).
-  body.append(field("Password", input));
+  body.append(field("Username", userInput), field("Password", input));
 
   const submit = button(
     "Sign in",
@@ -171,7 +176,7 @@ function renderLogin(): void {
       error.textContent = "";
       submit.disabled = true;
       try {
-        await authApi.login(password);
+        await authApi.login(password, username);
         startShell();
       } catch (err) {
         error.textContent = err instanceof Error ? err.message : String(err);
@@ -219,6 +224,8 @@ const ICONS: Record<string, string> = {
   tasks: `<svg class="size-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 11 3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>`,
   alerts: `<svg class="size-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg>`,
   developer: `<svg class="size-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>`,
+  services: `<svg class="size-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="8" height="8" x="2" y="2" rx="2"/><path d="M14 2c1.1 0 2 .9 2 2v4c0 1.1-.9 2-2 2"/><path d="M20 2c1.1 0 2 .9 2 2v4c0 1.1-.9 2-2 2"/><rect width="8" height="8" x="2" y="14" rx="2"/><path d="M14 14c1.1 0 2 .9 2 2v4c0 1.1-.9 2-2 2"/><path d="M20 14c1.1 0 2 .9 2 2v4c0 1.1-.9 2-2 2"/></svg>`,
+  users: `<svg class="size-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>`,
   settings: `<svg class="size-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>`,
 };
 
@@ -257,6 +264,7 @@ function startShell(): void {
         <span data-ref="version" class="text-xs text-neutral-500"></span>
         <span data-ref="dot" class="inline-block size-2 rounded-full bg-neutral-600"></span>
         <span data-ref="link" class="text-xs font-medium text-neutral-400">connecting</span>
+        <span data-ref="userbadge" class="hidden items-center gap-1.5 rounded-full border border-purple-500/30 bg-purple-500/10 px-2.5 py-0.5 text-xs text-purple-300 font-mono"></span>
         <button data-ref="logout" type="button" class="rounded-lg border border-white/10 bg-white/5 px-2.5 py-1 text-xs font-medium text-neutral-300 transition-all duration-150 hover:border-rose-500/50 hover:bg-rose-500/10 hover:text-rose-400 shadow-xs">sign out</button>
       </span>
     </header>
@@ -279,6 +287,7 @@ function startShell(): void {
   const navEl = ref<HTMLElement>("nav");
   const viewEl = ref<HTMLElement>("view");
   const logoutEl = ref<HTMLButtonElement>("logout");
+  const userbadgeEl = ref<HTMLElement>("userbadge");
   const actionsEl = ref<HTMLElement>("actions");
   const sidebarEl = ref<HTMLElement>("sidebar");
   const brandEl = ref<HTMLElement>("brand");
@@ -312,9 +321,18 @@ function startShell(): void {
     }
   });
 
+  void authApi.session().then((sess) => {
+    if (sess.username) {
+      userbadgeEl.textContent = `${sess.username} (${sess.role || "admin"})`;
+      userbadgeEl.classList.remove("hidden");
+      userbadgeEl.classList.add("inline-flex");
+    }
+  });
+
   const pages: PageDef[] = [
     { id: "system", label: "System", group: "Overview", icon: ICONS.system, color: "text-cyan-400", badgeBg: "bg-cyan-500/10", badgeBorder: "border-cyan-500/25", create: () => createSystemPage(tl) },
     { id: "containers", label: "Containers", group: "Compute", icon: ICONS.containers, color: "text-blue-400", badgeBg: "bg-blue-500/10", badgeBorder: "border-blue-500/25", create: () => createContainersPage() },
+    { id: "services", label: "Services", group: "Compute", icon: ICONS.services, color: "text-amber-400", badgeBg: "bg-amber-500/10", badgeBorder: "border-amber-500/25", create: () => createServicesPage() },
     { id: "apps", label: "App Store", group: "Compute", icon: ICONS.apps, color: "text-amber-400", badgeBg: "bg-amber-500/10", badgeBorder: "border-amber-500/25", create: () => createAppsPage() },
     { id: "virtualization", label: "Virtualization", group: "Compute", icon: ICONS.virtualization, color: "text-purple-400", badgeBg: "bg-purple-500/10", badgeBorder: "border-purple-500/25", create: () => createVirtualizationPage() },
     { id: "files", label: "Files", group: "Storage", icon: ICONS.files, color: "text-yellow-400", badgeBg: "bg-yellow-500/10", badgeBorder: "border-yellow-500/25", create: () => createFilesPage() },
@@ -326,6 +344,7 @@ function startShell(): void {
     { id: "logs", label: "Logs", group: "System", icon: ICONS.logs, color: "text-slate-400", badgeBg: "bg-slate-500/10", badgeBorder: "border-slate-500/25", create: () => createLogsPage() },
     { id: "terminal", label: "Terminal", group: "System", icon: ICONS.terminal, color: "text-emerald-400", badgeBg: "bg-emerald-500/10", badgeBorder: "border-emerald-500/25", create: () => createTerminalPage(() => hostEl.textContent ?? "") },
     { id: "tasks", label: "Tasks", group: "System", icon: ICONS.tasks, color: "text-violet-400", badgeBg: "bg-violet-500/10", badgeBorder: "border-violet-500/25", create: () => createTasksPage() },
+    { id: "users", label: "Users & RBAC", group: "System", icon: ICONS.users, color: "text-purple-400", badgeBg: "bg-purple-500/10", badgeBorder: "border-purple-500/25", create: () => createUsersPage() },
     { id: "alerts", label: "Alerts", group: "System", icon: ICONS.alerts, color: "text-amber-400", badgeBg: "bg-amber-500/10", badgeBorder: "border-amber-500/25", create: () => createAlertsPage() },
     { id: "developer", label: "Developer", group: "System", icon: ICONS.developer, color: "text-pink-400", badgeBg: "bg-pink-500/10", badgeBorder: "border-pink-500/25", create: () => createDeveloperPage() },
     { id: "settings", label: "Settings", group: "System", icon: ICONS.settings, color: "text-zinc-400", badgeBg: "bg-zinc-500/10", badgeBorder: "border-zinc-500/25", create: () => createSettingsPage() },

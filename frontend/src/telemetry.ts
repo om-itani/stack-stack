@@ -209,12 +209,25 @@ export class Telemetry {
       if (typeof event.data !== "string") {
         return;
       }
-      let parsed: unknown = null;
+      let parsed: any = null;
       try {
         parsed = JSON.parse(event.data);
       } catch {
         return;
       }
+
+      // Check for multiplexed job and notification events on the consolidated stream
+      if (parsed && typeof parsed === "object") {
+        if (parsed.event === "job") {
+          window.dispatchEvent(new CustomEvent("stack:job", { detail: parsed.data }));
+          return;
+        }
+        if (parsed.event === "notification") {
+          window.dispatchEvent(new CustomEvent("stack:notification", { detail: parsed.data }));
+          return;
+        }
+      }
+
       if (!isSnapshot(parsed)) {
         return;
       }

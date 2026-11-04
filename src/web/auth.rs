@@ -21,6 +21,14 @@ use crate::auth::{AuthContext, COOKIE_NAME};
 use crate::error::{ApiError, ErrorResponse};
 use crate::state::AppState;
 
+/// Authenticated user identity and assigned role.
+#[derive(Debug, Clone)]
+pub struct AuthUser {
+    pub username: String,
+    #[allow(dead_code)]
+    pub role: crate::auth::Role,
+}
+
 /// Routes reachable without a session. Everything else under `/api/` is gated.
 fn is_exempt(path: &str) -> bool {
     matches!(
@@ -31,7 +39,7 @@ fn is_exempt(path: &str) -> bool {
 
 /// The login gate. Non-`/api/` paths (the embedded SPA) pass through so the
 /// login screen itself can load; the API is what is protected.
-pub async fn gate(State(state): State<AppState>, request: Request, next: Next) -> Response {
+pub async fn gate(State(state): State<AppState>, mut request: Request, next: Next) -> Response {
     let path = request.uri().path().to_string();
     let is_upgrade = request.headers().get("upgrade").is_some();
     if !path.starts_with("/api/") || is_exempt(&path) {
@@ -52,11 +60,59 @@ pub async fn gate(State(state): State<AppState>, request: Request, next: Next) -
     });
 
     if let Some(token) = token
-        && state.auth.validate_token(&token)
+        && let Some((username, role)) = state.auth.validate_token_rbac(&token)
     {
+        // Enforce RBAC
+        let method = request.method().clone();
+        let is_mutating = matches!(
+            method,
+            axum::http::Method::POST
+                | axum::http::Method::PUT
+                | axum::http::Method::DELETE
+                | axum::http::Method::PATCH
+        );
+
+        if is_mutating && role == crate::auth::Role::Viewer {
+            return (
+                StatusCode::FORBIDDEN,
+                Json(ErrorResponse::new("Forbidden", "viewer role is read-only")),
+            )
+                .into_response();
+        }
+
+        if path.starts_with("/api/users") && role != crate::auth::Role::Admin {
+            return (
+                StatusCode::FORBIDDEN,
+                Json(ErrorResponse::new(
+                    "Forbidden",
+                    "admin role is required to manage users",
+                )),
+            )
+                .into_response();
+        }
+
+        if is_mutating
+            && role == crate::auth::Role::Operator
+            && (path == "/api/backup/system/import"
+                || path.contains("/format")
+                || path.starts_with("/api/network")
+                || path == "/api/system/reboot"
+                || path == "/api/system/shutdown")
+        {
+            return (
+                StatusCode::FORBIDDEN,
+                Json(ErrorResponse::new(
+                    "Forbidden",
+                    "operator role lacks permission for this action",
+                )),
+            )
+                .into_response();
+        }
+
         if is_upgrade {
             tracing::debug!(path, "websocket upgrade authenticated via session");
         }
+        request.extensions_mut().insert(AuthUser { username, role });
         return next.run(request).await;
     }
 
@@ -91,6 +147,13 @@ pub struct PasswordRequest {
 }
 
 #[derive(Deserialize)]
+pub struct LoginRequest {
+    #[serde(default)]
+    pub username: Option<String>,
+    pub password: String,
+}
+
+#[derive(Deserialize)]
 pub struct ChangeRequest {
     pub current: String,
     pub new_password: String,
@@ -112,15 +175,17 @@ pub async fn setup(
 
 pub async fn login(
     State(state): State<AppState>,
-    Json(request): Json<PasswordRequest>,
+    Json(request): Json<LoginRequest>,
 ) -> Result<Response, ApiError> {
     let auth = state.auth.clone();
+    let username = request.username;
     let password = request.password;
-    let token = tokio::task::spawn_blocking(move || auth.login(&password))
-        .await
-        .map_err(|err| ApiError::internal(format!("auth task failed: {err}")))??;
+    let (token, u, role) =
+        tokio::task::spawn_blocking(move || auth.login_user(username.as_deref(), &password))
+            .await
+            .map_err(|err| ApiError::internal(format!("auth task failed: {err}")))??;
 
-    Ok(logged_in(&state.auth, token))
+    Ok(logged_in_user(&state.auth, token, u, role))
 }
 
 pub async fn logout(State(state): State<AppState>, headers: HeaderMap) -> Response {
@@ -138,9 +203,16 @@ pub async fn session(
     State(state): State<AppState>,
     headers: HeaderMap,
 ) -> Json<crate::auth::AuthStatus> {
-    let authenticated =
-        cookie_value(&headers, COOKIE_NAME).is_some_and(|token| state.auth.validate_token(&token));
-    Json(state.auth.status(authenticated))
+    let session_info = cookie_value(&headers, COOKIE_NAME)
+        .and_then(|token| state.auth.validate_token_rbac(&token));
+    match session_info {
+        Some((username, role)) => Json(state.auth.status_with_user(
+            true,
+            Some(username),
+            Some(role),
+        )),
+        None => Json(state.auth.status(false)),
+    }
 }
 
 /// Change the admin password. Drops every session, then re-issues one for the
@@ -193,13 +265,24 @@ fn clear_cookie() -> HeaderValue {
     .unwrap_or_else(|_| HeaderValue::from_static(""))
 }
 
-/// A successful auth response: fresh cookie plus the current status.
-fn logged_in(auth: &AuthContext, token: String) -> Response {
-    let mut response = Json(auth.status(true)).into_response();
+/// A successful auth response with user identity: fresh cookie plus the current status.
+fn logged_in_user(
+    auth: &AuthContext,
+    token: String,
+    username: String,
+    role: crate::auth::Role,
+) -> Response {
+    let mut response =
+        Json(auth.status_with_user(true, Some(username), Some(role))).into_response();
     response
         .headers_mut()
         .insert(SET_COOKIE, session_cookie(auth, token));
     response
+}
+
+/// A successful auth response: fresh cookie plus the current status.
+fn logged_in(auth: &AuthContext, token: String) -> Response {
+    logged_in_user(auth, token, "admin".to_string(), crate::auth::Role::Admin)
 }
 
 /// Drop expired sessions on a timer so the in-memory map cannot grow without

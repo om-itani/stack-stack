@@ -341,6 +341,13 @@ export function createActivity(): Activity {
     }
   };
 
+  const onStackJob = (event: Event): void => {
+    const job = (event as CustomEvent).detail as Job | undefined;
+    if (job) {
+      applyJob(job);
+    }
+  };
+
   return {
     root,
     start() {
@@ -353,9 +360,11 @@ export function createActivity(): Activity {
         }
       }, POLL_MS);
       document.addEventListener("visibilitychange", onVisibilityChange);
+      window.addEventListener("stack:job", onStackJob);
     },
     stop() {
       running = false;
+      window.removeEventListener("stack:job", onStackJob);
       document.removeEventListener("click", onDocumentClick);
       window.removeEventListener("stack-stack:activity-open", onOpenRequest);
       document.removeEventListener("visibilitychange", onVisibilityChange);

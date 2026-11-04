@@ -137,12 +137,27 @@ export function createBell(): Bell {
       setOpen(false);
     }
   };
+  const onStackNotification = (event: Event): void => {
+    const item = (event as CustomEvent).detail as Notification | undefined;
+    if (typeof item !== "object" || item === null || typeof item.title !== "string") {
+      return;
+    }
+    items = [item, ...items].slice(0, 200);
+    if (open) {
+      renderPanel();
+    } else {
+      unread += 1;
+      updateBadge();
+    }
+  };
+
   document.addEventListener("click", onDocumentClick);
   panel.addEventListener("click", (event) => event.stopPropagation());
 
   return {
     root,
     start() {
+      window.addEventListener("stack:notification", onStackNotification);
       void notifyApi.feed(200).then((state) => {
         items = state.items;
         renderPanel();
@@ -175,6 +190,7 @@ export function createBell(): Bell {
       };
     },
     stop() {
+      window.removeEventListener("stack:notification", onStackNotification);
       document.removeEventListener("click", onDocumentClick);
       socket?.close();
       socket = null;
