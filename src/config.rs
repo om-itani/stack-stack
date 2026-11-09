@@ -53,6 +53,8 @@ pub const DEFAULT_WG_SECRETS_PATH: &str = "/etc/stack-stack/wireguard.secrets.js
 pub const DEFAULT_SMART_PATH: &str = "/etc/stack-stack/smart.json";
 pub const DEFAULT_DDNS_PATH: &str = "/etc/stack-stack/ddns.json";
 pub const DEFAULT_DDNS_SECRETS_PATH: &str = "/etc/stack-stack/ddns.secrets.json";
+/// Disks spindown configuration.
+pub const DEFAULT_DISKS_PATH: &str = "/etc/stack-stack/disks.json";
 /// General application secrets for Compose substitution (0600).
 pub const DEFAULT_APP_SECRETS_PATH: &str = "/etc/stack-stack/secrets.json";
 pub const DEFAULT_TLS_HTTP_PORT: u16 = 80;
@@ -161,6 +163,8 @@ pub struct Config {
     pub ddns_path: String,
     /// Dynamic DNS token document (0600).
     pub ddns_secrets_path: String,
+    /// Disks configuration (spindown timer persist).
+    pub disks_path: String,
     /// General application secrets document (0600).
     pub app_secrets_path: String,
 }
@@ -239,6 +243,7 @@ impl Default for Config {
             smart_path: DEFAULT_SMART_PATH.to_string(),
             ddns_path: DEFAULT_DDNS_PATH.to_string(),
             ddns_secrets_path: DEFAULT_DDNS_SECRETS_PATH.to_string(),
+            disks_path: DEFAULT_DISKS_PATH.to_string(),
             app_secrets_path: DEFAULT_APP_SECRETS_PATH.to_string(),
         }
     }

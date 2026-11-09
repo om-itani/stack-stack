@@ -188,7 +188,7 @@ export function createActivity(): Activity {
     } else if (job.message) {
       row.append(el("div", { class: "mt-1 text-[11px] text-neutral-400", text: job.message }));
     }
-    if (job.logs.length > 0) {
+    if (job.logs && job.logs.length > 0) {
       row.append(
         el("div", {
           class: "mt-1 truncate text-[10px] text-neutral-600",

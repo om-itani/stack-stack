@@ -203,7 +203,8 @@ impl AppState {
             Duration::from_secs(120),
         );
         // mkfs on a large disk can take minutes; mount/umount are instant.
-        let storage = StorageContext::new(Arc::new(SystemRunner::new(Duration::from_secs(600))));
+        let storage = StorageContext::new(Arc::new(SystemRunner::new(Duration::from_secs(600))))
+            .with_disks_config(std::path::PathBuf::from(&config.disks_path));
         let tasks = TaskContext::new(
             std::path::PathBuf::from(&config.tasks_path),
             Arc::new(SystemRunner::new(Duration::from_secs(

@@ -7,3 +7,6 @@
 /frontend/node_modules
 npm-debug.log*
 .kilo/*
+
+.dev-data/
+dev-config.json

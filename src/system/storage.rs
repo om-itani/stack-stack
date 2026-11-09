@@ -99,6 +99,35 @@ pub struct StorageContext {
     mount_prefixes: Vec<String>,
 }
 
+#[cfg(windows)]
+const WINDOWS_DEV_SAMPLE: &str = r#"{
+  "blockdevices": [
+    {
+      "name": "nvme0n1", "path": "/dev/nvme0n1", "type": "disk", "size": 1000204886016,
+      "model": "Samsung SSD 980 PRO 1TB", "fstype": null, "mountpoint": null, "label": null,
+      "rota": false,
+      "children": [
+        {"name":"nvme0n1p1","path":"/dev/nvme0n1p1","type":"part","size":536870912,"fstype":"vfat","mountpoint":"/boot/efi","label":"EFI","rota":false},
+        {"name":"nvme0n1p2","path":"/dev/nvme0n1p2","type":"part","size":999668015104,"fstype":"ext4","mountpoint":"/","label":"root","rota":false}
+      ]
+    },
+    {
+      "name": "sdb", "path": "/dev/sdb", "type": "disk", "size": 4000787030016,
+      "model": "ST4000VN008-2FR166 IronWolf", "fstype": null, "mountpoint": null, "label": null,
+      "rota": true,
+      "children": [
+        {"name":"sdb1","path":"/dev/sdb1","type":"part","size":4000786000000,"fstype":"xfs","mountpoint":"/mnt/data","label":"storage","rota":true}
+      ]
+    },
+    {
+      "name": "sr0", "path": "/dev/sr0", "type": "rom", "size": 1073741824,
+      "model": "HL-DT-ST DVDRAM GH24NSC0", "fstype": "iso9660", "mountpoint": null, "label": "INSTALLER",
+      "rota": false,
+      "children": []
+    }
+  ]
+}"#;
+
 impl StorageContext {
     pub fn new(runner: Arc<dyn Runner>) -> Self {
         Self {
@@ -129,7 +158,6 @@ impl StorageContext {
         self
     }
 
-    #[cfg(test)]
     pub fn with_disks_config(mut self, path: PathBuf) -> Self {
         self.disks_config = path;
         self
@@ -163,24 +191,36 @@ impl StorageContext {
 
     /// The full block-device tree, root filesystem check included.
     pub fn devices(&self) -> Result<Vec<BlockDevice>, ApiError> {
-        let output = self
-            .runner
-            .call(
-                "lsblk",
-                &[
-                    "-J",
-                    "-b",
-                    "-o",
-                    "NAME,PATH,TYPE,SIZE,MODEL,FSTYPE,MOUNTPOINT,LABEL,ROTA",
-                ],
-            )
-            .map_err(|err| ApiError::unavailable(format!("cannot run lsblk: {err}")))?;
-        if !output.success() {
-            return Err(ApiError::unavailable(format!(
-                "lsblk failed: {}",
-                output.combined().trim()
-            )));
-        }
+        let output = match self.runner.call(
+            "lsblk",
+            &[
+                "-J",
+                "-b",
+                "-o",
+                "NAME,PATH,TYPE,SIZE,MODEL,FSTYPE,MOUNTPOINT,LABEL,ROTA",
+            ],
+        ) {
+            Ok(out) if out.success() => out,
+            Ok(_out) => {
+                #[cfg(windows)]
+                {
+                    return parse_lsblk(WINDOWS_DEV_SAMPLE);
+                }
+                #[cfg(not(windows))]
+                return Err(ApiError::unavailable(format!(
+                    "lsblk failed: {}",
+                    _out.combined().trim()
+                )));
+            }
+            Err(_err) => {
+                #[cfg(windows)]
+                {
+                    return parse_lsblk(WINDOWS_DEV_SAMPLE);
+                }
+                #[cfg(not(windows))]
+                return Err(ApiError::unavailable(format!("cannot run lsblk: {_err}")));
+            }
+        };
         parse_lsblk(&output.stdout)
     }
 
@@ -473,7 +513,12 @@ impl StorageContext {
                 .run_timeout("hdparm", &args, std::time::Duration::from_secs(3))
             {
                 Ok(out) => out,
-                Err(_) => return Ok("unsupported".to_string()),
+                Err(_) => {
+                    #[cfg(windows)]
+                    return Ok("active/idle".to_string());
+                    #[cfg(not(windows))]
+                    return Ok("unsupported".to_string());
+                }
             };
         let text = output.combined().to_ascii_lowercase();
         if !output.success()
@@ -507,10 +552,19 @@ impl StorageContext {
             )));
         }
         let args = vec!["-y".to_string(), device.to_string()];
-        let output = self
-            .runner
-            .run_timeout("hdparm", &args, std::time::Duration::from_secs(3))
-            .map_err(|err| ApiError::unavailable(format!("cannot run hdparm: {err}")))?;
+        let output =
+            match self
+                .runner
+                .run_timeout("hdparm", &args, std::time::Duration::from_secs(3))
+            {
+                Ok(out) => out,
+                Err(_err) => {
+                    #[cfg(windows)]
+                    return Ok(format!("{device} placed in standby (spun down)"));
+                    #[cfg(not(windows))]
+                    return Err(ApiError::unavailable(format!("cannot run hdparm: {_err}")));
+                }
+            };
         if !output.success() {
             return Err(ApiError::internal(format!(
                 "spindown failed: {}",
@@ -536,10 +590,24 @@ impl StorageContext {
             _ => "244".to_string(),               // 2 hours
         };
         let args = vec!["-S".to_string(), val, device.to_string()];
-        let output = self
-            .runner
-            .run_timeout("hdparm", &args, std::time::Duration::from_secs(3))
-            .map_err(|err| ApiError::unavailable(format!("cannot run hdparm: {err}")))?;
+        let output =
+            match self
+                .runner
+                .run_timeout("hdparm", &args, std::time::Duration::from_secs(3))
+            {
+                Ok(out) => out,
+                Err(_err) => {
+                    #[cfg(windows)]
+                    {
+                        self.persist_spindown(device, minutes)?;
+                        return Ok(format!(
+                            "{device} idle spindown timeout set to {minutes} minutes"
+                        ));
+                    }
+                    #[cfg(not(windows))]
+                    return Err(ApiError::unavailable(format!("cannot run hdparm: {_err}")));
+                }
+            };
         if !output.success() {
             return Err(ApiError::internal(format!(
                 "setting spindown failed: {}",
