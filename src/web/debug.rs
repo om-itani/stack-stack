@@ -164,14 +164,7 @@ pub async fn ping(State(state): State<AppState>, headers: HeaderMap) -> Json<Pin
                     error: None,
                 });
             }
-            Ok(Err(err)) => results.push(PingResult {
-                method: "GET",
-                path,
-                status: 0,
-                ok: false,
-                ms: started.elapsed().as_millis() as u64,
-                error: Some(err.to_string()),
-            }),
+            Ok(Err(err)) => match err {},
             Err(_) => results.push(PingResult {
                 method: "GET",
                 path,
