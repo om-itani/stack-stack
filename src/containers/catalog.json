@@ -624,5 +624,42 @@
                       }
                   ],
         "compose":  "services:\r\n  it-tools:\r\n    image: corentinth/it-tools:2024.10.22-7ca5933\r\n    container_name: it-tools\r\n    restart: unless-stopped\r\n    labels:\r\n      - stack-stack.app=it-tools\r\n    ports:\r\n      - \"8087:80\"\r\n"
+    },
+    {
+        "id":  "calagopus",
+        "name":  "Calagopus",
+        "description":  "High-performance game server management panel built in Rust for Minecraft, Rust, ARK, and Steam servers with full IPv4 and IPv6 dual-stack support.",
+        "category":  "utilities",
+        "tags":  [
+                     "utilities",
+                     "gaming",
+                     "minecraft",
+                     "gameservers"
+                 ],
+        "icon":  "🎮",
+        "web_port":  8000,
+        "ports":  [
+                      {
+                          "container":  8000,
+                          "host":  8000,
+                          "protocol":  "tcp"
+                      },
+                      {
+                          "container":  2022,
+                          "host":  2022,
+                          "protocol":  "tcp"
+                      },
+                      {
+                          "container":  25565,
+                          "host":  25565,
+                          "protocol":  "tcp"
+                      },
+                      {
+                          "container":  25565,
+                          "host":  25565,
+                          "protocol":  "udp"
+                      }
+                  ],
+        "compose":  "services:\r\n  calagopus-db:\r\n    image: postgres:16-alpine\r\n    container_name: calagopus-db\r\n    restart: unless-stopped\r\n    environment:\r\n      POSTGRES_USER: calagopus\r\n      POSTGRES_PASSWORD: {{secret.CALAGOPUS_DB_PASSWORD:-calagopus_secret_pw}}\r\n      POSTGRES_DB: calagopus\r\n    volumes:\r\n      - calagopus-db-data:/var/lib/postgresql/data\r\n    networks:\r\n      - calagopus-net\r\n\r\n  calagopus-redis:\r\n    image: valkey/valkey:7-alpine\r\n    container_name: calagopus-redis\r\n    restart: unless-stopped\r\n    networks:\r\n      - calagopus-net\r\n\r\n  calagopus:\r\n    image: ghcr.io/calagopus/panel:aio\r\n    container_name: calagopus\r\n    restart: unless-stopped\r\n    labels:\r\n      - stack-stack.app=calagopus\r\n    depends_on:\r\n      - calagopus-db\r\n      - calagopus-redis\r\n    environment:\r\n      TZ: UTC\r\n      DATABASE_URL: postgresql://calagopus:{{secret.CALAGOPUS_DB_PASSWORD:-calagopus_secret_pw}}@calagopus-db/calagopus\r\n      DATABASE_MIGRATE: \"true\"\r\n      REDIS_URL: redis://calagopus-redis:6379\r\n      PORT: 8000\r\n      APP_PRIMARY: \"true\"\r\n      APP_ENABLE_WINGS_PROXY: \"true\"\r\n      APP_ENCRYPTION_KEY: {{secret.CALAGOPUS_ENCRYPTION_KEY:-random_32_chars_encryption_key}}\r\n    ports:\r\n      - \"8000:8000\"\r\n      - \"2022:2022\"\r\n      - \"25565-25575:25565-25575/tcp\"\r\n      - \"25565-25575:25565-25575/udp\"\r\n    volumes:\r\n      - calagopus-data:/var/lib/calagopus\r\n      - calagopus-logs:/var/log/calagopus\r\n      - calagopus-wings-data:/var/lib/calagopus-wings\r\n      - /var/run/docker.sock:/var/run/docker.sock\r\n      - /var/lib/docker/containers:/var/lib/docker/containers:ro\r\n    networks:\r\n      - calagopus-net\r\n\r\nvolumes:\r\n  calagopus-data:\r\n  calagopus-logs:\r\n  calagopus-wings-data:\r\n  calagopus-db-data:\r\n\r\nnetworks:\r\n  calagopus-net:\r\n    enable_ipv6: true\r\n    ipam:\r\n      config:\r\n        - subnet: 172.28.0.0/16\r\n        - subnet: fd00:ca1a:90::/64\r\n"
     }
 ]
