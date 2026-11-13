@@ -1,0 +1,91 @@
+{
+  "uuid": "11c90883-3cae-4624-b76b-f371ce38834a",
+  "name": "Hollow Knight Multiplayer (HKMP)",
+  "description": "Dedicated server for Hollow Knight Multiplayer (HKMP) by Extremelyd1. Dual-stack IPv4 and IPv6 compatible.",
+  "author": "arshio.arshio.arshio@gmail.com",
+  "config": {
+    "files": {},
+    "startup": {
+      "done": [
+        "Starting NetServer on port",
+        "Starting server",
+        "Loaded server settings"
+      ],
+      "strip_ansi": false
+    },
+    "stop": {
+      "type": "command",
+      "value": "exit"
+    }
+  },
+  "scripts": {
+    "installation": {
+      "container": "ghcr.io/ptero-eggs/installers:debian",
+      "entrypoint": "bash",
+      "content": "#!/bin/bash\n\napt update\napt install -y curl jq unzip ca-certificates\n\nmkdir -p /mnt/server\ncd /mnt/server\n\nif [ \"${USER_UPLOAD}\" = \"1\" ] || [ \"${USER_UPLOAD}\" = \"true\" ]; then\n    echo \"Skipping download as USER_UPLOAD is enabled.\"\n    exit 0\nfi\n\nif [ -z \"${HKMP_VERSION}\" ] || [ \"${HKMP_VERSION}\" = \"latest\" ]; then\n    echo \"Fetching latest HKMP release...\"\n    DOWNLOAD_URL=$(curl -s https://api.github.com/repos/Extremelyd1/HKMP/releases/latest | jq -r '.assets[] | select(.name==\"HKMPServer.zip\") | .browser_download_url')\nelse\n    echo \"Fetching HKMP release ${HKMP_VERSION}...\"\n    DOWNLOAD_URL=\"https://github.com/Extremelyd1/HKMP/releases/download/${HKMP_VERSION}/HKMPServer.zip\"\nfi\n\necho \"Downloading HKMPServer from: ${DOWNLOAD_URL}\"\ncurl -sSL -o HKMPServer.zip \"${DOWNLOAD_URL}\"\n\necho \"Extracting HKMPServer.zip...\"\nunzip -o HKMPServer.zip\nrm -f HKMPServer.zip\n\necho \"-----------------------------------------\"\necho \"HKMP Installation completed successfully!\"\necho \"-----------------------------------------\""
+    }
+  },
+  "startup_commands": {
+    "Default": "mono HKMPServer.exe {{SERVER_PORT}}"
+  },
+  "force_outgoing_ip": false,
+  "separate_port": false,
+  "features": [],
+  "docker_images": {
+    "Mono - Latest": "ghcr.io/ptero-eggs/yolks:mono_latest",
+    "HKMP Dedicated (maximalmax90)": "maximalmax90/hkmpserver:latest"
+  },
+  "file_denylist": [],
+  "variables": [
+    {
+      "name": "Server Port",
+      "name_translations": {},
+      "description": "The UDP listening port for the Hollow Knight Multiplayer server.",
+      "description_translations": {},
+      "order": 0,
+      "env_variable": "SERVER_PORT",
+      "default_value": "25565",
+      "user_viewable": true,
+      "user_editable": true,
+      "secret": false,
+      "rules": [
+        "required",
+        "numeric",
+        "between:1024,65535"
+      ]
+    },
+    {
+      "name": "HKMP Version",
+      "name_translations": {},
+      "description": "Release tag for HKMP from GitHub (e.g. latest or v2.4.3).",
+      "description_translations": {},
+      "order": 1,
+      "env_variable": "HKMP_VERSION",
+      "default_value": "latest",
+      "user_viewable": true,
+      "user_editable": true,
+      "secret": false,
+      "rules": [
+        "required",
+        "string",
+        "max:20"
+      ]
+    },
+    {
+      "name": "User Upload",
+      "name_translations": {},
+      "description": "Skip downloading files if you are uploading your own custom server files.",
+      "description_translations": {},
+      "order": 2,
+      "env_variable": "USER_UPLOAD",
+      "default_value": "0",
+      "user_viewable": true,
+      "user_editable": true,
+      "secret": false,
+      "rules": [
+        "required",
+        "boolean"
+      ]
+    }
+  ]
+}
